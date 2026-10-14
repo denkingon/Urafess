@@ -1,0 +1,248 @@
+### File: package.json
+{
+  "name": "realtime-map-chat-app",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server/index.js"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "react-leaflet": "^4.2.1",
+    "socket.io-client": "^4.7.2",
+    "tailwindcss": "^3.4.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.0.0",
+    "vite": "^5.0.10"
+  }
+}
+
+### File: vite.config.js
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+export default defineConfig({
+  plugins: [react()],
+})
+
+### File: postcss.config.js
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+
+### File: tailwind.config.js
+export default {
+  content: ['index.html', './src/**/*.{js,jsx}'],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+
+### File: index.html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Real‑Time Map Chat</title>
+    <script type="module" src="/src/main.jsx"></script>
+    <link rel="stylesheet" href="/src/index.css">
+  </head>
+  <body class="h-screen w-screen">
+    <div id="root" class="h-full w-full"></div>
+  </body>
+</html>
+
+### File: src/index.css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+}
+
+### File: src/main.jsx
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)
+
+### File: src/App.jsx
+import { useEffect, useState, useRef } from 'react'
+import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet'
+import 'leaflet/dist/leaflet.css'
+import io from 'socket.io-client'
+
+const socket = io('http://localhost:3000') // change if server runs elsewhere
+
+export default function App () {
+  const [users, setUsers] = useState({})
+  const [myId, setMyId] = useState(null)
+  const mapRef = useRef()
+
+  const updateUsers = (id, data) =>
+    setUsers(prev => ({ ...prev, [id]: { ...prev[id], ...data } }))
+
+  // Geolocation tracking
+  useEffect(() => {
+    if (!('geolocation' in navigator)) {
+      alert('Geolocation not supported. App cannot run.')
+      return
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      pos => {
+        const { latitude, longitude } = pos.coords
+        socket.emit('location', { latitude, longitude })
+      },
+      err => console.error(err),
+      { enableHighAccuracy: true, maximumAge: 1000 }
+    )
+
+    return () => navigator.geolocation.clearWatch(watchId)
+  }, [])
+
+  // Socket.IO events
+  useEffect(() => {
+    socket.on('connect', () => setMyId(socket.id))
+
+    socket.on('users', all => setUsers(all))
+
+    socket.on('userUpdate', ({ id, data }) => updateUsers(id, data))
+
+    socket.on('userDisconnect', id => {
+      setUsers(prev => {
+        const { [id]: _, ...rest } = prev
+        return rest
+      })
+    })
+
+    return () => socket.off()
+  }, [])
+
+  // Speech‑to‑text
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) return
+
+    const recognizer = new SpeechRecognition()
+    recognizer.lang = 'ja-JP'
+    recognizer.continuous = true
+    recognizer.interimResults = false
+
+    recognizer.onresult = e => {
+      const transcript = Array.from(e.results)
+        .map(r => r[0].transcript)
+        .join('')
+        .trim()
+      if (transcript) {
+        socket.emit('message', { text: transcript })
+        updateUsers(myId, { text: transcript })
+      }
+    }
+
+    recognizer.onerror = console.error
+    recognizer.start()
+
+    return () => recognizer.stop()
+  }, [myId])
+
+  // Map default center
+  const position = [35.681236, 139.767125]
+
+  return (
+    <MapContainer
+      center={position}
+      zoom={12}
+      scrollWheelZoom
+      whenCreated={map => (mapRef.current = map)}
+      className="h-full w-full"
+    >
+      <TileLayer
+        attribution="&copy; OpenStreetMap"
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      />
+      {Object.entries(users).map(([id, user]) => (
+        <CircleMarker
+          key={id}
+          center={[user.latitude, user.longitude]}
+          radius={10}
+          pathOptions={{ color: '#ff0000' }}
+        >
+          {user.text && (
+            <Popup>
+              <span className="whitespace-pre-line">{user.text}</span>
+            </Popup>
+          )}
+        </CircleMarker>
+      ))}
+    </MapContainer>
+  )
+}
+
+### File: server/index.js
+import express from 'express'
+import http from 'http'
+import { Server } from 'socket.io'
+import cors from 'cors'
+
+const app = express()
+app.use(cors())
+
+const server = http.createServer(app)
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+})
+
+const users = new Map()
+
+io.on('connection', socket => {
+  users.set(socket.id, { latitude: 0, longitude: 0, text: '' })
+  socket.emit('users', Object.fromEntries(users))
+  socket.broadcast.emit('userUpdate', { id: socket.id, data: users.get(socket.id) })
+
+  socket.on('location', data => {
+    const user = users.get(socket.id) || {}
+    users.set(socket.id, { ...user, ...data })
+    io.emit('userUpdate', { id: socket.id, data: users.get(socket.id) })
+  })
+
+  socket.on('message', ({ text }) => {
+    const user = users.get(socket.id) || {}
+    users.set(socket.id, { ...user, text })
+    io.emit('userUpdate', { id: socket.id, data: users.get(socket.id) })
+  })
+
+  socket.on('disconnect', () => {
+    users.delete(socket.id)
+    io.emit('userDisconnect', socket.id)
+  })
+})
+
+const PORT = process.env.PORT || 3000
+server.listen(PORT, () => console.log(`Server listening on ${PORT}`))
