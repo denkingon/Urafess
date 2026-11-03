@@ -3,6 +3,8 @@
   "name": "urafess",
   "main": "src/server/worker.ts",
   "compatibility_date": "2026-11-01",
+  // wrangler deploy / dev の前に、毎回画面をビルドし直す（古い画面を公開しないように。Cloudflare 側のビルド設定が空でも通る）
+  "build": { "command": "npm run build" },
   // 画面（PWA）はビルド済みの静的ファイル。/api/* だけ Worker が受ける
   "assets": {
     "directory": "./dist/client",

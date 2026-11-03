@@ -58,13 +58,28 @@ npm run sim         # 300人の機械テスト（SIM_N=50 npm run sim で人数�
 
 ## 公開する
 
-Cloudflare のアカウント（無料）が要る。
+Cloudflare（無料プラン）の Worker をこの GitHub リポジトリにつないである。**main に入った変更は自動でビルドされ、そのまま公開される**（Workers Builds）。
+ビルドの成否は、GitHub のコミットの横のチェック（Cloudflare の check run）でも見られる。
+
+Cloudflare 側の設定（Worker → Settings → Build）
+
+| 項目 | 値 |
+| --- | --- |
+| Worker 名 | `urafess` |
+| Root directory | `app`（アプリはこのフォルダにある。空だとビルドが失敗する） |
+| Build command | `npm run build`（空でも `wrangler deploy` が先にビルドする） |
+| Deploy command | `npx wrangler deploy` |
+
+主催者用の合言葉は、Worker → Settings → Variables and Secrets に、種類 **Secret**・名前 `HOST_TOKEN` で入れる（作成画面の「Variables」はビルド用なので違う）。
+入れるまでは主催者画面が「拒否」になるだけで、参加者側は動く。
+
+手元から直接公開するとき（予備）：
 
 ```sh
 cd app
 npx wrangler login                 # もしくは CLOUDFLARE_API_TOKEN を環境変数に入れる
 npx wrangler secret put HOST_TOKEN # 主催者用の合言葉
-npm run deploy
+npm run deploy                     # 画面のビルドも中でやる
 ```
 
 公開先は `https://urafess.<アカウントのサブドメイン>.workers.dev`。
@@ -77,7 +92,7 @@ npm run deploy
 
 やらないこと
 
-- `npm run deploy`（更新の公開）をしない。サーバーが入れ替わり、全員の接続が一度切れる（つなぎ直せば元に戻るが、わざわざ起こさない）
+- main にマージ・push しない（＝自動で公開される）。手元からの `npm run deploy` もしない。公開するとサーバーが入れ替わり、全員の接続が一度切れる（つなぎ直せば元に戻るが、わざわざ起こさない）。前日のうちに Cloudflare 側で自動ビルドを止めておくと安心
 - 試合中にゲーム名（`?g=`）を変えない
 
 やること
