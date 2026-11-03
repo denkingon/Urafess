@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>URAJI 光の字</title>
+<style>
+  :root { --t-bg: #ebebe9; --t-panel: #f7f7f6; --t-line: #d2d2ce; --t-ink: #1b1b1a; --t-mute: #62625e; --m-bg: #07080b; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--t-bg); color: var(--t-ink); font: 14px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  .app { display: grid; grid-template-columns: 290px minmax(0, 1fr); grid-template-rows: auto 1fr; min-height: 100vh; }
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--t-line); background: var(--t-panel); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 700; }
+  header p { margin: 0; color: var(--t-mute); font-size: 12.5px; flex: 1; min-width: 240px; }
+  header a { font-size: 12.5px; color: var(--t-ink); }
+  aside { border-right: 1px solid var(--t-line); background: var(--t-panel); padding: 14px 16px 24px; }
+  .grp { margin: 0 0 16px; }
+  .grp h2 { font-size: 11.5px; letter-spacing: .14em; color: var(--t-mute); margin: 0 0 6px; font-weight: 700; }
+  .knob { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; margin: 0 0 8px; }
+  .knob label { font-size: 13px; }
+  .knob output { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--t-mute); }
+  .knob input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: #2a2a28; margin: 2px 0 0; }
+  .seg { display: flex; border: 1px solid var(--t-ink); margin: 0 0 10px; }
+  .seg label { flex: 1; text-align: center; font-size: 12.5px; padding: 5px 0; cursor: pointer; border-right: 1px solid var(--t-ink); }
+  .seg label:last-child { border-right: 0; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg input:checked + span { font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+  .seg input:focus-visible + span { outline: 2px solid var(--t-ink); outline-offset: 2px; }
+  .chk { display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 0 0 8px; }
+  textarea { width: 100%; font: inherit; font-size: 13px; border: 1px solid var(--t-line); background: #fff; padding: 6px 8px; resize: vertical; min-height: 56px; border-radius: 0; margin: 0 0 12px; }
+  main { padding: 14px 16px 32px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  .head strong { font-size: 13.5px; }
+  .fig { font-variant-numeric: tabular-nums; font-size: 13px; }
+  .fig b { font-size: 15px; }
+  .sub { font-size: 12px; color: var(--t-mute); margin: 0; }
+  .stage { background: var(--m-bg); padding: 22px 22px; }
+  .stage canvas { display: block; width: 100%; }
+  @media (max-width: 860px) { .app { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--t-line); } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>URAJI 光の字</h1>
+    <p>同じ字形を光でつくる2つの見せ方。夜にどう見えるかと、つくるのに何がいくつ要るかを並べる。灰色が道具、黒い面が夜。</p>
+    <a href="https://claude.ai/artifact/51KpKXTyAqecGQS2kp2hRK">使い方（裏フェス フォント）</a>
+  </header>
+  <aside>
+    <div class="grp">
+      <h2>共通</h2>
+      <textarea id="text" spellcheck="false" aria-label="見本の文字（1行ずつ）">URAFESS
+ケイドロ 21:30</textarea>
+      <div class="seg" role="radiogroup" aria-label="光の色">
+        <label><input type="radio" name="col" value="#b8ff5a" checked><span>蓄光</span></label>
+        <label><input type="radio" name="col" value="#f1ede4"><span>月白</span></label>
+        <label><input type="radio" name="col" value="#ff6a3d"><span>朱</span></label>
+      </div>
+      <div class="knob"><label for="dist">見る距離</label><output id="o_dist"></output><input type="range" id="dist" min="0" max="10" step="0.5" value="0"></div>
+    </div>
+    <div class="grp">
+      <h2>輪郭（ネオン・LEDテープ）</h2>
+      <div class="knob"><label for="tube">管の太さ</label><output id="o_tube"></output><input type="range" id="tube" min="8" max="60" step="1" value="22"></div>
+      <div class="knob"><label for="bloom">光のにじみ</label><output id="o_bloom"></output><input type="range" id="bloom" min="0" max="40" step="1" value="16"></div>
+      <div class="knob"><label for="hO">字の高さ</label><output id="o_hO"></output><input type="range" id="hO" min="0.2" max="3" step="0.1" value="1"></div>
+    </div>
+    <div class="grp">
+      <h2>光点（スマホ・提灯）</h2>
+      <div class="knob"><label for="rows">字の高さあたりの点の数</label><output id="o_rows"></output><input type="range" id="rows" min="5" max="26" step="1" value="11"></div>
+      <div class="knob"><label for="dot">点の大きさ</label><output id="o_dot"></output><input type="range" id="dot" min="0.3" max="0.95" step="0.05" value="0.6"></div>
+      <div class="knob"><label for="hD">字の高さ</label><output id="o_hD"></output><input type="range" id="hD" min="2" max="40" step="0.5" value="10"></div>
+      <label class="chk"><input type="checkbox" id="lineRow" checked> 線の高さの一列は必ず消す（闇の列）</label>
+    </div>
+  </aside>
+  <main>
+    <div class="head"><strong>輪郭（籠字）</strong><span class="fig" id="figO"></span></div>
+    <p class="sub">字の縁をなぞる光。線（切れ目）は、上下で輪郭が分かれた二重の縁として残る。</p>
+    <div class="stage"><canvas id="cvO" aria-label="輪郭の見本"></canvas></div>
+    <div class="head" style="margin-top:8px"><strong>光点</strong><span class="fig" id="figD"></span></div>
+    <p class="sub">字の面を格子で拾った光の点。点が粗いと線が消えるので、線の高さの一列を闇にして残す。</p>
+    <div class="stage"><canvas id="cvD" aria-label="光点の見本"></canvas></div>
+  </main>
+</div>
+<!-- polygon-clipping 0.15.7 (MIT License, Copyright (c) 2018 Mike Fogel) -->
+<script>/*__PC__*/</script>
+<script>/*__KANA__*/</script>
+<script>/*__GLYPHS__*/</script>
+<script>/*__GEOM__*/</script>
+<script>/*__LIGHT__*/</script>
+</body>
+</html>

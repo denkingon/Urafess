@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>URAJI 光の字</title>
+<style>
+  :root { --t-bg: #ebebe9; --t-panel: #f7f7f6; --t-line: #d2d2ce; --t-ink: #1b1b1a; --t-mute: #62625e; --m-bg: #07080b; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--t-bg); color: var(--t-ink); font: 14px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  .app { display: grid; grid-template-columns: 290px minmax(0, 1fr); grid-template-rows: auto 1fr; min-height: 100vh; }
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--t-line); background: var(--t-panel); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 700; }
+  header p { margin: 0; color: var(--t-mute); font-size: 12.5px; flex: 1; min-width: 240px; }
+  header a { font-size: 12.5px; color: var(--t-ink); }
+  aside { border-right: 1px solid var(--t-line); background: var(--t-panel); padding: 14px 16px 24px; }
+  .grp { margin: 0 0 16px; }
+  .grp h2 { font-size: 11.5px; letter-spacing: .14em; color: var(--t-mute); margin: 0 0 6px; font-weight: 700; }
+  .knob { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; margin: 0 0 8px; }
+  .knob label { font-size: 13px; }
+  .knob output { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--t-mute); }
+  .knob input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: #2a2a28; margin: 2px 0 0; }
+  .seg { display: flex; border: 1px solid var(--t-ink); margin: 0 0 10px; }
+  .seg label { flex: 1; text-align: center; font-size: 12.5px; padding: 5px 0; cursor: pointer; border-right: 1px solid var(--t-ink); }
+  .seg label:last-child { border-right: 0; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg input:checked + span { font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+  .seg input:focus-visible + span { outline: 2px solid var(--t-ink); outline-offset: 2px; }
+  .chk { display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 0 0 8px; }
+  textarea { width: 100%; font: inherit; font-size: 13px; border: 1px solid var(--t-line); background: #fff; padding: 6px 8px; resize: vertical; min-height: 56px; border-radius: 0; margin: 0 0 12px; }
+  main { padding: 14px 16px 32px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  .head strong { font-size: 13.5px; }
+  .fig { font-variant-numeric: tabular-nums; font-size: 13px; }
+  .fig b { font-size: 15px; }
+  .sub { font-size: 12px; color: var(--t-mute); margin: 0; }
+  .stage { background: var(--m-bg); padding: 22px 22px; }
+  .stage canvas { display: block; width: 100%; }
+  @media (max-width: 860px) { .app { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--t-line); } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>URAJI 光の字</h1>
+    <p>同じ字形を光でつくる2つの見せ方。夜にどう見えるかと、つくるのに何がいくつ要るかを並べる。灰色が道具、黒い面が夜。</p>
+    <a href="https://claude.ai/artifact/51KpKXTyAqecGQS2kp2hRK">使い方（裏フェス フォント）</a>
+  </header>
+  <aside>
+    <div class="grp">
+      <h2>共通</h2>
+      <textarea id="text" spellcheck="false" aria-label="見本の文字（1行ずつ）">URAFESS
+ケイドロ 21:30</textarea>
+      <div class="seg" role="radiogroup" aria-label="光の色">
+        <label><input type="radio" name="col" value="#b8ff5a" checked><span>蓄光</span></label>
+        <label><input type="radio" name="col" value="#f1ede4"><span>月白</span></label>
+        <label><input type="radio" name="col" value="#ff6a3d"><span>朱</span></label>
+      </div>
+      <div class="knob"><label for="dist">見る距離</label><output id="o_dist"></output><input type="range" id="dist" min="0" max="10" step="0.5" value="0"></div>
+    </div>
+    <div class="grp">
+      <h2>輪郭（ネオン・LEDテープ）</h2>
+      <div class="knob"><label for="tube">管の太さ</label><output id="o_tube"></output><input type="range" id="tube" min="8" max="60" step="1" value="22"></div>
+      <div class="knob"><label for="bloom">光のにじみ</label><output id="o_bloom"></output><input type="range" id="bloom" min="0" max="40" step="1" value="16"></div>
+      <div class="knob"><label for="hO">字の高さ</label><output id="o_hO"></output><input type="range" id="hO" min="0.2" max="3" step="0.1" value="1"></div>
+    </div>
+    <div class="grp">
+      <h2>光点（スマホ・提灯）</h2>
+      <div class="knob"><label for="rows">字の高さあたりの点の数</label><output id="o_rows"></output><input type="range" id="rows" min="5" max="26" step="1" value="11"></div>
+      <div class="knob"><label for="dot">点の大きさ</label><output id="o_dot"></output><input type="range" id="dot" min="0.3" max="0.95" step="0.05" value="0.6"></div>
+      <div class="knob"><label for="hD">字の高さ</label><output id="o_hD"></output><input type="range" id="hD" min="2" max="40" step="0.5" value="10"></div>
+      <label class="chk"><input type="checkbox" id="lineRow" checked> 線の高さの一列は必ず消す（闇の列）</label>
+    </div>
+  </aside>
+  <main>
+    <div class="head"><strong>輪郭（籠字）</strong><span class="fig" id="figO"></span></div>
+    <p class="sub">字の縁をなぞる光。線（切れ目）は、上下で輪郭が分かれた二重の縁として残る。</p>
+    <div class="stage"><canvas id="cvO" aria-label="輪郭の見本"></canvas></div>
+    <div class="head" style="margin-top:8px"><strong>光点</strong><span class="fig" id="figD"></span></div>
+    <p class="sub">字の面を格子で拾った光の点。点が粗いと線が消えるので、線の高さの一列を闇にして残す。</p>
+    <div class="stage"><canvas id="cvD" aria-label="光点の見本"></canvas></div>
+  </main>
+</div>
+<!-- polygon-clipping 0.15.7 (MIT License, Copyright (c) 2018 Mike Fogel) -->
+<script>!function(t,e){"object"==typeof exports&&"undefined"!=typeof module?module.exports=e():"function"==typeof define&&define.amd?define(e):(t="undefined"!=typeof globalThis?globalThis:t||self).polygonClipping=e()}(this,(function(){"use strict";
+/**
+     * splaytree v3.1.2
+     * Fast Splay tree for Node and browser
+     *
+     * @author Alexander Milevski <info@w8r.name>
+     * @license MIT
+     * @preserve
+     */
+/*! *****************************************************************************
+    Copyright (c) Microsoft Corporation. All rights reserved.
+    Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+    this file except in compliance with the License. You may obtain a copy of the
+    License at http://www.apache.org/licenses/LICENSE-2.0
+
+    THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED
+    WARRANTIES OR CONDITIONS OF TITLE, FITNESS FOR A PARTICULAR PURPOSE,
+    MERCHANTABLITY OR NON-INFRINGEMENT.
+
+    See the Apache Version 2.0 License for specific language governing permissions
+    and limitations under the License.
+    ***************************************************************************** */function t(t,e){var n,r,i,o,s={label:0,sent:function(){if(1&i[0])throw i[1];return i[1]},trys:[],ops:[]};return o={next:l(0),throw:l(1),return:l(2)},"function"==typeof Symbol&&(o[Symbol.iterator]=function(){return this}),o;function l(o){return function(l){return function(o){if(n)throw new TypeError("Generator is already executing.");for(;s;)try{if(n=1,r&&(i=2&o[0]?r.return:o[0]?r.throw||((i=r.return)&&i.call(r),0):r.next)&&!(i=i.call(r,o[1])).done)return i;switch(r=0,i&&(o=[2&o[0],i.value]),o[0]){case 0:case 1:i=o;break;case 4:return s.label++,{value:o[1],done:!1};case 5:s.label++,r=o[1],o=[0];continue;case 7:o=s.ops.pop(),s.trys.pop();continue;default:if(!(i=s.trys,(i=i.length>0&&i[i.length-1])||6!==o[0]&&2!==o[0])){s=0;continue}if(3===o[0]&&(!i||o[1]>i[0]&&o[1]<i[3])){s.label=o[1];break}if(6===o[0]&&s.label<i[1]){s.label=i[1],i=o;break}if(i&&s.label<i[2]){s.label=i[2],s.ops.push(o);break}i[2]&&s.ops.pop(),s.trys.pop();continue}o=e.call(t,s)}catch(t){o=[6,t],r=0}finally{n=i=0}if(5&o[0])throw o[1];return{value:o[0]?o[1]:void 0,done:!0}}([o,l])}}}var e=function(t,e){this.next=null,this.key=t,this.data=e,this.left=null,this.right=null};function n(t,e){return t>e?1:t<e?-1:0}function r(t,n,r){for(var i=new e(null,null),o=i,s=i;;){var l=r(t,n.key);if(l<0){if(null===n.left)break;if(r(t,n.left.key)<0){var h=n.left;if(n.left=h.right,h.right=n,null===(n=h).left)break}s.left=n,s=n,n=n.left}else{if(!(l>0))break;if(null===n.right)break;if(r(t,n.right.key)>0){h=n.right;if(n.right=h.left,h.left=n,null===(n=h).right)break}o.right=n,o=n,n=n.right}}return o.right=n.left,s.left=n.right,n.left=i.right,n.right=i.left,n}function i(t,n,i,o){var s=new e(t,n);if(null===i)return s.left=s.right=null,s;var l=o(t,(i=r(t,i,o)).key);return l<0?(s.left=i.left,s.right=i,i.left=null):l>=0&&(s.right=i.right,s.left=i,i.right=null),s}function o(t,e,n){var i=null,o=null;if(e){var s=n((e=r(t,e,n)).key,t);0===s?(i=e.left,o=e.right):s<0?(o=e.right,e.right=null,i=e):(i=e.left,e.left=null,o=e)}return{left:i,right:o}}function s(t,e,n,r,i){if(t){r(e+(n?"└── ":"├── ")+i(t)+"\n");var o=e+(n?"    ":"│   ");t.left&&s(t.left,o,!1,r,i),t.right&&s(t.right,o,!0,r,i)}}var l=function(){function l(t){void 0===t&&(t=n),this._root=null,this._size=0,this._comparator=t}return l.prototype.insert=function(t,e){return this._size++,this._root=i(t,e,this._root,this._comparator)},l.prototype.add=function(t,n){var i=new e(t,n);null===this._root&&(i.left=i.right=null,this._size++,this._root=i);var o=this._comparator,s=r(t,this._root,o),l=o(t,s.key);return 0===l?this._root=s:(l<0?(i.left=s.left,i.right=s,s.left=null):l>0&&(i.right=s.right,i.left=s,s.right=null),this._size++,this._root=i),this._root},l.prototype.remove=function(t){this._root=this._remove(t,this._root,this._comparator)},l.prototype._remove=function(t,e,n){var i;return null===e?null:0===n(t,(e=r(t,e,n)).key)?(null===e.left?i=e.right:(i=r(t,e.left,n)).right=e.right,this._size--,i):e},l.prototype.pop=function(){var t=this._root;if(t){for(;t.left;)t=t.left;return this._root=r(t.key,this._root,this._comparator),this._root=this._remove(t.key,this._root,this._comparator),{key:t.key,data:t.data}}return null},l.prototype.findStatic=function(t){for(var e=this._root,n=this._comparator;e;){var r=n(t,e.key);if(0===r)return e;e=r<0?e.left:e.right}return null},l.prototype.find=function(t){return this._root&&(this._root=r(t,this._root,this._comparator),0!==this._comparator(t,this._root.key))?null:this._root},l.prototype.contains=function(t){for(var e=this._root,n=this._comparator;e;){var r=n(t,e.key);if(0===r)return!0;e=r<0?e.left:e.right}return!1},l.prototype.forEach=function(t,e){for(var n=this._root,r=[],i=!1;!i;)null!==n?(r.push(n),n=n.left):0!==r.length?(n=r.pop(),t.call(e,n),n=n.right):i=!0;return this},l.prototype.range=function(t,e,n,r){for(var i=[],o=this._comparator,s=this._root;0!==i.length||s;)if(s)i.push(s),s=s.left;else{if(o((s=i.pop()).key,e)>0)break;if(o(s.key,t)>=0&&n.call(r,s))return this;s=s.right}return this},l.prototype.keys=function(){var t=[];return this.forEach((function(e){var n=e.key;return t.push(n)})),t},l.prototype.values=function(){var t=[];return this.forEach((function(e){var n=e.data;return t.push(n)})),t},l.prototype.min=function(){return this._root?this.minNode(this._root).key:null},l.prototype.max=function(){return this._root?this.maxNode(this._root).key:null},l.prototype.minNode=function(t){if(void 0===t&&(t=this._root),t)for(;t.left;)t=t.left;return t},l.prototype.maxNode=function(t){if(void 0===t&&(t=this._root),t)for(;t.right;)t=t.right;return t},l.prototype.at=function(t){for(var e=this._root,n=!1,r=0,i=[];!n;)if(e)i.push(e),e=e.left;else if(i.length>0){if(e=i.pop(),r===t)return e;r++,e=e.right}else n=!0;return null},l.prototype.next=function(t){var e=this._root,n=null;if(t.right){for(n=t.right;n.left;)n=n.left;return n}for(var r=this._comparator;e;){var i=r(t.key,e.key);if(0===i)break;i<0?(n=e,e=e.left):e=e.right}return n},l.prototype.prev=function(t){var e=this._root,n=null;if(null!==t.left){for(n=t.left;n.right;)n=n.right;return n}for(var r=this._comparator;e;){var i=r(t.key,e.key);if(0===i)break;i<0?e=e.left:(n=e,e=e.right)}return n},l.prototype.clear=function(){return this._root=null,this._size=0,this},l.prototype.toList=function(){return function(t){var n=t,r=[],i=!1,o=new e(null,null),s=o;for(;!i;)n?(r.push(n),n=n.left):r.length>0?n=(n=s=s.next=r.pop()).right:i=!0;return s.next=null,o.next}(this._root)},l.prototype.load=function(t,n,r){void 0===n&&(n=[]),void 0===r&&(r=!1);var i=t.length,o=this._comparator;if(r&&f(t,n,0,i-1,o),null===this._root)this._root=h(t,n,0,i),this._size=i;else{var s=function(t,n,r){var i=new e(null,null),o=i,s=t,l=n;for(;null!==s&&null!==l;)r(s.key,l.key)<0?(o.next=s,s=s.next):(o.next=l,l=l.next),o=o.next;null!==s?o.next=s:null!==l&&(o.next=l);return i.next}(this.toList(),function(t,n){for(var r=new e(null,null),i=r,o=0;o<t.length;o++)i=i.next=new e(t[o],n[o]);return i.next=null,r.next}(t,n),o);i=this._size+i,this._root=u({head:s},0,i)}return this},l.prototype.isEmpty=function(){return null===this._root},Object.defineProperty(l.prototype,"size",{get:function(){return this._size},enumerable:!0,configurable:!0}),Object.defineProperty(l.prototype,"root",{get:function(){return this._root},enumerable:!0,configurable:!0}),l.prototype.toString=function(t){void 0===t&&(t=function(t){return String(t.key)});var e=[];return s(this._root,"",!0,(function(t){return e.push(t)}),t),e.join("")},l.prototype.update=function(t,e,n){var s=this._comparator,l=o(t,this._root,s),h=l.left,u=l.right;s(t,e)<0?u=i(e,n,u,s):h=i(e,n,h,s),this._root=function(t,e,n){return null===e?t:(null===t||((e=r(t.key,e,n)).left=t),e)}(h,u,s)},l.prototype.split=function(t){return o(t,this._root,this._comparator)},l.prototype[Symbol.iterator]=function(){var e,n,r;return t(this,(function(t){switch(t.label){case 0:e=this._root,n=[],r=!1,t.label=1;case 1:return r?[3,6]:null===e?[3,2]:(n.push(e),e=e.left,[3,5]);case 2:return 0===n.length?[3,4]:[4,e=n.pop()];case 3:return t.sent(),e=e.right,[3,5];case 4:r=!0,t.label=5;case 5:return[3,1];case 6:return[2]}}))},l}();function h(t,n,r,i){var o=i-r;if(o>0){var s=r+Math.floor(o/2),l=t[s],u=n[s],f=new e(l,u);return f.left=h(t,n,r,s),f.right=h(t,n,s+1,i),f}return null}function u(t,e,n){var r=n-e;if(r>0){var i=e+Math.floor(r/2),o=u(t,e,i),s=t.head;return s.left=o,t.head=t.head.next,s.right=u(t,i+1,n),s}return null}function f(t,e,n,r,i){if(!(n>=r)){for(var o=t[n+r>>1],s=n-1,l=r+1;;){do{s++}while(i(t[s],o)<0);do{l--}while(i(t[l],o)>0);if(s>=l)break;var h=t[s];t[s]=t[l],t[l]=h,h=e[s],e[s]=e[l],e[l]=h}f(t,e,n,l,i),f(t,e,l+1,r,i)}}const c=(t,e)=>t.ll.x<=e.x&&e.x<=t.ur.x&&t.ll.y<=e.y&&e.y<=t.ur.y,p=(t,e)=>{if(e.ur.x<t.ll.x||t.ur.x<e.ll.x||e.ur.y<t.ll.y||t.ur.y<e.ll.y)return null;const n=t.ll.x<e.ll.x?e.ll.x:t.ll.x,r=t.ur.x<e.ur.x?t.ur.x:e.ur.x;return{ll:{x:n,y:t.ll.y<e.ll.y?e.ll.y:t.ll.y},ur:{x:r,y:t.ur.y<e.ur.y?t.ur.y:e.ur.y}}};let g=Number.EPSILON;void 0===g&&(g=Math.pow(2,-52));const a=g*g,y=(t,e)=>{if(-g<t&&t<g&&-g<e&&e<g)return 0;const n=t-e;return n*n<a*t*e?0:t<e?-1:1};class x{constructor(){this.tree=new l,this.round(0)}round(t){const e=this.tree.add(t),n=this.tree.prev(e);if(null!==n&&0===y(e.key,n.key))return this.tree.remove(t),n.key;const r=this.tree.next(e);return null!==r&&0===y(e.key,r.key)?(this.tree.remove(t),r.key):t}}const b=new class{constructor(){this.reset()}reset(){this.xRounder=new x,this.yRounder=new x}round(t,e){return{x:this.xRounder.round(t),y:this.yRounder.round(e)}}},v=11102230246251565e-32,d=134217729,m=(3+8*v)*v;function E(t,e,n,r,i){let o,s,l,h,u=e[0],f=r[0],c=0,p=0;f>u==f>-u?(o=u,u=e[++c]):(o=f,f=r[++p]);let g=0;if(c<t&&p<n)for(f>u==f>-u?(s=u+o,l=o-(s-u),u=e[++c]):(s=f+o,l=o-(s-f),f=r[++p]),o=s,0!==l&&(i[g++]=l);c<t&&p<n;)f>u==f>-u?(s=o+u,h=s-o,l=o-(s-h)+(u-h),u=e[++c]):(s=o+f,h=s-o,l=o-(s-h)+(f-h),f=r[++p]),o=s,0!==l&&(i[g++]=l);for(;c<t;)s=o+u,h=s-o,l=o-(s-h)+(u-h),u=e[++c],o=s,0!==l&&(i[g++]=l);for(;p<n;)s=o+f,h=s-o,l=o-(s-h)+(f-h),f=r[++p],o=s,0!==l&&(i[g++]=l);return 0===o&&0!==g||(i[g++]=o),g}function S(t){return new Float64Array(t)}const _=22204460492503146e-32,w=11093356479670487e-47,k=S(4),R=S(8),I=S(12),P=S(16),N=S(4);function A(t,e,n,r,i,o){const s=(e-o)*(n-i),l=(t-i)*(r-o),h=s-l,u=Math.abs(s+l);return Math.abs(h)>=33306690738754716e-32*u?h:-function(t,e,n,r,i,o,s){let l,h,u,f,c,p,g,a,y,x,b,v,S,A,O,L,$,M;const z=t-i,B=n-i,G=e-o,T=r-o;A=z*T,p=d*z,g=p-(p-z),a=z-g,p=d*T,y=p-(p-T),x=T-y,O=a*x-(A-g*y-a*y-g*x),L=G*B,p=d*G,g=p-(p-G),a=G-g,p=d*B,y=p-(p-B),x=B-y,$=a*x-(L-g*y-a*y-g*x),b=O-$,c=O-b,k[0]=O-(b+c)+(c-$),v=A+b,c=v-A,S=A-(v-c)+(b-c),b=S-L,c=S-b,k[1]=S-(b+c)+(c-L),M=v+b,c=M-v,k[2]=v-(M-c)+(b-c),k[3]=M;let q=function(t,e){let n=e[0];for(let r=1;r<t;r++)n+=e[r];return n}(4,k),C=_*s;if(q>=C||-q>=C)return q;if(c=t-z,l=t-(z+c)+(c-i),c=n-B,u=n-(B+c)+(c-i),c=e-G,h=e-(G+c)+(c-o),c=r-T,f=r-(T+c)+(c-o),0===l&&0===h&&0===u&&0===f)return q;if(C=w*s+m*Math.abs(q),q+=z*f+T*l-(G*u+B*h),q>=C||-q>=C)return q;A=l*T,p=d*l,g=p-(p-l),a=l-g,p=d*T,y=p-(p-T),x=T-y,O=a*x-(A-g*y-a*y-g*x),L=h*B,p=d*h,g=p-(p-h),a=h-g,p=d*B,y=p-(p-B),x=B-y,$=a*x-(L-g*y-a*y-g*x),b=O-$,c=O-b,N[0]=O-(b+c)+(c-$),v=A+b,c=v-A,S=A-(v-c)+(b-c),b=S-L,c=S-b,N[1]=S-(b+c)+(c-L),M=v+b,c=M-v,N[2]=v-(M-c)+(b-c),N[3]=M;const F=E(4,k,4,N,R);A=z*f,p=d*z,g=p-(p-z),a=z-g,p=d*f,y=p-(p-f),x=f-y,O=a*x-(A-g*y-a*y-g*x),L=G*u,p=d*G,g=p-(p-G),a=G-g,p=d*u,y=p-(p-u),x=u-y,$=a*x-(L-g*y-a*y-g*x),b=O-$,c=O-b,N[0]=O-(b+c)+(c-$),v=A+b,c=v-A,S=A-(v-c)+(b-c),b=S-L,c=S-b,N[1]=S-(b+c)+(c-L),M=v+b,c=M-v,N[2]=v-(M-c)+(b-c),N[3]=M;const j=E(F,R,4,N,I);A=l*f,p=d*l,g=p-(p-l),a=l-g,p=d*f,y=p-(p-f),x=f-y,O=a*x-(A-g*y-a*y-g*x),L=h*u,p=d*h,g=p-(p-h),a=h-g,p=d*u,y=p-(p-u),x=u-y,$=a*x-(L-g*y-a*y-g*x),b=O-$,c=O-b,N[0]=O-(b+c)+(c-$),v=A+b,c=v-A,S=A-(v-c)+(b-c),b=S-L,c=S-b,N[1]=S-(b+c)+(c-L),M=v+b,c=M-v,N[2]=v-(M-c)+(b-c),N[3]=M;const U=E(j,I,4,N,P);return P[U-1]}(t,e,n,r,i,o,u)}const O=(t,e)=>t.x*e.y-t.y*e.x,L=(t,e)=>t.x*e.x+t.y*e.y,$=(t,e,n)=>{const r=A(t.x,t.y,e.x,e.y,n.x,n.y);return r>0?-1:r<0?1:0},M=t=>Math.sqrt(L(t,t)),z=(t,e,n)=>{const r={x:e.x-t.x,y:e.y-t.y},i={x:n.x-t.x,y:n.y-t.y};return O(i,r)/M(i)/M(r)},B=(t,e,n)=>{const r={x:e.x-t.x,y:e.y-t.y},i={x:n.x-t.x,y:n.y-t.y};return L(i,r)/M(i)/M(r)},G=(t,e,n)=>0===e.y?null:{x:t.x+e.x/e.y*(n-t.y),y:n},T=(t,e,n)=>0===e.x?null:{x:n,y:t.y+e.y/e.x*(n-t.x)};class q{static compare(t,e){const n=q.comparePoints(t.point,e.point);return 0!==n?n:(t.point!==e.point&&t.link(e),t.isLeft!==e.isLeft?t.isLeft?1:-1:F.compare(t.segment,e.segment))}static comparePoints(t,e){return t.x<e.x?-1:t.x>e.x?1:t.y<e.y?-1:t.y>e.y?1:0}constructor(t,e){void 0===t.events?t.events=[this]:t.events.push(this),this.point=t,this.isLeft=e}link(t){if(t.point===this.point)throw new Error("Tried to link already linked events");const e=t.point.events;for(let t=0,n=e.length;t<n;t++){const n=e[t];this.point.events.push(n),n.point=this.point}this.checkForConsuming()}checkForConsuming(){const t=this.point.events.length;for(let e=0;e<t;e++){const n=this.point.events[e];if(void 0===n.segment.consumedBy)for(let r=e+1;r<t;r++){const t=this.point.events[r];void 0===t.consumedBy&&(n.otherSE.point.events===t.otherSE.point.events&&n.segment.consume(t.segment))}}}getAvailableLinkedEvents(){const t=[];for(let e=0,n=this.point.events.length;e<n;e++){const n=this.point.events[e];n!==this&&!n.segment.ringOut&&n.segment.isInResult()&&t.push(n)}return t}getLeftmostComparator(t){const e=new Map,n=n=>{const r=n.otherSE;e.set(n,{sine:z(this.point,t.point,r.point),cosine:B(this.point,t.point,r.point)})};return(t,r)=>{e.has(t)||n(t),e.has(r)||n(r);const{sine:i,cosine:o}=e.get(t),{sine:s,cosine:l}=e.get(r);return i>=0&&s>=0?o<l?1:o>l?-1:0:i<0&&s<0?o<l?-1:o>l?1:0:s<i?-1:s>i?1:0}}}let C=0;class F{static compare(t,e){const n=t.leftSE.point.x,r=e.leftSE.point.x,i=t.rightSE.point.x,o=e.rightSE.point.x;if(o<n)return 1;if(i<r)return-1;const s=t.leftSE.point.y,l=e.leftSE.point.y,h=t.rightSE.point.y,u=e.rightSE.point.y;if(n<r){if(l<s&&l<h)return 1;if(l>s&&l>h)return-1;const n=t.comparePoint(e.leftSE.point);if(n<0)return 1;if(n>0)return-1;const r=e.comparePoint(t.rightSE.point);return 0!==r?r:-1}if(n>r){if(s<l&&s<u)return-1;if(s>l&&s>u)return 1;const n=e.comparePoint(t.leftSE.point);if(0!==n)return n;const r=t.comparePoint(e.rightSE.point);return r<0?1:r>0?-1:1}if(s<l)return-1;if(s>l)return 1;if(i<o){const n=e.comparePoint(t.rightSE.point);if(0!==n)return n}if(i>o){const n=t.comparePoint(e.rightSE.point);if(n<0)return 1;if(n>0)return-1}if(i!==o){const t=h-s,e=i-n,f=u-l,c=o-r;if(t>e&&f<c)return 1;if(t<e&&f>c)return-1}return i>o?1:i<o||h<u?-1:h>u?1:t.id<e.id?-1:t.id>e.id?1:0}constructor(t,e,n,r){this.id=++C,this.leftSE=t,t.segment=this,t.otherSE=e,this.rightSE=e,e.segment=this,e.otherSE=t,this.rings=n,this.windings=r}static fromRing(t,e,n){let r,i,o;const s=q.comparePoints(t,e);if(s<0)r=t,i=e,o=1;else{if(!(s>0))throw new Error(`Tried to create degenerate segment at [${t.x}, ${t.y}]`);r=e,i=t,o=-1}const l=new q(r,!0),h=new q(i,!1);return new F(l,h,[n],[o])}replaceRightSE(t){this.rightSE=t,this.rightSE.segment=this,this.rightSE.otherSE=this.leftSE,this.leftSE.otherSE=this.rightSE}bbox(){const t=this.leftSE.point.y,e=this.rightSE.point.y;return{ll:{x:this.leftSE.point.x,y:t<e?t:e},ur:{x:this.rightSE.point.x,y:t>e?t:e}}}vector(){return{x:this.rightSE.point.x-this.leftSE.point.x,y:this.rightSE.point.y-this.leftSE.point.y}}isAnEndpoint(t){return t.x===this.leftSE.point.x&&t.y===this.leftSE.point.y||t.x===this.rightSE.point.x&&t.y===this.rightSE.point.y}comparePoint(t){if(this.isAnEndpoint(t))return 0;const e=this.leftSE.point,n=this.rightSE.point,r=this.vector();if(e.x===n.x)return t.x===e.x?0:t.x<e.x?1:-1;const i=(t.y-e.y)/r.y,o=e.x+i*r.x;if(t.x===o)return 0;const s=(t.x-e.x)/r.x,l=e.y+s*r.y;return t.y===l?0:t.y<l?-1:1}getIntersection(t){const e=this.bbox(),n=t.bbox(),r=p(e,n);if(null===r)return null;const i=this.leftSE.point,o=this.rightSE.point,s=t.leftSE.point,l=t.rightSE.point,h=c(e,s)&&0===this.comparePoint(s),u=c(n,i)&&0===t.comparePoint(i),f=c(e,l)&&0===this.comparePoint(l),g=c(n,o)&&0===t.comparePoint(o);if(u&&h)return g&&!f?o:!g&&f?l:null;if(u)return f&&i.x===l.x&&i.y===l.y?null:i;if(h)return g&&o.x===s.x&&o.y===s.y?null:s;if(g&&f)return null;if(g)return o;if(f)return l;const a=((t,e,n,r)=>{if(0===e.x)return T(n,r,t.x);if(0===r.x)return T(t,e,n.x);if(0===e.y)return G(n,r,t.y);if(0===r.y)return G(t,e,n.y);const i=O(e,r);if(0==i)return null;const o={x:n.x-t.x,y:n.y-t.y},s=O(o,e)/i,l=O(o,r)/i;return{x:(t.x+l*e.x+(n.x+s*r.x))/2,y:(t.y+l*e.y+(n.y+s*r.y))/2}})(i,this.vector(),s,t.vector());return null===a?null:c(r,a)?b.round(a.x,a.y):null}split(t){const e=[],n=void 0!==t.events,r=new q(t,!0),i=new q(t,!1),o=this.rightSE;this.replaceRightSE(i),e.push(i),e.push(r);const s=new F(r,o,this.rings.slice(),this.windings.slice());return q.comparePoints(s.leftSE.point,s.rightSE.point)>0&&s.swapEvents(),q.comparePoints(this.leftSE.point,this.rightSE.point)>0&&this.swapEvents(),n&&(r.checkForConsuming(),i.checkForConsuming()),e}swapEvents(){const t=this.rightSE;this.rightSE=this.leftSE,this.leftSE=t,this.leftSE.isLeft=!0,this.rightSE.isLeft=!1;for(let t=0,e=this.windings.length;t<e;t++)this.windings[t]*=-1}consume(t){let e=this,n=t;for(;e.consumedBy;)e=e.consumedBy;for(;n.consumedBy;)n=n.consumedBy;const r=F.compare(e,n);if(0!==r){if(r>0){const t=e;e=n,n=t}if(e.prev===n){const t=e;e=n,n=t}for(let t=0,r=n.rings.length;t<r;t++){const r=n.rings[t],i=n.windings[t],o=e.rings.indexOf(r);-1===o?(e.rings.push(r),e.windings.push(i)):e.windings[o]+=i}n.rings=null,n.windings=null,n.consumedBy=e,n.leftSE.consumedBy=e.leftSE,n.rightSE.consumedBy=e.rightSE}}prevInResult(){return void 0!==this._prevInResult||(this.prev?this.prev.isInResult()?this._prevInResult=this.prev:this._prevInResult=this.prev.prevInResult():this._prevInResult=null),this._prevInResult}beforeState(){if(void 0!==this._beforeState)return this._beforeState;if(this.prev){const t=this.prev.consumedBy||this.prev;this._beforeState=t.afterState()}else this._beforeState={rings:[],windings:[],multiPolys:[]};return this._beforeState}afterState(){if(void 0!==this._afterState)return this._afterState;const t=this.beforeState();this._afterState={rings:t.rings.slice(0),windings:t.windings.slice(0),multiPolys:[]};const e=this._afterState.rings,n=this._afterState.windings,r=this._afterState.multiPolys;for(let t=0,r=this.rings.length;t<r;t++){const r=this.rings[t],i=this.windings[t],o=e.indexOf(r);-1===o?(e.push(r),n.push(i)):n[o]+=i}const i=[],o=[];for(let t=0,r=e.length;t<r;t++){if(0===n[t])continue;const r=e[t],s=r.poly;if(-1===o.indexOf(s))if(r.isExterior)i.push(s);else{-1===o.indexOf(s)&&o.push(s);const t=i.indexOf(r.poly);-1!==t&&i.splice(t,1)}}for(let t=0,e=i.length;t<e;t++){const e=i[t].multiPoly;-1===r.indexOf(e)&&r.push(e)}return this._afterState}isInResult(){if(this.consumedBy)return!1;if(void 0!==this._isInResult)return this._isInResult;const t=this.beforeState().multiPolys,e=this.afterState().multiPolys;switch(H.type){case"union":{const n=0===t.length,r=0===e.length;this._isInResult=n!==r;break}case"intersection":{let n,r;t.length<e.length?(n=t.length,r=e.length):(n=e.length,r=t.length),this._isInResult=r===H.numMultiPolys&&n<r;break}case"xor":{const n=Math.abs(t.length-e.length);this._isInResult=n%2==1;break}case"difference":{const n=t=>1===t.length&&t[0].isSubject;this._isInResult=n(t)!==n(e);break}default:throw new Error(`Unrecognized operation type found ${H.type}`)}return this._isInResult}}class j{constructor(t,e,n){if(!Array.isArray(t)||0===t.length)throw new Error("Input geometry is not a valid Polygon or MultiPolygon");if(this.poly=e,this.isExterior=n,this.segments=[],"number"!=typeof t[0][0]||"number"!=typeof t[0][1])throw new Error("Input geometry is not a valid Polygon or MultiPolygon");const r=b.round(t[0][0],t[0][1]);this.bbox={ll:{x:r.x,y:r.y},ur:{x:r.x,y:r.y}};let i=r;for(let e=1,n=t.length;e<n;e++){if("number"!=typeof t[e][0]||"number"!=typeof t[e][1])throw new Error("Input geometry is not a valid Polygon or MultiPolygon");let n=b.round(t[e][0],t[e][1]);n.x===i.x&&n.y===i.y||(this.segments.push(F.fromRing(i,n,this)),n.x<this.bbox.ll.x&&(this.bbox.ll.x=n.x),n.y<this.bbox.ll.y&&(this.bbox.ll.y=n.y),n.x>this.bbox.ur.x&&(this.bbox.ur.x=n.x),n.y>this.bbox.ur.y&&(this.bbox.ur.y=n.y),i=n)}r.x===i.x&&r.y===i.y||this.segments.push(F.fromRing(i,r,this))}getSweepEvents(){const t=[];for(let e=0,n=this.segments.length;e<n;e++){const n=this.segments[e];t.push(n.leftSE),t.push(n.rightSE)}return t}}class U{constructor(t,e){if(!Array.isArray(t))throw new Error("Input geometry is not a valid Polygon or MultiPolygon");this.exteriorRing=new j(t[0],this,!0),this.bbox={ll:{x:this.exteriorRing.bbox.ll.x,y:this.exteriorRing.bbox.ll.y},ur:{x:this.exteriorRing.bbox.ur.x,y:this.exteriorRing.bbox.ur.y}},this.interiorRings=[];for(let e=1,n=t.length;e<n;e++){const n=new j(t[e],this,!1);n.bbox.ll.x<this.bbox.ll.x&&(this.bbox.ll.x=n.bbox.ll.x),n.bbox.ll.y<this.bbox.ll.y&&(this.bbox.ll.y=n.bbox.ll.y),n.bbox.ur.x>this.bbox.ur.x&&(this.bbox.ur.x=n.bbox.ur.x),n.bbox.ur.y>this.bbox.ur.y&&(this.bbox.ur.y=n.bbox.ur.y),this.interiorRings.push(n)}this.multiPoly=e}getSweepEvents(){const t=this.exteriorRing.getSweepEvents();for(let e=0,n=this.interiorRings.length;e<n;e++){const n=this.interiorRings[e].getSweepEvents();for(let e=0,r=n.length;e<r;e++)t.push(n[e])}return t}}class Y{constructor(t,e){if(!Array.isArray(t))throw new Error("Input geometry is not a valid Polygon or MultiPolygon");try{"number"==typeof t[0][0][0]&&(t=[t])}catch(t){}this.polys=[],this.bbox={ll:{x:Number.POSITIVE_INFINITY,y:Number.POSITIVE_INFINITY},ur:{x:Number.NEGATIVE_INFINITY,y:Number.NEGATIVE_INFINITY}};for(let e=0,n=t.length;e<n;e++){const n=new U(t[e],this);n.bbox.ll.x<this.bbox.ll.x&&(this.bbox.ll.x=n.bbox.ll.x),n.bbox.ll.y<this.bbox.ll.y&&(this.bbox.ll.y=n.bbox.ll.y),n.bbox.ur.x>this.bbox.ur.x&&(this.bbox.ur.x=n.bbox.ur.x),n.bbox.ur.y>this.bbox.ur.y&&(this.bbox.ur.y=n.bbox.ur.y),this.polys.push(n)}this.isSubject=e}getSweepEvents(){const t=[];for(let e=0,n=this.polys.length;e<n;e++){const n=this.polys[e].getSweepEvents();for(let e=0,r=n.length;e<r;e++)t.push(n[e])}return t}}class V{static factory(t){const e=[];for(let n=0,r=t.length;n<r;n++){const r=t[n];if(!r.isInResult()||r.ringOut)continue;let i=null,o=r.leftSE,s=r.rightSE;const l=[o],h=o.point,u=[];for(;i=o,o=s,l.push(o),o.point!==h;)for(;;){const t=o.getAvailableLinkedEvents();if(0===t.length){const t=l[0].point,e=l[l.length-1].point;throw new Error(`Unable to complete output ring starting at [${t.x}, ${t.y}]. Last matching segment found ends at [${e.x}, ${e.y}].`)}if(1===t.length){s=t[0].otherSE;break}let n=null;for(let t=0,e=u.length;t<e;t++)if(u[t].point===o.point){n=t;break}if(null!==n){const t=u.splice(n)[0],r=l.splice(t.index);r.unshift(r[0].otherSE),e.push(new V(r.reverse()));continue}u.push({index:l.length,point:o.point});const r=o.getLeftmostComparator(i);s=t.sort(r)[0].otherSE;break}e.push(new V(l))}return e}constructor(t){this.events=t;for(let e=0,n=t.length;e<n;e++)t[e].segment.ringOut=this;this.poly=null}getGeom(){let t=this.events[0].point;const e=[t];for(let n=1,r=this.events.length-1;n<r;n++){const r=this.events[n].point,i=this.events[n+1].point;0!==$(r,t,i)&&(e.push(r),t=r)}if(1===e.length)return null;const n=e[0],r=e[1];0===$(n,t,r)&&e.shift(),e.push(e[0]);const i=this.isExteriorRing()?1:-1,o=this.isExteriorRing()?0:e.length-1,s=this.isExteriorRing()?e.length:-1,l=[];for(let t=o;t!=s;t+=i)l.push([e[t].x,e[t].y]);return l}isExteriorRing(){if(void 0===this._isExteriorRing){const t=this.enclosingRing();this._isExteriorRing=!t||!t.isExteriorRing()}return this._isExteriorRing}enclosingRing(){return void 0===this._enclosingRing&&(this._enclosingRing=this._calcEnclosingRing()),this._enclosingRing}_calcEnclosingRing(){let t=this.events[0];for(let e=1,n=this.events.length;e<n;e++){const n=this.events[e];q.compare(t,n)>0&&(t=n)}let e=t.segment.prevInResult(),n=e?e.prevInResult():null;for(;;){if(!e)return null;if(!n)return e.ringOut;if(n.ringOut!==e.ringOut)return n.ringOut.enclosingRing()!==e.ringOut?e.ringOut:e.ringOut.enclosingRing();e=n.prevInResult(),n=e?e.prevInResult():null}}}class X{constructor(t){this.exteriorRing=t,t.poly=this,this.interiorRings=[]}addInterior(t){this.interiorRings.push(t),t.poly=this}getGeom(){const t=[this.exteriorRing.getGeom()];if(null===t[0])return null;for(let e=0,n=this.interiorRings.length;e<n;e++){const n=this.interiorRings[e].getGeom();null!==n&&t.push(n)}return t}}class Q{constructor(t){this.rings=t,this.polys=this._composePolys(t)}getGeom(){const t=[];for(let e=0,n=this.polys.length;e<n;e++){const n=this.polys[e].getGeom();null!==n&&t.push(n)}return t}_composePolys(t){const e=[];for(let n=0,r=t.length;n<r;n++){const r=t[n];if(!r.poly)if(r.isExteriorRing())e.push(new X(r));else{const t=r.enclosingRing();t.poly||e.push(new X(t)),t.poly.addInterior(r)}}return e}}class W{constructor(t){let e=arguments.length>1&&void 0!==arguments[1]?arguments[1]:F.compare;this.queue=t,this.tree=new l(e),this.segments=[]}process(t){const e=t.segment,n=[];if(t.consumedBy)return t.isLeft?this.queue.remove(t.otherSE):this.tree.remove(e),n;const r=t.isLeft?this.tree.add(e):this.tree.find(e);if(!r)throw new Error(`Unable to find segment #${e.id} [${e.leftSE.point.x}, ${e.leftSE.point.y}] -> [${e.rightSE.point.x}, ${e.rightSE.point.y}] in SweepLine tree.`);let i,o,s=r,l=r;for(;void 0===i;)s=this.tree.prev(s),null===s?i=null:void 0===s.key.consumedBy&&(i=s.key);for(;void 0===o;)l=this.tree.next(l),null===l?o=null:void 0===l.key.consumedBy&&(o=l.key);if(t.isLeft){let r=null;if(i){const t=i.getIntersection(e);if(null!==t&&(e.isAnEndpoint(t)||(r=t),!i.isAnEndpoint(t))){const e=this._splitSafely(i,t);for(let t=0,r=e.length;t<r;t++)n.push(e[t])}}let s=null;if(o){const t=o.getIntersection(e);if(null!==t&&(e.isAnEndpoint(t)||(s=t),!o.isAnEndpoint(t))){const e=this._splitSafely(o,t);for(let t=0,r=e.length;t<r;t++)n.push(e[t])}}if(null!==r||null!==s){let t=null;if(null===r)t=s;else if(null===s)t=r;else{t=q.comparePoints(r,s)<=0?r:s}this.queue.remove(e.rightSE),n.push(e.rightSE);const i=e.split(t);for(let t=0,e=i.length;t<e;t++)n.push(i[t])}n.length>0?(this.tree.remove(e),n.push(t)):(this.segments.push(e),e.prev=i)}else{if(i&&o){const t=i.getIntersection(o);if(null!==t){if(!i.isAnEndpoint(t)){const e=this._splitSafely(i,t);for(let t=0,r=e.length;t<r;t++)n.push(e[t])}if(!o.isAnEndpoint(t)){const e=this._splitSafely(o,t);for(let t=0,r=e.length;t<r;t++)n.push(e[t])}}}this.tree.remove(e)}return n}_splitSafely(t,e){this.tree.remove(t);const n=t.rightSE;this.queue.remove(n);const r=t.split(e);return r.push(n),void 0===t.consumedBy&&this.tree.add(t),r}}const Z="undefined"!=typeof process&&process.env.POLYGON_CLIPPING_MAX_QUEUE_SIZE||1e6,D="undefined"!=typeof process&&process.env.POLYGON_CLIPPING_MAX_SWEEPLINE_SEGMENTS||1e6;const H=new class{run(t,e,n){H.type=t,b.reset();const r=[new Y(e,!0)];for(let t=0,e=n.length;t<e;t++)r.push(new Y(n[t],!1));if(H.numMultiPolys=r.length,"difference"===H.type){const t=r[0];let e=1;for(;e<r.length;)null!==p(r[e].bbox,t.bbox)?e++:r.splice(e,1)}if("intersection"===H.type)for(let t=0,e=r.length;t<e;t++){const e=r[t];for(let n=t+1,i=r.length;n<i;n++)if(null===p(e.bbox,r[n].bbox))return[]}const i=new l(q.compare);for(let t=0,e=r.length;t<e;t++){const e=r[t].getSweepEvents();for(let t=0,n=e.length;t<n;t++)if(i.insert(e[t]),i.size>Z)throw new Error("Infinite loop when putting segment endpoints in a priority queue (queue size too big).")}const o=new W(i);let s=i.size,h=i.pop();for(;h;){const t=h.key;if(i.size===s){const e=t.segment;throw new Error(`Unable to pop() ${t.isLeft?"left":"right"} SweepEvent [${t.point.x}, ${t.point.y}] from segment #${e.id} [${e.leftSE.point.x}, ${e.leftSE.point.y}] -> [${e.rightSE.point.x}, ${e.rightSE.point.y}] from queue.`)}if(i.size>Z)throw new Error("Infinite loop when passing sweep line over endpoints (queue size too big).");if(o.segments.length>D)throw new Error("Infinite loop when passing sweep line over endpoints (too many sweep line segments).");const e=o.process(t);for(let t=0,n=e.length;t<n;t++){const n=e[t];void 0===n.consumedBy&&i.insert(n)}s=i.size,h=i.pop()}b.reset();const u=V.factory(o.segments);return new Q(u).getGeom()}};var J={union:function(t){for(var e=arguments.length,n=new Array(e>1?e-1:0),r=1;r<e;r++)n[r-1]=arguments[r];return H.run("union",t,n)},intersection:function(t){for(var e=arguments.length,n=new Array(e>1?e-1:0),r=1;r<e;r++)n[r-1]=arguments[r];return H.run("intersection",t,n)},xor:function(t){for(var e=arguments.length,n=new Array(e>1?e-1:0),r=1;r<e;r++)n[r-1]=arguments[r];return H.run("xor",t,n)},difference:function(t){for(var e=arguments.length,n=new Array(e>1?e-1:0),r=1;r<e;r++)n[r-1]=arguments[r];return H.run("difference",t,n)}};return J}));
+//# sourceMappingURL=polygon-clipping.umd.min.js.map
+</script>
+<script>/*
+ * URAJI（裏字）— カタカナ
+ * 全角 1000、字面 y -110..790。横画・縦画・斜め画と、右上の折れ（丸い角）だけで組む。
+ * ・線（切れ目）の近くの横画は「線の真下」(上端 = S0) か「線の真上」(下端 = S1) に置き、線を跨がせない。
+ * ・小さいかなは、線から下（裏）にちょうど収まる大きさにする。
+ */
+(function (root) {
+  "use strict";
+  root.URAJI_KANA = function (J, k) {
+    const { add, rect, poly, rr, ring, diag, U, D, I, O, X, scaleAt } = k;
+    const { TOP, BOT, HB, VB, S0, S1 } = J;
+    const DT = 128;                                   // 斜め画の太さ
+    const above = (h = HB) => [S1, S1 + h];           // 線の真上に乗る横画
+    const under = (h = HB) => [S0 - h, S0];           // 線の真下に下がる横画
+    const hbar = (x0, x1, y0, y1 = y0 + HB) => rect(x0, y0, x1, y1);
+    const vbar = (x0, y0, y1, w = VB) => rect(x0, y0, x0 + w, y1);
+    const roundTR = (node, x1, y1, r = 160) => I(node, U(rr(-3000, -3000, x1, y1, 0, [r, r], 0, 0), rect(x1 - 1, -3000, 3000, y1 - r)));
+    const roundBL = (node, x0, y0, r = 150) => I(node, U(rr(x0, y0, 3000, 3000, 0, 0, 0, [r, r]), rect(-3000, y0 + r, x0 + 1, 3000), rect(x0 + r, -3000, 3000, y0 + 1)));
+    const hslab = (x0, y0, x1, y1, th) => poly([[x0, y0 - th / 2], [x1, y1 - th / 2], [x1, y1 + th / 2], [x0, y0 + th / 2]]);
+    const squeeze = (node, s) => X([s, 0, 0, 1, 60 * (1 - s), 0], node);
+    const box = (n) => I(n, rect(30, BOT - 20, 975, TOP));
+
+    // 縦画が yBend で折れて (xe, ye) へ払う一筆（継ぎ目は留め）
+    function bend(x0, w, yTop, yBend, xe, ye) {
+      const xc = x0 + w / 2, dx = xe - xc, dy = ye - yBend, L = Math.hypot(dx, dy);
+      const ux = dx / L, uy = dy / L, nx = -uy, ny = ux, h = w / 2;
+      const A = [xc + h * nx, yBend + h * ny], Bp = [xc - h * nx, yBend - h * ny];
+      const xAt = (P, Y) => P[0] + (Y - P[1]) / uy * ux;
+      const [Lf, Rt] = xAt(A, yBend) < xAt(Bp, yBend) ? [A, Bp] : [Bp, A];
+      const atX = (P, Xv) => [Xv, P[1] + (Xv - P[0]) / ux * uy];
+      const atY = (P, Y) => [xAt(P, Y), Y];
+      return poly([[x0, yTop], [x0 + w, yTop], atX(Rt, x0 + w), atY(Rt, ye), atY(Lf, ye), atX(Lf, x0)]);
+    }
+    // 縦画が下で跳ねて右上 (xe, ye) へ上がる一筆（レ・ル）
+    function flick(x0, w, yTop, yBot, xe, ye, t) {
+      const dx = xe - x0, dy = ye - yBot, L = Math.hypot(dx, dy), ux = dx / L, uy = dy / L, nx = -uy, ny = ux;
+      const Q = [x0 + t * nx, yBot + t * ny];
+      const s = (x0 + w - Q[0]) / ux;
+      const Jp = [x0 + w, Q[1] + s * uy];
+      return poly([[x0, yTop], [x0 + w, yTop], Jp, [Q[0] + L * ux, Q[1] + L * uy], [xe, ye], [x0, yBot]]);
+    }
+    // フ型：上の横画が右で折れて左下へ流れる
+    const fuShape = (x0, xr, yTop, xEnd, r = 170) =>
+      roundTR(U(hbar(x0, xr, yTop - HB, yTop), diag(xr + 20, yTop, xEnd, BOT, VB)), xr, yTop, r);
+
+    const full = {};
+    const def = (name, cp, tree, opt) => { full[name] = tree; add(name, [cp], 1000, box(tree), opt); };
+
+    // ---- ア行 ----
+    def("uni30A2", 0x30A2, U(roundTR(U(hbar(110, 870, TOP - HB, TOP), diag(880, TOP, 690, S1 + 60, DT)), 870, TOP, 160),   // ア
+      diag(560, TOP - HB + 6, 190, BOT, VB)));
+    def("uni30A4", 0x30A4, U(diag(880, TOP, 110, 250, VB), vbar(520, BOT, 560)));                        // イ
+    def("uni30A6", 0x30A6, U(vbar(433, TOP - HB, TOP), vbar(130, 300, S1 + HB),                          // ウ
+      roundTR(U(hbar(130, 860, ...above()), diag(880, S1 + HB, 360, BOT, VB)), 860, S1 + HB, 150)));
+    def("uni30A8", 0x30A8, U(hbar(190, 810, TOP - HB, TOP), vbar(433, 0, TOP), hbar(100, 900, BOT, BOT + HB)));   // エ
+    def("uni30AA", 0x30AA, U(hbar(90, 910, S1 + 70, S1 + 70 + HB), vbar(560, -40, TOP), hbar(400, 694, BOT, BOT + HB),   // オ
+      diag(570, S1 + 110, 140, 0, DT)));
+
+    // ---- カ行 ----
+    def("uni30AB", 0x30AB, U(roundTR(U(hbar(110, 870, S1 + 80, S1 + 80 + HB), vbar(736, 10, S1 + 80 + HB)), 870, S1 + 80 + HB, 150),   // カ
+      hbar(630, 870, BOT, BOT + HB), vbar(736, BOT, 40), diag(450, TOP, 130, BOT, VB)));
+    def("uni30AD", 0x30AD, U(hbar(160, 840, S1 + 110, S1 + 110 + HB), hbar(90, 910, ...under()), diag(420, TOP, 570, BOT, VB)));   // キ
+    def("uni30AF", 0x30AF, U(diag(410, TOP, 140, S1, DT), fuShape(330, 860, TOP, 300)));                 // ク
+    def("uni30B1", 0x30B1, U(diag(360, TOP, 90, 200, DT), hbar(250, 910, ...above()), diag(690, S1 + HB, 350, BOT, VB)));   // ケ
+    def("uni30B3", 0x30B3, I(U(hbar(150, 850, TOP - 70 - HB, TOP - 70), vbar(716, -30, TOP - 70), hbar(150, 850, -30, -30 + HB)),   // コ
+      rr(-3000, -30, 850, TOP - 70, 0, [150, 150], [150, 150], 0)));
+
+    // ---- サ行 ----
+    def("uni30B5", 0x30B5, U(hbar(70, 930, S1 + 50, S1 + 50 + HB), vbar(240, 250, TOP), bend(616, VB, TOP, 330, 330, BOT)));   // サ
+    def("uni30B7", 0x30B7, U(hslab(150, 740, 400, 660, 112), hslab(110, 560, 360, 500, 112), diag(150, BOT, 900, 640, 142)));   // シ
+    def("uni30B9", 0x30B9, I(U(hbar(150, 800, TOP - HB, TOP), diag(830, TOP, 150, BOT, VB), diag(470, 330, 900, BOT, VB)),   // ス
+      U(rr(60, BOT, 800, TOP, 0, [170, 170], 0, 0), rect(60, BOT, 940, TOP - 200))));
+    def("uni30BB", 0x30BB, U(roundTR(U(hbar(70, 880, S1 + 90, S1 + 90 + HB), diag(880, S1 + 90 + HB, 730, S1 + 30, DT)), 880, S1 + 90 + HB, 140),   // セ
+      roundBL(U(vbar(250, BOT, TOP), hbar(250, 890, BOT, BOT + HB)), 250, BOT, 150)));
+    def("uni30BD", 0x30BD, U(diag(170, 720, 330, S1 + 20, DT), diag(870, TOP, 310, BOT, VB)));             // ソ
+
+    // ---- タ行 ----
+    def("uni30BF", 0x30BF, U(diag(410, TOP, 140, S1, DT), fuShape(330, 860, TOP, 300), diag(455, 560, 700, 310, DT)));   // タ
+    def("uni30C1", 0x30C1, U(hslab(220, 700, 820, 770, 112), hbar(70, 930, ...above()), bend(433, VB, 740, 330, 200, BOT)));   // チ
+    def("uni30C4", 0x30C4, U(diag(150, 730, 280, S1 + 50, DT), diag(400, 770, 530, S1 + 90, DT), diag(880, TOP, 330, BOT, VB)));   // ツ
+    def("uni30C6", 0x30C6, U(hbar(210, 790, TOP - HB, TOP), hbar(70, 930, ...above()), bend(433, VB, S1 + 2, 300, 210, BOT)));   // テ
+    def("uni30C8", 0x30C8, I(U(rect(300, BOT, 300 + VB, TOP), diag(300 + VB - 20, S0 - 2, 800, 150, 118)),   // ト
+      U(rect(300, BOT, 300 + VB, TOP), rect(300, BOT, 900, S0))));
+
+    // ---- ナ行 ----
+    def("uni30CA", 0x30CA, U(hbar(70, 930, S1 + 50, S1 + 50 + HB), bend(520, VB, TOP, 330, 230, BOT)));   // ナ
+    def("uni30CB", 0x30CB, U(hbar(200, 800, S1 + 120, S1 + 120 + HB), hbar(80, 920, 20, 20 + HB)));        // ニ
+    def("uni30CC", 0x30CC, U(fuShape(130, 860, TOP, 330), diag(300, S0 - 40, 800, 10, DT)));              // ヌ
+    def("uni30CD", 0x30CD, U(vbar(433, TOP - HB, TOP),                                                    // ネ
+      roundTR(U(hbar(150, 840, S1 + 50, S1 + 50 + HB), diag(850, S1 + 50 + HB, 150, 40, DT)), 840, S1 + 50 + HB, 140),
+      vbar(433, BOT, 240), diag(640, 250, 880, 60, 112)));
+    def("uni30CE", 0x30CE, diag(830, TOP, 200, BOT, 142));                                                // ノ
+
+    // ---- ハ行 ----
+    def("uni30CF", 0x30CF, U(diag(400, 640, 90, -40, VB), diag(600, 640, 910, -40, VB)));                  // ハ
+    def("uni30D2", 0x30D2, U(roundBL(U(vbar(170, BOT, TOP), hbar(170, 880, BOT, BOT + HB)), 170, BOT, 150), hbar(250, 820, ...above())));   // ヒ
+    def("uni30D5", 0x30D5, I(U(rect(130, TOP - HB, 860, TOP), diag(880, TOP, 330, BOT, VB)), rr(60, BOT, 860, TOP, 0, [170, 170], 0, 0)));   // フ
+    def("uni30D8", 0x30D8, U(diag(70, 200, 330, 620, VB), diag(280, 640, 930, 20, VB)));                  // ヘ
+    def("uni30DB", 0x30DB, U(hbar(70, 930, S1 + 70, S1 + 70 + HB), vbar(433, -20, TOP), hbar(300, 567, BOT, BOT + HB),   // ホ
+      diag(300, 330, 100, -60, DT), diag(700, 330, 900, -60, DT)));
+
+    // ---- マ行 ----
+    def("uni30DE", 0x30DE, U(roundTR(U(hbar(100, 870, TOP - HB, TOP), diag(880, TOP, 495, 300, VB)), 870, TOP, 160), diag(495, 300, 760, -80, VB)));   // マ
+    def("uni30DF", 0x30DF, U(hslab(250, 740, 700, 680, 100), hslab(230, 352, 720, 300, 96), hslab(190, -10, 800, -70, 106)));   // ミ
+    def("uni30E0", 0x30E0, U(diag(520, TOP, 160, -10, VB), hbar(110, 840, BOT, BOT + HB), diag(620, 330, 870, 70, DT)));   // ム
+    def("uni30E1", 0x30E1, U(diag(840, TOP, 170, BOT, 142), diag(290, S0 - 10, 830, 10, DT)));           // メ
+    def("uni30E2", 0x30E2, U(hbar(200, 800, TOP - HB, TOP), hbar(70, 930, ...above()), roundBL(U(vbar(380, BOT, TOP), hbar(380, 880, BOT, BOT + HB)), 380, BOT, 150)));   // モ
+
+    // ---- ヤ行 ----
+    def("uni30E4", 0x30E4, U(roundTR(U(hbar(70, 870, S1 + 60, S1 + 60 + HB), diag(880, S1 + 60 + HB, 730, S1 + 10, DT)), 870, S1 + 60 + HB, 140),   // ヤ
+      diag(330, TOP, 510, BOT, VB)));
+    def("uni30E6", 0x30E6, U(roundTR(U(hbar(150, 760, S1 + 110, S1 + 110 + HB), vbar(626, 40, S1 + 110 + HB)), 760, S1 + 110 + HB, 130), hbar(70, 930, -40, -40 + HB)));   // ユ
+    def("uni30E8", 0x30E8, I(U(hbar(150, 850, TOP - HB, TOP), hbar(190, 850, ...under()), hbar(150, 850, BOT, BOT + HB), vbar(716, BOT, TOP)),   // ヨ
+      rr(-3000, BOT, 850, TOP, 0, [150, 150], [150, 150], 0)));
+
+    // ---- ラ行 ----
+    def("uni30E9", 0x30E9, U(hbar(220, 780, TOP - HB, TOP), fuShape(130, 860, S1 + HB, 330, 150)));        // ラ
+    def("uni30EA", 0x30EA, U(vbar(200, 200, 760), bend(640, VB, TOP, 330, 380, BOT)));                    // リ
+    def("uni30EB", 0x30EB, U(bend(240, VB, TOP, 330, 70, BOT), flick(560, VB, TOP, BOT, 940, 260, 118)));  // ル
+    def("uni30EC", 0x30EC, flick(200, VB, TOP, BOT, 910, S1 + 130, 128));                                 // レ
+    def("uni30ED", 0x30ED, ring(150, -60, 850, 730, 120, 120, 120, 120, VB, HB));                         // ロ
+
+    // ---- ワ行・ン ----
+    def("uni30EF", 0x30EF, U(vbar(140, S1 + 40, TOP), fuShape(140, 860, TOP, 330)));                      // ワ
+    def("uni30F2", 0x30F2, U(fuShape(120, 850, TOP, 330), hbar(160, 700, ...above())));                  // ヲ
+    def("uni30F3", 0x30F3, I(U(diag(180, 690, 420, 545, 118), diag(170, BOT + 10, 870, TOP - 70, 142)), rect(100, BOT, 900, TOP)));   // ン
+
+    // ---- 小さいかな：線から下（裏）にちょうど収まる大きさ。細る分は太らせて戻す ----
+    const SK = (S0 - BOT) / (TOP - BOT);
+    const small = (n) => O(scaleAt(full[n], SK, 500, BOT), 11);
+    [["uni30A1", "uni30A2"], ["uni30A3", "uni30A4"], ["uni30A5", "uni30A6"], ["uni30A7", "uni30A8"], ["uni30A9", "uni30AA"],
+     ["uni30C3", "uni30C4"], ["uni30E3", "uni30E4"], ["uni30E5", "uni30E6"], ["uni30E7", "uni30E8"], ["uni30EE", "uni30EF"],
+     ["uni30F5", "uni30AB"], ["uni30F6", "uni30B1"]].forEach(([s, b]) => def(s, parseInt(s.slice(3), 16), small(b)));
+
+    // ---- 濁点・半濁点（右上の決まった場所。ぶつかる字は字を少し細めて場所をあける） ----
+    const dakuten = U(diag(815, TOP, 845, 690, 58), diag(905, TOP, 935, 690, 58));
+    const handakuten = ring(810, 650, 950, TOP, 70, 70, 70, 70, 40, 40);
+    const handNotch = rect(800, 705, 852, 737);
+    const base = {
+      uni30AF: squeeze(full.uni30AF, 0.88), uni30B3: squeeze(full.uni30B3, 0.88), uni30BF: squeeze(full.uni30BF, 0.88),
+      uni30D5: squeeze(full.uni30D5, 0.88), uni30AD: squeeze(full.uni30AD, 0.88), uni30BB: squeeze(full.uni30BB, 0.88),
+      uni30C6: squeeze(full.uni30C6, 0.94), uni30C1: squeeze(full.uni30C1, 0.88),
+      uni30BD: U(diag(170, 720, 330, S1 + 20, DT), diag(690, 700, 250, BOT, VB)),
+      uni30C4: U(diag(150, 730, 280, S1 + 50, DT), diag(400, 770, 530, S1 + 90, DT), diag(690, 700, 280, BOT, VB)),
+    };
+    const pick = (b) => base[b] || full[b];
+    const DAKU = [["uni30AB", 0x30AC], ["uni30AD", 0x30AE], ["uni30AF", 0x30B0], ["uni30B1", 0x30B2], ["uni30B3", 0x30B4],
+      ["uni30B5", 0x30B6], ["uni30B7", 0x30B8], ["uni30B9", 0x30BA], ["uni30BB", 0x30BC], ["uni30BD", 0x30BE],
+      ["uni30BF", 0x30C0], ["uni30C1", 0x30C2], ["uni30C4", 0x30C5], ["uni30C6", 0x30C7], ["uni30C8", 0x30C9],
+      ["uni30CF", 0x30D0], ["uni30D2", 0x30D3], ["uni30D5", 0x30D6], ["uni30D8", 0x30D9], ["uni30DB", 0x30DC], ["uni30A6", 0x30F4]];
+    const HANDAKU = [["uni30CF", 0x30D1], ["uni30D2", 0x30D4], ["uni30D5", 0x30D7], ["uni30D8", 0x30DA], ["uni30DB", 0x30DD]];
+    const hb = { uni30DB: squeeze(full.uni30DB, 0.86), uni30D5: squeeze(full.uni30D5, 0.88) };
+    const hx = (n) => n.toString(16).toUpperCase();
+    for (const [b, cp] of DAKU) def("uni" + hx(cp), cp, U(pick(b), dakuten));
+    for (const [b, cp] of HANDAKU) def("uni" + hx(cp), cp, U(hb[b] || full[b], handakuten), { notch: [handNotch] });
+
+    // ---- 記号 ----
+    def("uni30FC", 0x30FC, rect(80, 290, 920, 290 + HB));                                                 // ー
+    def("uni30FB", 0x30FB, rect(430, 272, 570, 410));                                                     // ・
+    def("uni300C", 0x300C, U(rect(540, 250, 652, TOP), rect(540, TOP - 108, 860, TOP)));                  // 「
+    def("uni300D", 0x300D, U(rect(348, BOT, 460, 400), rect(140, BOT, 460, BOT + 108)));                  // 」
+    def("uni3001", 0x3001, diag(150, 120, 300, -60, 110));                                               // 、
+    def("uni3002", 0x3002, ring(110, -100, 330, 120, 110, 110, 110, 110, 62, 62), { notch: [rect(100, -6, 176, 26)] });   // 。
+  };
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+<script>/*
+ * URAJI（裏字）— 字形の正本
+ * すべての字は、統一層 P のつまみから組み立てる「演算の木」として書く。
+ *   ["path", cmds]           cmds: ["M",x,y] ["L",x,y] ["C",x1,y1,x2,y2,x,y] ["Z"]
+ *   ["U", ...]  和   ["D", a, ...b]  差   ["I", a, b]  積   ["X", [a,b,c,d,e,f], node]  変形
+ * ブラウザ（つまみの道具）は木を canvas で描き、フォントの生成は木を Python（pathops）で読む。
+ * 同じ木から作るので、道具で見た形とフォントの形は一致する。
+ */
+(function (root) {
+  "use strict";
+
+  const DEFAULTS = {
+    H: 700,      // 大文字の高さ
+    V: 160,      // 縦画の太さ
+    B: 136,      // 横画の太さ
+    R: 190,      // 丸い角の外半径
+    K: 0.60,     // 角の張り（0.55≒円弧。大きいほど四角寄り）
+    SLIT: 0.618, // 線（切れ目）の中心の高さ。H に対する比
+    T: 40,       // 線の厚さ（0 で線なし＝ベタ）
+    SB: 62,      // 縦画側の字間
+    WX: 1.0,     // 字幅の倍率（英数字のみ）
+  };
+
+  const KNOBS = [
+    { key: "SLIT", label: "線の高さ", group: "線", min: 0.50, max: 0.74, step: 0.001, fmt: (v) => v.toFixed(3) },
+    { key: "T", label: "線の厚さ", group: "線", min: 0, max: 90, step: 1, fmt: (v) => String(Math.round(v)) },
+    { key: "V", label: "縦画の太さ", group: "骨", min: 100, max: 210, step: 1, fmt: (v) => String(Math.round(v)) },
+    { key: "B", label: "横画の太さ", group: "骨", min: 90, max: 176, step: 1, fmt: (v) => String(Math.round(v)) },
+    { key: "WX", label: "字幅", group: "骨", min: 0.82, max: 1.24, step: 0.01, fmt: (v) => v.toFixed(2) },
+    { key: "R", label: "角の半径", group: "角", min: 0, max: 280, step: 1, fmt: (v) => String(Math.round(v)) },
+    { key: "K", label: "角の張り", group: "角", min: 0.50, max: 0.82, step: 0.01, fmt: (v) => v.toFixed(2) },
+    { key: "SB", label: "字間", group: "字間", min: 20, max: 120, step: 1, fmt: (v) => String(Math.round(v)) },
+  ];
+
+  const KERN = [
+    ["L", "T", -70], ["L", "V", -50], ["L", "Y", -60], ["L", "W", -34], ["L", "quotesingle", -70], ["L", "quotedbl", -70], ["L", "O", -16],
+    ["T", "A", -24], ["T", "comma", -70], ["T", "period", -70], ["T", "J", -44], ["T", "hyphen", -40],
+    ["F", "A", -24], ["F", "comma", -60], ["F", "period", -60], ["F", "J", -44],
+    ["P", "A", -24], ["P", "comma", -60], ["P", "period", -60], ["P", "J", -44],
+    ["V", "comma", -60], ["V", "period", -60], ["W", "comma", -50], ["W", "period", -50], ["Y", "comma", -64], ["Y", "period", -64],
+    ["V", "A", -16], ["W", "A", -12], ["Y", "A", -18], ["A", "T", -24], ["A", "V", -16], ["A", "W", -12], ["A", "Y", -18],
+    ["R", "T", -16], ["R", "V", -20], ["R", "W", -14], ["R", "Y", -24],
+    ["K", "O", -22], ["K", "C", -22], ["K", "G", -22], ["K", "Q", -22], ["X", "O", -16],
+    ["seven", "period", -60], ["seven", "comma", -60],
+  ];
+
+  // ---------- 演算の木 ----------
+  const U = (...ps) => ["U", ...ps.filter(Boolean)];
+  const D = (a, ...bs) => ["D", a, ...bs.filter(Boolean)];
+  const I = (a, b) => ["I", a, b];
+  const X = (m, a) => ["X", m, a];
+  const O = (a, e) => ["O", e, a];       // 太らせる（輪郭を e だけ外へ）
+  const EMPTY = ["U"];
+
+  function rect(x0, y0, x1, y1) {
+    return ["path", [["M", x0, y0], ["L", x1, y0], ["L", x1, y1], ["L", x0, y1], ["Z"]]];
+  }
+  function poly(pts) {
+    const c = [["M", pts[0][0], pts[0][1]]];
+    for (let i = 1; i < pts.length; i++) c.push(["L", pts[i][0], pts[i][1]]);
+    c.push(["Z"]);
+    return ["path", c];
+  }
+  function mirrorX(node, w) { return X([-1, 0, 0, 1, w, 0], node); }
+  function mirrorY(node, h) { return X([1, 0, 0, -1, 0, h], node); }
+  function scaleAt(node, s, cx, cy) { return X([s, 0, 0, s, cx - s * cx, cy - s * cy], node); }
+  function move(node, dx, dy) { return X([1, 0, 0, 1, dx, dy], node); }
+
+  function build(params) {
+    const P = Object.assign({}, DEFAULTS, params || {});
+    const H = P.H, V = P.V, B = P.B, R = P.R, T = P.T, K = P.K, WX = P.WX;
+    const S0 = Math.round(H * P.SLIT - T / 2);   // 線の下端
+    const S1 = S0 + T;                           // 線の上端
+    const M1 = S0;                               // 中間画の上端＝線の下端
+    const M0 = M1 - B;                           // 中間画の下端
+    const SB = P.SB;
+    const st = SB, rd = Math.round(SB * 0.8), dg = Math.round(SB * 0.35), tb = Math.round(SB * 0.5);
+    const Rs = Math.min(170, R);                 // S・2 の背骨の角
+    const ww = (w) => Math.round(w * WX);
+
+    function rr(x0, y0, x1, y1, tl = 0, tr = 0, br = 0, bl = 0, k = K) {
+      const w = x1 - x0, h = y1 - y0;
+      const r2 = (r) => {
+        let rx, ry;
+        if (Array.isArray(r)) { rx = r[0]; ry = r[1]; } else { rx = r; ry = r; }
+        rx = Math.max(0, Math.min(rx, w / 2)); ry = Math.max(0, Math.min(ry, h / 2));
+        return (rx < 1 || ry < 1) ? [0, 0] : [rx, ry];
+      };
+      const [tlx, tly] = r2(tl), [trx, try_] = r2(tr), [brx, bry] = r2(br), [blx, bly] = r2(bl);
+      const c = [["M", x0 + blx, y0], ["L", x1 - brx, y0]];
+      if (brx) c.push(["C", x1 - brx + k * brx, y0, x1, y0 + bry - k * bry, x1, y0 + bry]);
+      c.push(["L", x1, y1 - try_]);
+      if (trx) c.push(["C", x1, y1 - try_ + k * try_, x1 - trx + k * trx, y1, x1 - trx, y1]);
+      c.push(["L", x0 + tlx, y1]);
+      if (tlx) c.push(["C", x0 + tlx - k * tlx, y1, x0, y1 - tly + k * tly, x0, y1 - tly]);
+      c.push(["L", x0, y0 + bly]);
+      if (blx) c.push(["C", x0, y0 + bly - k * bly, x0 + blx - k * blx, y0, x0 + blx, y0]);
+      c.push(["Z"]);
+      return ["path", c];
+    }
+    function ring(x0, y0, x1, y1, tl = 0, tr = 0, br = 0, bl = 0, v = V, b = B) {
+      const inn = (r) => {
+        let rx, ry;
+        if (Array.isArray(r)) { rx = r[0]; ry = r[1]; } else { rx = r; ry = r; }
+        if (rx <= 0 || ry <= 0) return 0;
+        return [Math.max(rx - v, 0), Math.max(ry - b, 0)];
+      };
+      return D(rr(x0, y0, x1, y1, tl, tr, br, bl), rr(x0 + v, y0 + b, x1 - v, y1 - b, inn(tl), inn(tr), inn(br), inn(bl)));
+    }
+    function diag(xa, ya, xb, yb, t) {
+      const dx = xb - xa, dy = yb - ya;
+      const s = Math.abs(dy) / Math.max(Math.hypot(dx, dy), 1e-6);
+      const w = t / Math.max(s, 0.2);
+      return poly([[xa - w / 2, ya], [xa + w / 2, ya], [xb + w / 2, yb], [xb - w / 2, yb]]);
+    }
+
+    const G = [];            // {name, u, w, l, r, tree, abs, notch}
+    const byName = {};
+    function add(name, u, w, l, r, tree, opt = {}) {
+      const ymin = opt.ymin ?? 0, ymax = opt.ymax ?? H;
+      if (opt.clip !== false) tree = I(tree, rect(0, ymin, w, ymax));
+      const g = { name, u, w, l, r, tree, abs: false, notch: opt.notch || [] };
+      G.push(g); byName[name] = g; return g;
+    }
+    function addabs(name, u, adv, tree, opt = {}) {
+      const g = { name, u, w: adv, l: 0, r: 0, tree, abs: true, notch: opt.notch || [] };
+      G.push(g); byName[name] = g; return g;
+    }
+    const lowerNotch = (yLo, yHi) => { const mid = (yLo + yHi) / 2; return rect(-1, mid - T / 2, V + 1, mid + T / 2); };
+
+    // ===== 英字 =====
+    let W = ww(540);
+    add("A", [0x41, 0x61], W, st, st, U(D(rr(0, 0, W, H, R, R), rr(V, -10, W - V, H - B, [R - V, R - B], [R - V, R - B])), rect(V - 2, M0, W - V + 2, M1)));
+
+    W = ww(520);
+    add("B", [0x42, 0x62], W, st, rd, U(ring(0, M0, W - 24, H, 0, R, R, 0), ring(0, 0, W, M1, 0, R, R, 0)), { notch: [lowerNotch(B, M0)] });
+
+    W = ww(520);
+    add("C", [0x43, 0x63], W, rd, tb, D(ring(0, 0, W, H, R, R, R, R), rect(W - V - 2, R, W + 2, H - R)));
+
+    W = ww(540);
+    add("D", [0x44, 0x64], W, st, rd, ring(0, 0, W, H, 0, R, R, 0));
+
+    W = ww(470);
+    add("E", [0x45, 0x65], W, st, tb, U(rect(0, 0, V, H), rect(0, H - B, W, H), rect(0, M0, W - 34, M1), rect(0, 0, W, B)));
+
+    W = ww(450);
+    add("F", [0x46, 0x66], W, st, tb, U(rect(0, 0, V, H), rect(0, H - B, W, H), rect(0, M0, W - 34, M1)));
+
+    W = ww(540);
+    add("G", [0x47, 0x67], W, rd, rd, U(D(ring(0, 0, W, H, R, R, R, R), rect(W - V - 2, M1, W + 2, H - R)), rect(W * 0.47, M0, W, M1)));
+
+    W = ww(540);
+    add("H", [0x48, 0x68], W, st, st, U(rect(0, 0, V, H), rect(W - V, 0, W, H), rect(V - 1, M0, W - V + 1, M1)));
+
+    W = V;
+    add("I", [0x49, 0x69], W, st, st, rect(0, 0, V, H));
+
+    W = ww(470);
+    add("J", [0x4A, 0x6A], W, tb, st, D(D(rr(0, 0, W, H, 0, 0, R, R), rr(V, B, W - V, H + 60, 0, 0, [R - V, R - B], [R - V, R - B])), rect(-1, 250, V + 1, H + 1)));
+
+    W = ww(540);
+    add("K", [0x4B, 0x6B], W, st, dg, U(rect(0, 0, V, H), diag(V - 10, 250, W - 78, H + 40, 152), diag(V + 118, 360, W - 78, -40, 168)));
+
+    W = ww(440);
+    add("L", [0x4C, 0x6C], W, st, tb, U(rect(0, 0, V, H), rect(0, 0, W, B)));
+
+    W = ww(690);
+    add("M", [0x4D, 0x6D], W, st, st, U(rect(0, 0, V, H), rect(W - V, 0, W, H), diag(V * 0.45, H + 20, W / 2, 170, 148), diag(W - V * 0.45, H + 20, W / 2, 170, 148)));
+
+    W = ww(560);
+    add("N", [0x4E, 0x6E], W, st, st, U(rect(0, 0, V, H), rect(W - V, 0, W, H), diag(V * 0.42, H + 30, W - V * 0.42, -30, 158)));
+
+    W = ww(560);
+    add("O", [0x4F, 0x6F], W, rd, rd, ring(0, 0, W, H, R, R, R, R));
+
+    W = ww(510);
+    add("P", [0x50, 0x70], W, st, rd, U(rect(0, 0, V, H), ring(0, M0, W, H, 0, R, R, 0)));
+
+    W = ww(560);
+    add("Q", [0x51, 0x71], W, rd, rd, I(U(ring(0, 0, W, H, R, R, R, R), diag(W * 0.60, 230, W + 18, -95, 150)), rect(0, -95, W + 30, H)), { clip: false });
+
+    W = ww(530);
+    add("R", [0x52, 0x72], W, st, dg, U(rect(0, 0, V, H), ring(0, M0, W - 22, H, 0, R, R, 0), diag(W * 0.50, M0 + 70, W - 84, -40, 166)));
+
+    W = ww(510);
+    {
+      const up = D(ring(0, M0, W, H, R, 0, 0, Rs), rect(V, M1, W + 1, H - B), rect(W - Rs, M0 - 1, W + 1, M1));
+      const lo = D(ring(0, 0, W, M1, 0, Rs, R, 0), rect(-1, B, W - V, M0), rect(-1, M0 - 1, Rs, M1 + 1));
+      add("S", [0x53, 0x73], W, rd, rd, U(up, lo));
+    }
+
+    W = ww(520);
+    add("T", [0x54, 0x74], W, tb, tb, U(rect(0, H - B, W, H), rect(W / 2 - V / 2, 0, W / 2 + V / 2, H)));
+
+    W = ww(540);
+    add("U", [0x55, 0x75], W, st, st, D(rr(0, 0, W, H, 0, 0, R, R), rr(V, B, W - V, H + 60, 0, 0, [R - V, R - B], [R - V, R - B])));
+
+    W = ww(570);
+    add("V", [0x56, 0x76], W, dg, dg, U(diag(V * 0.5, H + 20, W / 2 - 6, -10, 158), diag(W - V * 0.5, H + 20, W / 2 + 6, -10, 158)));
+
+    W = ww(840);
+    add("W", [0x57, 0x77], W, dg, dg, U(diag(80, H + 20, W * 0.285, -10, 150), diag(W / 2 - 4, 590, W * 0.285, -10, 142),
+      diag(W / 2 + 4, 590, W * 0.715, -10, 142), diag(W - 80, H + 20, W * 0.715, -10, 150)));
+
+    W = ww(570);
+    add("X", [0x58, 0x78], W, dg, dg, U(diag(78, H + 20, W - 78, -20, 156), diag(W - 78, H + 20, 78, -20, 156)));
+
+    W = ww(570);
+    add("Y", [0x59, 0x79], W, dg, dg, U(diag(80, H + 30, W / 2, 280, 156), diag(W - 80, H + 30, W / 2, 280, 156), rect(W / 2 - V / 2, 0, W / 2 + V / 2, 330)));
+
+    W = ww(500);
+    add("Z", [0x5A, 0x7A], W, tb, tb, U(rect(0, H - B, W, H), rect(0, 0, W, B), diag(W - 92, H - B + 4, 92, B - 4, 166)));
+
+    // ===== 数字（等幅） =====
+    const WD = ww(480), DADV = ww(600), DSB = (DADV - WD) / 2;
+    add("zero", [0x30], WD, DSB, DSB, ring(0, 0, WD, H, R, R, R, R));
+    add("one", [0x31], WD, DSB, DSB, U(rect(WD * 0.417, 0, WD * 0.417 + V, H), diag(WD * 0.52, H, 55, H - 220, 128)));
+    add("two", [0x32], WD, DSB, DSB, U(D(ring(0, M0, WD, H, R, R, Rs, 0), rect(-1, M1, WD - V, H - B)), rect(0, 0, V, M1), rect(0, 0, WD, B)));
+    add("three", [0x33], WD, DSB, DSB, U(D(ring(0, 0, WD, H, 0, R, R, 0), rect(-1, B, WD - V, H - B)), rect(WD * 0.30, M0, WD - V + 1, M1)));
+    add("four", [0x34], WD, DSB, DSB, U(rect(WD - V - 26, 0, WD - 26, H), rect(0, 150, WD, 150 + B), rect(0, 150, V, H)));
+    add("five", [0x35], WD, DSB, DSB, U(rect(0, M0, V, H), rect(0, H - B, WD, H), D(ring(0, 0, WD, M1, 0, R, R, 0), rect(-1, B, WD - V, M0))));
+    add("six", [0x36], WD, DSB, DSB, U(ring(0, 0, WD, M1, 0, R, R, R), D(rr(0, M0, WD, H, R), rr(V, M0 - 10, WD + 60, H - B, [R - V, R - B]))), { notch: [lowerNotch(B, M0)] });
+    add("seven", [0x37], WD, DSB, DSB, U(rect(0, H - B, WD, H), diag(WD - 92, H - B + 6, WD * 0.30, -20, 164)));
+    add("eight", [0x38], WD, DSB, DSB, U(ring(14, M0, WD - 14, H, R, R, R, R), ring(0, 0, WD, M1, R, R, R, R)), { notch: [lowerNotch(B, M0)] });
+    add("nine", [0x39], WD, DSB, DSB, U(ring(0, M0, WD, H, R, R, 0, R), D(rr(0, 0, WD, M1, 0, 0, R, 0), rr(-60, B, WD - V, M1 + 60, 0, 0, [R - V, R - B], 0))));
+
+    // ===== 記号 =====
+    const DOT = 150;
+    add("space", [0x20, 0xA0], 0, 130, 130, EMPTY, { clip: false });
+    add("period", [0x2E], V, st, st, rect(0, 0, V, DOT));
+    add("comma", [0x2C], V, st, st, I(U(rect(0, 0, V, DOT), poly([[46, 1], [V, 1], [40, -170], [-70, -170]])), rect(-70, -170, V, DOT)), { clip: false });
+    add("colon", [0x3A], V, st, st, U(rect(0, 150, V, 290), rect(0, S1, V, S1 + 140)));
+    add("semicolon", [0x3B], V, st, st, I(U(rect(0, S1, V, S1 + 140), rect(0, 150, V, 290), poly([[46, 151], [V, 151], [40, -60], [-70, -60]])), rect(-70, -60, V, H)), { clip: false });
+    add("periodcentered", [0xB7, 0x2022, 0x2027], V, st, st, rect(0, M1 - 140, V, M1));
+    add("hyphen", [0x2D, 0x2010, 0x2011], 300, dg, dg, rect(0, M0, 300, M1));
+    add("endash", [0x2013], 520, dg, dg, rect(0, M0, 520, M1));
+    add("emdash", [0x2014], 880, dg, dg, rect(0, M0, 880, M1));
+    add("exclam", [0x21], V, st, st, U(rect(0, 230, V, H), rect(0, 0, V, DOT)));
+    W = 470;
+    add("question", [0x3F], W, dg, rd, U(D(ring(0, M0, W, H, R, R, R, 0), rect(-1, M0 - 1, (W - V) / 2, H - B)), rect((W - V) / 2, 230, (W + V) / 2, M0 + 2), rect((W - V) / 2, 0, (W + V) / 2, DOT)));
+    add("quotesingle", [0x27, 0x2019, 0x2018], 130, st, st, rect(0, 480, 130, H));
+    add("quotedbl", [0x22, 0x201C, 0x201D], 330, st, st, U(rect(0, 480, 130, H), rect(200, 480, 330, H)));
+    W = 250;
+    const paren = D(rr(0, -100, W, 800, [210, 220], 0, 0, [210, 220]), rr(128, 12, W + 80, 688, [82, 108], 0, 0, [82, 108]));
+    add("parenleft", [0x28], W, rd, dg, paren, { ymin: -100, ymax: 800 });
+    add("parenright", [0x29], W, dg, rd, mirrorX(paren, W), { ymin: -100, ymax: 800 });
+    add("slash", [0x2F], 430, dg, dg, diag(70, -100, 360, 800, 140), { ymin: -100, ymax: 800 });
+    add("plus", [0x2B], 480, dg, dg, U(rect(0, M0, 480, M1), rect(172, 110, 308, 580)));
+    add("equal", [0x3D], 480, dg, dg, U(rect(0, 200, 480, 310), rect(0, S1, 480, S1 + 110)));
+    add("multiply", [0xD7], 480, dg, dg, U(diag(70, 600, 410, 90, 128), diag(410, 600, 70, 90, 128)));
+    add("numbersign", [0x23], 580, dg, dg, U(diag(150, 0, 230, H, 118), diag(350, 0, 430, H, 118), rect(0, 150, 580, 258), rect(0, S1, 580, S1 + 108)));
+    W = 640;
+    {
+      const cy = (M0 + M1) / 2;
+      const head = poly([[W, cy], [W - 300, cy + 300], [W - 512, cy + 300], [W - 212, cy], [W - 512, cy - 300], [W - 300, cy - 300]]);
+      const arrowR = U(rect(0, M0, W - 150, M1), head);
+      add("arrowright", [0x2192], W, dg, dg, arrowR, { ymin: -100, ymax: 800 });
+      add("arrowleft", [0x2190], W, dg, dg, mirrorX(arrowR, W), { ymin: -100, ymax: 800 });
+      const up = U(rect(252, -40, 388, 640), poly([[320, 740], [620, 440], [620, 250], [320, 550], [20, 250], [20, 440]]));
+      add("arrowup", [0x2191], 640, dg, dg, up, { ymin: -100, ymax: 800 });
+      add("arrowdown", [0x2193], 640, dg, dg, mirrorY(up, 700), { ymin: -100, ymax: 800 });
+    }
+
+    // ===== 日本語（全角 1000、字面 y -110..790） =====
+    const TOP = 790, BOT = -110, HB = 118, VB = 134;
+    const J = { TOP, BOT, HB, VB, S0, S1, M0, M1, T };
+
+    // 裏（亠＋里＋𧘇。田の中画を線の真上に乗せる）
+    {
+      const hk = 66, vk = 90, dk = 86, c = 500, TOPK = 800, BOTK = -120;
+      const ura = I(U(
+        rect(c - vk / 2, 742, c + vk / 2, TOPK),
+        rect(84, 676, 916, 742),
+        rect(196, 572, 804, 572 + hk),
+        rect(196, S1, 804, S1 + hk),
+        rect(196, 318, 804, 318 + hk),
+        rect(196, 318, 196 + vk, 572 + hk),
+        rect(804 - vk, 318, 804, 572 + hk),
+        rect(c - vk / 2, -40, c + vk / 2, 572 + hk),
+        rect(262, 214, 738, 214 + hk),
+        rect(96, 110, 904, 110 + hk),
+        diag(410, 140, 130, BOTK, dk),
+        diag(585, 150, 900, BOTK, dk),
+        diag(838, 82, 712, -14, 70),
+      ), rect(60, BOTK, 940, TOPK));
+      addabs("uni88CF", [0x88CF], 1000, ura, { notch: [rect(190, S1 + hk, 196 + vk + 1, 572), rect(804 - vk - 1, S1 + hk, 810, 572)] });
+    }
+
+    // かな（カタカナ）— kana.js の定義を読む
+    if (root.URAJI_KANA) root.URAJI_KANA(J, { add: addabs, rect, poly, rr, ring, diag, U, D, I, O, X, mirrorX, mirrorY, scaleAt, move, EMPTY });
+
+    addabs("uni3000", [0x3000], 1000, EMPTY);
+
+    // ===== 線を入れる（ss01 は閉じた穴にも短い切れ目） =====
+    const slitRect = T > 0 ? rect(-2000, S0, 4000, S1) : null;
+    const out = [];
+    const ss01 = [];
+    for (const g of G) {
+      const empty = g.tree.length === 1 && g.tree[0] === "U";
+      let tree = (slitRect && !empty) ? D(g.tree, slitRect) : g.tree;
+      const adv = g.abs ? g.w : g.l + g.w + g.r;
+      const place = (t) => g.abs ? t : X([1, 0, 0, 1, g.l, 0], t);
+      out.push({ name: g.name, u: g.u, adv, tree: place(tree) });
+      if (g.notch.length && !empty) {
+        out.push({ name: g.name + ".ss01", u: [], adv, tree: place(D(g.tree, ...(slitRect ? [slitRect] : []), ...g.notch)) });
+        ss01.push([g.name, g.name + ".ss01"]);
+      }
+    }
+    return { params: P, geo: { S0, S1, M0, M1, H }, glyphs: out, kern: KERN, ss01 };
+  }
+
+  const api = { DEFAULTS, KNOBS, KERN, build };
+  root.URAJI = api;
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+<script>/* 字形の木を多角形の演算で解く（ブラウザ・Node 共通）。継ぎ目のない輪郭を得るため。 */
+(function (root) {
+  "use strict";
+  const PC = root.polygonClipping || (typeof require !== "undefined" ? require("polygon-clipping") : null);
+  const mul = (M, m) => [M[0] * m[0] + M[2] * m[1], M[1] * m[0] + M[3] * m[1], M[0] * m[2] + M[2] * m[3], M[1] * m[2] + M[3] * m[3],
+    M[0] * m[4] + M[2] * m[5] + M[4], M[1] * m[4] + M[3] * m[5] + M[5]];
+  const ap = (M, x, y) => [M[0] * x + M[2] * y + M[4], M[1] * x + M[3] * y + M[5]];
+  function area(r) { let a = 0; for (let i = 0, n = r.length; i < n; i++) { const p = r[i], q = r[(i + 1) % n]; a += p[0] * q[1] - q[0] * p[1]; } return a / 2; }
+  function flatten(node, M) {
+    const out = []; let ring = null, cx = 0, cy = 0;
+    const push = () => { if (ring && ring.length > 2 && Math.abs(area(ring)) > 0.5) out.push([ring]); ring = null; };
+    for (const c of node[1]) {
+      if (c[0] === "M") { push(); ring = [ap(M, c[1], c[2])]; cx = c[1]; cy = c[2]; }
+      else if (c[0] === "L") { ring.push(ap(M, c[1], c[2])); cx = c[1]; cy = c[2]; }
+      else if (c[0] === "C") {
+        const N = 10;
+        for (let i = 1; i <= N; i++) {
+          const t = i / N, u = 1 - t;
+          const x = u * u * u * cx + 3 * u * u * t * c[1] + 3 * u * t * t * c[3] + t * t * t * c[5];
+          const y = u * u * u * cy + 3 * u * u * t * c[2] + 3 * u * t * t * c[4] + t * t * t * c[6];
+          ring.push(ap(M, x, y));
+        }
+        cx = c[5]; cy = c[6];
+      } else push();
+    }
+    push();
+    return out;
+  }
+  function geom(node, M) {
+    const t = node[0];
+    if (t === "path") return flatten(node, M);
+    if (t === "U") { const gs = node.slice(1).map((ch) => geom(ch, M)).filter((g) => g.length); return !gs.length ? [] : gs.length === 1 ? gs[0] : PC.union(...gs); }
+    if (t === "D") { const a = geom(node[1], M); if (!a.length) return []; const bs = node.slice(2).map((b) => geom(b, M)).filter((g) => g.length); return bs.length ? PC.difference(a, ...bs) : a; }
+    if (t === "I") { const a = geom(node[1], M), b = geom(node[2], M); return a.length && b.length ? PC.intersection(a, b) : []; }
+    if (t === "X") return geom(node[2], mul(M, node[1]));
+    if (t === "O") {
+      const a = geom(node[2], M); if (!a.length) return [];
+      const e = node[1] * Math.hypot(M[0], M[1]), copies = [a];
+      for (let k = 0; k < 12; k++) { const g = k / 12 * Math.PI * 2, dx = Math.cos(g) * e, dy = Math.sin(g) * e; copies.push(a.map((p) => p.map((r) => r.map(([x, y]) => [x + dx, y + dy])))); }
+      return PC.union(...copies);
+    }
+    throw new Error("unknown op " + t);
+  }
+  const api = { outline: (tree) => geom(tree, [1, 0, 0, 1, 0, 0]) };
+  root.URAJI_GEOM = api;
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+<script>(function () {
+  "use strict";
+  const UR = window.URAJI, GEO = window.URAJI_GEOM;
+  const $ = (id) => document.getElementById(id);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const B = UR.build({});
+  const byCp = new Map(), byName = new Map(), kern = new Map();
+  for (const g of B.glyphs) { byName.set(g.name, g); for (const u of g.u) byCp.set(u, g); }
+  for (const [a, c, v] of B.kern) kern.set(a + "|" + c, v);
+  const H = B.geo.H, LINE = (B.geo.S0 + B.geo.S1) / 2;
+  const outl = new Map();
+  function outline(g) {
+    if (!outl.has(g.name)) {
+      let mp = [];
+      try { mp = GEO.outline(g.tree); } catch (e) { mp = []; }
+      let per = 0;
+      for (const poly of mp) for (const r of poly) for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; per += Math.hypot(q[0] - p[0], q[1] - p[1]); }
+      outl.set(g.name, { mp, per });
+    }
+    return outl.get(g.name);
+  }
+  function inside(mp, x, y) {
+    let c = false;
+    for (const poly of mp) for (const r of poly) {
+      for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+        const xi = r[i][0], yi = r[i][1], xj = r[j][0], yj = r[j][1];
+        if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c;
+      }
+    }
+    return c;
+  }
+  function layout(str) {
+    const out = []; let prev = null, pen = 0;
+    for (const ch of str) {
+      const g = byCp.get(ch.codePointAt(0));
+      if (!g) { pen += 600; prev = null; continue; }
+      pen += prev ? (kern.get(prev.name + "|" + g.name) || 0) : 0;
+      out.push({ g, x: pen }); pen += g.adv; prev = g;
+    }
+    return { items: out, w: pen };
+  }
+  const val = (id) => parseFloat($(id).value);
+  const color = () => document.querySelector('input[name="col"]:checked').value;
+  function rgba(hex, a) { const n = parseInt(hex.slice(1), 16); return "rgba(" + (n >> 16) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")"; }
+  function lighten(hex) { const n = parseInt(hex.slice(1), 16); const m = (c) => Math.round(c + (255 - c) * 0.55); return "rgb(" + m(n >> 16) + "," + m((n >> 8) & 255) + "," + m(n & 255) + ")"; }
+
+  function prep(cv) {
+    const lines = $("text").value.split("\n").map((l) => l.trimEnd()).filter((l) => l.length).slice(0, 4);
+    if (!lines.length) lines.push("URAFESS");
+    const L = lines.map(layout);
+    const W = cv.clientWidth || 800;
+    const maxU = Math.max(1400, ...L.map((l) => l.w));
+    const px = Math.max(30, Math.min(170, Math.floor(W * 1000 / maxU)));
+    const lh = Math.round(px * 1.25), Hh = L.length * lh + Math.round(px * 0.25);
+    return { L, W, px, lh, Hh };
+  }
+  function blit(cv, off, W, Hh) {
+    cv.width = Math.round(W * dpr); cv.height = Math.round(Hh * dpr); cv.style.height = Hh + "px";
+    const ctx = cv.getContext("2d");
+    const d = val("dist");
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.filter = d > 0 ? "blur(" + (d * 0.9 * dpr) + "px)" : "none";
+    ctx.globalAlpha = 1 - d * 0.035;
+    ctx.drawImage(off, 0, 0);
+    ctx.filter = "none"; ctx.globalAlpha = 1;
+  }
+  function renderOutline() {
+    const cv = $("cvO"), { L, W, px, lh, Hh } = prep(cv);
+    const off = document.createElement("canvas"); off.width = Math.round(W * dpr); off.height = Math.round(Hh * dpr);
+    const x = off.getContext("2d");
+    const col = color(), s = px / 1000, tube = val("tube"), bloom = val("bloom");
+    let per = 0;
+    L.forEach((ln, i) => {
+      const base = i * lh + px * 0.98;
+      for (const it of ln.items) {
+        const o = outline(it.g); per += o.per;
+        const p = new Path2D();
+        for (const poly of o.mp) for (const r of poly) { p.moveTo(r[0][0], r[0][1]); for (let k = 1; k < r.length; k++) p.lineTo(r[k][0], r[k][1]); p.closePath(); }
+        const passes = [[2.6, 0.18, bloom * 1.6, col], [1.5, 0.45, bloom * 0.7, col], [1, 1, bloom * 0.25, col], [0.42, 0.9, 0, lighten(col)]];
+        for (const [wm, a, blur, c] of passes) {
+          x.save();
+          x.setTransform(s * dpr, 0, 0, -s * dpr, it.x * s * dpr, base * dpr);
+          x.lineWidth = tube * wm; x.lineJoin = "round"; x.lineCap = "round";
+          x.strokeStyle = typeof c === "string" && c[0] === "#" ? rgba(c, a) : c;
+          x.globalAlpha = c[0] === "#" ? 1 : a;
+          if (blur > 0) { x.shadowColor = rgba(col, 0.9); x.shadowBlur = blur * dpr; }
+          x.stroke(p); x.restore();
+        }
+      }
+    });
+    blit(cv, off, W, Hh);
+    const h = val("hO"), m = per * h / H;
+    $("figO").innerHTML = "LEDテープ 約 <b>" + (m < 10 ? m.toFixed(1) : Math.round(m)) + " m</b>（字の高さ " + h.toFixed(1) + " m で、輪郭を全部一周）";
+  }
+  function renderDots() {
+    const cv = $("cvD"), { L, W, px, lh, Hh } = prep(cv);
+    const off = document.createElement("canvas"); off.width = Math.round(W * dpr); off.height = Math.round(Hh * dpr);
+    const x = off.getContext("2d");
+    const col = color(), s = px / 1000, rows = val("rows"), pitch = H / rows, rad = val("dot") * pitch / 2;
+    const lineRow = $("lineRow").checked ? Math.floor(LINE / pitch) : null;
+    let n = 0;
+    x.fillStyle = col; x.shadowColor = rgba(col, 0.85);
+    L.forEach((ln, i) => {
+      const base = i * lh + px * 0.98;
+      const cols = Math.ceil(ln.w / pitch) + 1;
+      for (let r = Math.floor(-160 / pitch); r * pitch < 820; r++) {
+        if (r === lineRow) continue;
+        const yc = (r + 0.5) * pitch;
+        for (let c = 0; c < cols; c++) {
+          const xc = (c + 0.5) * pitch;
+          let lit = false;
+          for (const it of ln.items) {
+            if (xc < it.x - 300 || xc > it.x + it.g.adv + 300) continue;
+            if (inside(outline(it.g).mp, xc - it.x, yc)) { lit = true; break; }
+          }
+          if (!lit) continue;
+          n++;
+          const X = xc * s * dpr, Y = (base - yc * s) * dpr, R = Math.max(0.6, rad * s * dpr);
+          x.shadowBlur = R * 2.2;
+          x.beginPath(); x.arc(X, Y, R, 0, Math.PI * 2); x.fill();
+        }
+      }
+    });
+    blit(cv, off, W, Hh);
+    const h = val("hD"), gap = h / rows;
+    $("figD").innerHTML = "光の点 <b>" + n + "</b> 個 ＝ スマホ " + n + " 台／提灯 " + n + " 個。点の間隔 " + gap.toFixed(2) + " m（字の高さ " + h.toFixed(1) + " m のとき）";
+  }
+
+  const outs = { dist: (v) => v === 0 ? "近い" : (v < 4 ? "少し離れる" : v < 7 ? "離れる" : "遠い"), tube: (v) => v + "", bloom: (v) => v + "", hO: (v) => v.toFixed(1) + " m", rows: (v) => v + " 段", dot: (v) => Math.round(v * 100) + "%", hD: (v) => v.toFixed(1) + " m" };
+  function sync() { for (const k in outs) $("o_" + k).textContent = outs[k](val(k)); }
+  let raf = 0;
+  function schedule() { sync(); if (!raf) raf = requestAnimationFrame(() => { raf = 0; renderOutline(); renderDots(); }); }
+  for (const id of ["dist", "tube", "bloom", "hO", "rows", "dot", "hD"]) $(id).addEventListener("input", schedule);
+  for (const r of document.querySelectorAll('input[name="col"]')) r.addEventListener("change", schedule);
+  $("lineRow").addEventListener("change", schedule);
+  $("text").addEventListener("input", schedule);
+  let rt = 0; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(schedule, 120); });
+  schedule();
+})();
+</script>
+</body>
+</html>
