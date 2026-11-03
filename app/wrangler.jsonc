@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "urafess",
+  "main": "src/server/worker.ts",
+  "compatibility_date": "2026-11-01",
+  // 画面（PWA）はビルド済みの静的ファイル。/api/* だけ Worker が受ける
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  // 1ゲーム＝1つの Durable Object（SQLite で保存）
+  "durable_objects": {
+    "bindings": [{ "name": "GAME", "class_name": "GameRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }],
+  "observability": { "enabled": true }
+  // 主催者用の合言葉 HOST_TOKEN は `wrangler secret put HOST_TOKEN` で入れる（ローカルは .dev.vars）
+}

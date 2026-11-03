@@ -1,0 +1,162 @@
+import type { GameView, MeView, Winner } from './protocol';
+import { PHASES, ROLE_NAME } from './rules';
+import { formatClock, positionAt } from './schedule';
+
+/**
+ * 参加者の画面に渡す中身。Claude Design のキャンバス「Urafess アプリ画面」の共通部品 Phone の props と同じ形。
+ * 見た目（UI）はこれを受け取って描くだけにする。
+ */
+export interface PhoneView {
+  round: string;
+  role: '逃走者' | '鬼' | 'なし';
+  /** 0＝配役前、1＝配役 … 6＝結果発表（Phone の段階バー） */
+  step: number;
+  label: string;
+  big: string;
+  message: string;
+  oni: string;
+  runners: string;
+  offline: boolean;
+}
+
+const MESSAGES: Record<'oni' | 'runner', string[]> = {
+  // 配役, 逃走開始まで, 追跡開始まで, ゲーム, 広場に戻る
+  runner: [
+    '鬼から逃げ切れ。合図まで、その場で待つ。',
+    '0になったら一斉に逃げる。',
+    '今のうちに遠くへ逃げる。',
+    '逃げ切れ。',
+    'ゲーム終了。広場に戻る。',
+  ],
+  oni: [
+    '逃走者を捕まえろ。合図まで、その場で待つ。',
+    'その場で待つ。逃走者が散るのを見送る。',
+    '広場で待つ。0になったら追いかける。',
+    '捕まえろ。',
+    'ゲーム終了。広場に戻る。',
+  ],
+};
+
+const WINNER_TEXT: Record<Winner, string> = { oni: '鬼の勝ち', runner: '逃走者の勝ち' };
+
+export function participantView(
+  game: GameView,
+  me: MeView,
+  serverNow: number,
+  online: boolean,
+): PhoneView {
+  const inRound = me.role !== null && me.assignId === game.assignId && !me.removed;
+  const roleName = inRound && me.role ? (ROLE_NAME[me.role] as '鬼' | '逃走者') : 'なし';
+  const assigned = game.stage !== 'lobby';
+  const base: PhoneView = {
+    round: String(Math.max(game.round, 1)),
+    role: roleName,
+    step: 0,
+    label: '',
+    big: '',
+    message: '',
+    oni: assigned ? String(game.counts.oni) : '?',
+    runners: assigned ? String(game.counts.runner) : '?',
+    offline: !online,
+  };
+
+  if (me.removed) {
+    return { ...base, label: '参加していない', big: '—', message: '主催者に確認する。' };
+  }
+
+  if (game.stage === 'lobby') {
+    return {
+      ...base,
+      label: '配役を待っている',
+      big: `${game.counts.total}人`,
+      message: '主催者が配役を始めるまで、そのまま待つ。',
+    };
+  }
+
+  const step = stepOf(game, serverNow);
+
+  if (!inRound) {
+    // 配役のあとに来た人は、このラウンドは見ているだけ
+    return {
+      ...base,
+      step,
+      label: '次の配役から参加',
+      big: game.timer && step >= 2 && step <= 5 ? bigClock(game, serverNow) : '待機',
+      message: 'このラウンドは見学。次の配役で役が決まる。',
+    };
+  }
+
+  const role = me.role as 'oni' | 'runner';
+
+  if (game.stage === 'assigned') {
+    return { ...base, step: 1, label: 'あなたの役', big: roleName, message: MESSAGES[role][0] };
+  }
+
+  if (game.stage === 'result') {
+    return {
+      ...base,
+      step: 6,
+      label: '結果発表',
+      big: game.result ? WINNER_TEXT[game.result] : '発表待ち',
+      message: '次のラウンドは配役から。',
+    };
+  }
+
+  // stage === 'timer'
+  const timer = game.timer!;
+  const pos = positionAt(timer, serverNow);
+  if (pos.kind === 'done') {
+    return { ...base, step: 6, label: '結果発表', big: '発表待ち', message: '主催者の発表を待つ。' };
+  }
+  const paused = timer.status === 'paused';
+  return {
+    ...base,
+    step: pos.index + 2,
+    label: paused ? `一時停止中（${PHASES[pos.index].label}）` : PHASES[pos.index].label,
+    big: formatClock(pos.remainingMs),
+    message: paused ? '主催者の合図を待つ。' : MESSAGES[role][pos.index + 1],
+  };
+}
+
+function stepOf(game: GameView, serverNow: number): number {
+  if (game.stage === 'assigned') return 1;
+  if (game.stage === 'result') return 6;
+  if (game.stage === 'timer' && game.timer) {
+    const pos = positionAt(game.timer, serverNow);
+    return pos.kind === 'done' ? 6 : pos.index + 2;
+  }
+  return 0;
+}
+
+function bigClock(game: GameView, serverNow: number): string {
+  const pos = positionAt(game.timer!, serverNow);
+  return pos.kind === 'done' ? '0:00' : formatClock(pos.remainingMs);
+}
+
+/** 主催者画面の上に出す、今の段階の名前と残り時間 */
+export function hostStatus(game: GameView, serverNow: number): { title: string; big: string; next: string } {
+  switch (game.stage) {
+    case 'lobby':
+      return { title: '配役前', big: `${game.counts.total}人`, next: '次：配役' };
+    case 'assigned':
+      return { title: '1 配役済み', big: `${game.counts.oni}/${game.counts.runner}`, next: '次：開始で「逃走開始まで」' };
+    case 'result':
+      return {
+        title: '6 結果発表',
+        big: game.result ? WINNER_TEXT[game.result] : '発表待ち',
+        next: '次：配役で次のラウンド',
+      };
+    case 'timer': {
+      const timer = game.timer!;
+      const pos = positionAt(timer, serverNow);
+      if (pos.kind === 'done') return { title: '6 結果発表', big: '発表待ち', next: '勝ったほうを押す' };
+      const nextLabel = pos.index + 1 < PHASES.length ? PHASES[pos.index + 1].label : '結果発表';
+      const paused = timer.status === 'paused';
+      return {
+        title: `${pos.index + 2} ${PHASES[pos.index].label}${paused ? '（一時停止中）' : ''}`,
+        big: formatClock(pos.remainingMs),
+        next: `次：${nextLabel}`,
+      };
+    }
+  }
+}
