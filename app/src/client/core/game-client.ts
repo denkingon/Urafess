@@ -1,5 +1,6 @@
 import { ClockEstimator } from '../../shared/clock';
 import type { GameView, HostOp, HostSummary, MeView, ServerMsg, Winner } from '../../shared/protocol';
+import { SILENCE_LIMIT_MS } from '../../shared/rules';
 
 /**
  * しくみの層。接続・時計合わせ・状態だけを持ち、見た目は一切知らない。
@@ -77,7 +78,8 @@ const RESYNC_EVERY_MS = 30_000;
 const PONG_TIMEOUT_MS = 8_000;
 /** つなごうとしたまま返事が来ない（電波の悪い所・つながりかけの回線）ときに諦めて、つなぎ直すまでの時間 */
 const CONNECT_TIMEOUT_MS = 8_000;
-const HEARTBEAT_TICK_MS = 2_000;
+/** 見張りの間隔。試合中の合図が途切れたのに気づくのが、最大でこれだけ遅れる */
+const HEARTBEAT_TICK_MS = 1_000;
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 10_000;
 
@@ -95,6 +97,10 @@ export class GameClient {
   private pingId = 0;
   private lastSyncAt = -Infinity;
   private connectStartedAt = 0;
+  /** この接続で最後に何かを受け取った時刻（スマホの時計） */
+  private lastRecvAt = 0;
+  /** この接続で試合中の合図（hb）を一度でも受け取ったか。古いサーバーとつながったときは見張らない */
+  private sawHeartbeat = false;
   private roughOffset: number | null = null;
   private ackedAssignId = 0;
   private pendingJoinName: string | null = null;
@@ -174,10 +180,13 @@ export class GameClient {
     return true;
   }
 
-  /** 画面に戻ってきた・電波が戻ったとき。切れていればすぐつなぎ直し、つながっていれば時計を測り直す */
+  /**
+   * 画面に戻ってきた・電波が戻ったとき。切れていればすぐつなぎ直し、つながっていれば時計を測り直す。
+   * 「つながっている」ように見えても試合中の合図が途切れていれば、裏にいる間に切れていたのですぐつなぎ直す
+   */
   wake(): void {
     if (this.stopped) return;
-    if (this.isOpen()) {
+    if (this.isOpen() && !this.isSilent(this.deps.now())) {
       this.burst(BURST_ON_WAKE);
       return;
     }
@@ -219,10 +228,13 @@ export class GameClient {
     }
     this.ws = ws;
     this.connectStartedAt = this.deps.now();
+    this.lastRecvAt = this.connectStartedAt;
+    this.sawHeartbeat = false;
     this.pings.clear();
     ws.onopen = () => {
       if (this.ws !== ws) return;
       this.attempt = 0;
+      this.lastRecvAt = this.deps.now();
       // つなぎ直したら受け取りの返事も送り直す（サーバー側で重複は無視される）
       this.ackedAssignId = 0;
       this.state = { ...this.state, online: true };
@@ -233,6 +245,7 @@ export class GameClient {
     };
     ws.onmessage = (ev: { data: unknown }) => {
       if (this.ws !== ws || typeof ev.data !== 'string') return;
+      this.lastRecvAt = this.deps.now();
       let msg: ServerMsg;
       try {
         msg = JSON.parse(ev.data) as ServerMsg;
@@ -305,7 +318,19 @@ export class GameClient {
         return;
       }
     }
+    // 試合中の合図が途切れた＝見えない切断。30秒ごとの時計合わせを待たずに、数秒で気づいてつなぎ直す
+    if (this.isSilent(now)) {
+      this.dropConnection();
+      return;
+    }
     if (now - this.lastSyncAt >= RESYNC_EVERY_MS) this.burst(BURST_PERIODIC);
+  }
+
+  /** 試合中（合図が来るはずの間）に、合図も何も SILENCE_LIMIT_MS 以上届いていない */
+  private isSilent(now: number): boolean {
+    const stage = this.state.game?.stage;
+    const expecting = this.sawHeartbeat && (stage === 'assigned' || stage === 'timer');
+    return expecting && now - this.lastRecvAt > SILENCE_LIMIT_MS;
   }
 
   // ---------- 時計合わせ ----------
@@ -345,6 +370,10 @@ export class GameClient {
 
   private handle(msg: ServerMsg): void {
     switch (msg.t) {
+      case 'hb':
+        // 届いた時刻は onmessage で記録済み。画面は変わらないので描き直さない
+        this.sawHeartbeat = true;
+        return;
       case 'pong': {
         const a = this.pings.get(msg.id);
         if (a === undefined) return;

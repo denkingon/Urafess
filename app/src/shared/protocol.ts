@@ -82,4 +82,6 @@ export type ServerMsg =
   | { t: 'denied' }
   | { t: 'snap'; now: number; game: GameView; me?: MeView; host?: HostSummary }
   | { t: 'pong'; id: number; a: number; s: number }
-  | { t: 'reject'; op: HostOp; reason: string; cv: number };
+  | { t: 'reject'; op: HostOp; reason: string; cv: number }
+  /** 試合中の合図。全員に同じ1本を送る。s はサーバーの時刻 */
+  | { t: 'hb'; s: number };
