@@ -61,6 +61,7 @@ export function createHost(actions: HostActions): HostScreen {
       <button type="button" data-op="win-oni">鬼の勝ち</button>
       <button type="button" data-op="win-runner">逃走者の勝ち</button>
       <button type="button" data-op="reset" class="wide">リセット（配役済みに戻す）</button>
+      <button type="button" data-op="clear" class="wide">部屋を空にする（全員を外す）</button>
     </div>
     <details class="durations">
       <summary>時間の設定</summary>
@@ -87,6 +88,9 @@ export function createHost(actions: HostActions): HostScreen {
   btn('win-runner').addEventListener('click', () => actions.command('result', { winner: 'runner' }));
   btn('reset').addEventListener('click', () => {
     if (confirm('タイマーを止めて、配役済みに戻す。役はそのまま。よいか？')) actions.command('reset');
+  });
+  btn('clear').addEventListener('click', () => {
+    if (confirm('参加者を全員外して、配役前に戻す。スマホは入室画面に戻り、入り直しになる。よいか？')) actions.command('clear');
   });
   inputs.forEach((i) => i.addEventListener('focus', () => (editingDurations = true)));
   form.addEventListener('submit', (e) => {
@@ -143,6 +147,7 @@ export function createHost(actions: HostActions): HostScreen {
       const paused = game.stage === 'timer' && timer?.status === 'paused';
       setEnabled(btn('resume'), paused, paused);
       setEnabled(btn('reset'), game.stage === 'timer', false);
+      setEnabled(btn('clear'), (game.stage !== 'timer' || done) && host.total > 0, false);
       const canResult = game.stage === 'result' || done;
       setEnabled(btn('win-oni'), canResult, canResult && !game.result);
       setEnabled(btn('win-runner'), canResult, canResult && !game.result);
