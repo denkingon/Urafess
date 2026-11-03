@@ -1,0 +1,107 @@
+/* 見た目の層。キャンバス「Urafess アプリ画面」の Phone を写した仮の白黒。差し替えるときはここと views/ を替える */
+
+:root {
+  --bg: #0e0e0e;
+  --ink: #f2f2f2;
+  --quiet: #a6a6a6;
+  --faint: #8c8c8c;
+  --line: #2e2e2e;
+  --line-strong: #5a5a5a;
+  --field: #161616;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
+  font-weight: 500;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app { min-height: 100%; display: flex; justify-content: center; }
+
+.phone {
+  width: 100%;
+  max-width: 430px;
+  min-height: 100dvh;
+  padding: calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+}
+
+.top { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--quiet); }
+.link { display: flex; align-items: center; gap: 6px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 4px; border: 1px solid var(--quiet); background: var(--ink); }
+.is-offline .dot { background: transparent; }
+
+.offline { margin-top: 16px; border: 1px solid var(--line-strong); border-radius: 8px; padding: 12px 14px; font-size: 14px; line-height: 1.6; }
+
+.badge-row { margin-top: 40px; min-height: 36px; display: flex; align-items: center; }
+.badge { padding: 5px 17px; border-radius: 999px; font-size: 16px; font-weight: 700; border: 1px solid var(--ink); }
+.badge[data-role="oni"] { background: var(--ink); color: var(--bg); }
+.badge[data-role="none"] { border: 1px dashed var(--faint); color: var(--quiet); }
+
+.label { margin-top: 48px; font-size: 18px; font-weight: 700; color: var(--quiet); }
+.big { margin-top: 8px; line-height: 1.1; font-weight: 900; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+.message { margin-top: 24px; font-size: 20px; line-height: 1.7; font-weight: 700; }
+.spacer { flex-grow: 1; min-height: 24px; }
+
+.steps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.step { display: flex; flex-direction: column; gap: 6px; }
+.step .bar { height: 4px; border-radius: 2px; background: var(--line); }
+.step span { font-size: 11px; text-align: center; color: var(--faint); }
+.step[data-state="done"] .bar { background: #6a6a6a; }
+.step[data-state="done"] span { color: var(--quiet); }
+.step[data-state="now"] .bar { background: var(--ink); }
+.step[data-state="now"] span { color: var(--ink); }
+
+.foot { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; font-size: 14px; color: var(--quiet); }
+
+/* 入室 */
+.join { padding-top: calc(72px + env(safe-area-inset-top)); gap: 20px; }
+.join h1 { margin: 0; font-size: 40px; font-weight: 900; letter-spacing: 1px; }
+.join .lead { margin: 0; font-size: 15px; line-height: 1.8; color: var(--quiet); }
+.join form { margin-top: 24px; display: flex; flex-direction: column; gap: 12px; }
+.join label { font-size: 14px; font-weight: 700; color: var(--quiet); }
+input {
+  height: 52px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line-strong);
+  background: var(--field); color: var(--ink); font-size: 18px; font-family: inherit;
+}
+button {
+  min-height: 52px; border-radius: 10px; border: 1px solid var(--line-strong); background: transparent;
+  color: var(--ink); font-size: 16px; font-weight: 700; font-family: inherit; cursor: pointer;
+}
+button.primary, .join button[type="submit"] { background: var(--ink); color: var(--bg); border: none; font-weight: 900; }
+button:disabled { color: var(--faint); border-color: var(--line); background: transparent; cursor: default; }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.error { margin: 0; color: var(--ink); font-size: 14px; }
+.note { margin: 0; font-size: 13px; line-height: 1.7; color: var(--quiet); }
+
+/* 主催者 */
+.host { gap: 16px; padding-top: calc(32px + env(safe-area-inset-top)); }
+.host-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; color: var(--quiet); }
+.host-title { font-size: 22px; font-weight: 900; color: var(--ink); }
+.status { border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--quiet); }
+.status [data-k="title"] { font-size: 14px; font-weight: 700; }
+.status-big { font-size: 56px; line-height: 1.1; font-weight: 900; font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stats div { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.stats b { font-size: 22px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.stats span { font-size: 12px; color: var(--quiet); }
+.reject { margin: 0; border: 1px solid var(--line-strong); border-radius: 8px; padding: 10px 12px; font-size: 14px; line-height: 1.6; }
+.buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.buttons .wide { grid-column: span 2; }
+.durations { border-top: 1px solid var(--line); padding-top: 12px; font-size: 14px; color: var(--quiet); }
+.durations summary { cursor: pointer; }
+.durations form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.durations label { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.durations input { width: 96px; height: 44px; text-align: right; }
+.dups { display: flex; flex-direction: column; gap: 8px; }
+.dup-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.dup-row button { min-height: 44px; padding: 0 12px; font-size: 14px; }

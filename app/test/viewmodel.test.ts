@@ -1,0 +1,60 @@
+import { describe, expect, it } from 'vitest';
+import type { GameView, MeView } from '../src/shared/protocol';
+import { START_LEAD_MS } from '../src/shared/rules';
+import { pauseTimer, startTimer } from '../src/shared/schedule';
+import { participantView } from '../src/shared/viewmodel';
+
+const D = [20_000, 60_000, 300_000, 120_000];
+
+function game(partial: Partial<GameView>): GameView {
+  return {
+    gameId: 'main', round: 1, assignId: 1, stage: 'assigned', cv: 1, timer: null,
+    counts: { oni: 9, runner: 21, total: 30 }, result: null, durations: D, ...partial,
+  };
+}
+const oni: MeView = { pid: 'a', num: 1, name: 'あ', role: 'oni', assignId: 1, removed: false };
+const runner: MeView = { ...oni, pid: 'b', role: 'runner' };
+
+describe('参加者の画面（キャンバスの Phone に渡す中身）', () => {
+  it('配役前はロビー', () => {
+    const v = participantView(game({ stage: 'lobby', assignId: 0 }), { ...oni, role: null, assignId: 0 }, 0, true);
+    expect(v).toMatchObject({ role: 'なし', step: 0, label: '配役を待っている', big: '30人', oni: '?' });
+  });
+
+  it('配役で自分の役が出る', () => {
+    expect(participantView(game({}), oni, 0, true)).toMatchObject({ role: '鬼', step: 1, big: '鬼' });
+    expect(participantView(game({}), runner, 0, true)).toMatchObject({ role: '逃走者', step: 1, big: '逃走者' });
+  });
+
+  it('1ラウンドの段階と残り時間', () => {
+    const t = startTimer(D, 0);
+    const g = game({ stage: 'timer', timer: t });
+    const at = (ms: number) => participantView(g, runner, START_LEAD_MS + ms, true);
+    expect(at(-1_000)).toMatchObject({ step: 2, label: '逃走開始まで', big: '0:20' });
+    expect(at(20_000)).toMatchObject({ step: 3, label: '追跡開始まで', big: '1:00' });
+    expect(at(80_000)).toMatchObject({ step: 4, label: '残り時間', big: '5:00', message: '逃げ切れ。' });
+    expect(participantView(g, oni, START_LEAD_MS + 80_000, true).message).toBe('捕まえろ。');
+    expect(at(380_000)).toMatchObject({ step: 5, label: '広場に戻るまで', big: '2:00' });
+    expect(at(500_000)).toMatchObject({ step: 6, label: '結果発表', big: '発表待ち' });
+  });
+
+  it('一時停止中は止まった数字', () => {
+    const t = pauseTimer(startTimer(D, 0), START_LEAD_MS + 100_000);
+    const v = participantView(game({ stage: 'timer', timer: t }), runner, 9_999_999, true);
+    expect(v).toMatchObject({ step: 4, big: '4:40' });
+    expect(v.label).toContain('一時停止中');
+  });
+
+  it('結果発表', () => {
+    expect(participantView(game({ stage: 'result', result: 'runner' }), oni, 0, true)).toMatchObject({ step: 6, big: '逃走者の勝ち' });
+  });
+
+  it('配役のあとに来た人は次の配役から', () => {
+    const late: MeView = { ...runner, role: null, assignId: 0 };
+    expect(participantView(game({}), late, 0, true)).toMatchObject({ role: 'なし', label: '次の配役から参加' });
+  });
+
+  it('通信が切れていたら、そう出す', () => {
+    expect(participantView(game({}), oni, 0, false).offline).toBe(true);
+  });
+});
