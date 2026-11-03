@@ -125,6 +125,13 @@
     def("uni30F2", 0x30F2, U(fuShape(120, 850, TOP, 330), hbar(160, 700, ...above())));                  // ヲ
     def("uni30F3", 0x30F3, I(U(diag(180, 690, 420, 545, 118), diag(170, BOT + 10, 870, TOP - 70, 142)), rect(100, BOT, 900, TOP)));   // ン
 
+    // ---- 古いかな・踊り字 ----
+    def("uni30F0", 0x30F0, U(hbar(110, 890, S1 + 100, S1 + 100 + HB), hbar(70, 930, ...under()),        // ヰ
+      vbar(290, S0 - HB, 760), vbar(576, BOT, 760)));
+    def("uni30F1", 0x30F1, U(roundTR(U(hbar(140, 830, TOP - HB, TOP), diag(850, TOP, 520, S1 + 100, DT)), 830, TOP, 160),   // ヱ
+      vbar(433, BOT, S1 + 100), hbar(90, 910, BOT, BOT + HB)));
+    def("uni30FD", 0x30FD, diag(380, S0 - 30, 620, 60, DT));                                             // ヽ
+
     // ---- 小さいかな：線から下（裏）にちょうど収まる大きさ。細る分は太らせて戻す ----
     const SK = (S0 - BOT) / (TOP - BOT);
     const small = (n) => O(scaleAt(full[n], SK, 500, BOT), 11);
@@ -140,6 +147,7 @@
       uni30AF: squeeze(full.uni30AF, 0.88), uni30B3: squeeze(full.uni30B3, 0.88), uni30BF: squeeze(full.uni30BF, 0.88),
       uni30D5: squeeze(full.uni30D5, 0.88), uni30AD: squeeze(full.uni30AD, 0.88), uni30BB: squeeze(full.uni30BB, 0.88),
       uni30C6: squeeze(full.uni30C6, 0.94), uni30C1: squeeze(full.uni30C1, 0.88),
+      uni30EF: squeeze(full.uni30EF, 0.88), uni30F1: squeeze(full.uni30F1, 0.88), uni30F2: squeeze(full.uni30F2, 0.88),
       uni30BD: U(diag(170, 720, 330, S1 + 20, DT), diag(690, 700, 250, BOT, VB)),
       uni30C4: U(diag(150, 730, 280, S1 + 50, DT), diag(400, 770, 530, S1 + 90, DT), diag(690, 700, 280, BOT, VB)),
     };
@@ -147,7 +155,8 @@
     const DAKU = [["uni30AB", 0x30AC], ["uni30AD", 0x30AE], ["uni30AF", 0x30B0], ["uni30B1", 0x30B2], ["uni30B3", 0x30B4],
       ["uni30B5", 0x30B6], ["uni30B7", 0x30B8], ["uni30B9", 0x30BA], ["uni30BB", 0x30BC], ["uni30BD", 0x30BE],
       ["uni30BF", 0x30C0], ["uni30C1", 0x30C2], ["uni30C4", 0x30C5], ["uni30C6", 0x30C7], ["uni30C8", 0x30C9],
-      ["uni30CF", 0x30D0], ["uni30D2", 0x30D3], ["uni30D5", 0x30D6], ["uni30D8", 0x30D9], ["uni30DB", 0x30DC], ["uni30A6", 0x30F4]];
+      ["uni30CF", 0x30D0], ["uni30D2", 0x30D3], ["uni30D5", 0x30D6], ["uni30D8", 0x30D9], ["uni30DB", 0x30DC], ["uni30A6", 0x30F4],
+      ["uni30EF", 0x30F7], ["uni30F0", 0x30F8], ["uni30F1", 0x30F9], ["uni30F2", 0x30FA], ["uni30FD", 0x30FE]];
     const HANDAKU = [["uni30CF", 0x30D1], ["uni30D2", 0x30D4], ["uni30D5", 0x30D7], ["uni30D8", 0x30DA], ["uni30DB", 0x30DD]];
     const hb = { uni30DB: squeeze(full.uni30DB, 0.86), uni30D5: squeeze(full.uni30D5, 0.88) };
     const hx = (n) => n.toString(16).toUpperCase();
