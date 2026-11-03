@@ -56,6 +56,23 @@ npm run sim         # 300人の機械テスト（SIM_N=50 npm run sim で人数�
 回線の遅れ（行きと帰りで別々・ときどき1.5〜3秒の詰まり）、突然の切断、スマホの時計のずれ（±5分）、
 2人の主催者の同時押し、同じ名前の二重入室、試合中のサーバー再起動、一時停止と再開を混ぜて2ラウンド回す。
 
+### 公開先で試す
+
+本番の部屋 `main` とは別の部屋（`LIVE_GAME`）を使う。
+
+```sh
+LIVE_URL=https://urafess.denkingon.workers.dev LIVE_GAME=test-1 LIVE_N=200 \
+  npx vitest run --config vitest.sim.config.ts sim/live.test.ts
+```
+
+- 仮想参加者がつないで待つ。主催者画面（`/host?g=test-1`）で「時間の設定」→「配役」→「開始」→勝ちを押すと、
+  全員が役を受け取ったか・区切りの時刻がそろったか・時計の見積もりが理屈どおりか・他人の役が漏れていないかを記録する
+  （途中経過は `sim/live-progress.log`、結果は `sim/live-report-<人数>.md`）
+- `sim/diag.test.ts`：入室したまま放っておき、切れた接続を「回線側が閉じた／アプリが自分で切った」に分けて記録する
+- `sim/ws-compare.mjs`：軽い接続だけを張り、切れた本数と往復時間を見る
+- Claude のクラウドの作業用の機械から試すときは200人以下で。300本前後から、その機械の出口の都合で接続が切れて結果が濁る
+  （2026-11-04 の記録：`sim/live-findings.md`）
+
 ## 公開する
 
 Cloudflare（無料プラン）の Worker をこの GitHub リポジトリにつないである。**main に入った変更は自動でビルドされ、そのまま公開される**（Workers Builds）。
@@ -69,6 +86,7 @@ Cloudflare 側の設定（Worker → Settings → Build）
 | Root directory | `app`（アプリはこのフォルダにある。空だとビルドが失敗する） |
 | Build command | `npm run build`（空でも `wrangler deploy` が先にビルドする） |
 | Deploy command | `npx wrangler deploy` |
+| プレビューコマンド（main 以外のブランチ。設定の「プレビューのベース」側） | `npx wrangler deploy --dry-run`（公開はせず、ビルドと組み立てが通るかだけ確かめる。初期値の `npx wrangler preview` は Durable Object を使うこのアプリでは設定が足りず失敗する） |
 
 主催者用の合言葉は、Worker → Settings → Variables and Secrets に、種類 **Secret**・名前 `HOST_TOKEN` で入れる（作成画面の「Variables」はビルド用なので違う）。
 入れるまでは主催者画面が「拒否」になるだけで、参加者側は動く。
