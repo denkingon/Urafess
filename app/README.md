@@ -86,6 +86,7 @@ Cloudflare 側の設定（Worker → Settings → Build）
 | Root directory | `app`（アプリはこのフォルダにある。空だとビルドが失敗する） |
 | Build command | `npm run build`（空でも `wrangler deploy` が先にビルドする） |
 | Deploy command | `npx wrangler deploy` |
+| プレビューコマンド（main 以外のブランチ。設定の「プレビューのベース」側） | `npx wrangler deploy --dry-run`（公開はせず、ビルドと組み立てが通るかだけ確かめる。初期値の `npx wrangler preview` は Durable Object を使うこのアプリでは設定が足りず失敗する） |
 
 主催者用の合言葉は、Worker → Settings → Variables and Secrets に、種類 **Secret**・名前 `HOST_TOKEN` で入れる（作成画面の「Variables」はビルド用なので違う）。
 入れるまでは主催者画面が「拒否」になるだけで、参加者側は動く。
