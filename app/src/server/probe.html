@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0c">
+<title>夜テスト｜Urafess</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0b0c; --fg:#ececec; --mute:#9a9a9a; --line:#2a2a2d; --acc:#ffd23f; --bad:#ff6b6b; --ok:#7bd88f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+         padding: calc(env(safe-area-inset-top) + 8px) 16px calc(env(safe-area-inset-bottom) + 32px); max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 12px 0 4px; }
+  h2 { font-size: 16px; margin: 18px 0 6px; }
+  p { margin: 8px 0; }
+  .mute { color: var(--mute); font-size: 13px; }
+  section { border-top: 1px solid var(--line); padding: 14px 0; }
+  label { display: block; font-size: 13px; color: var(--mute); margin: 12px 0 4px; }
+  input, select, button { font: inherit; width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: #151517; color: var(--fg); }
+  button { background: var(--acc); color: #111; border: none; font-weight: 700; margin-top: 12px; }
+  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); font-weight: 500; }
+  button:disabled { opacity: .5; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid #1b1b1e; }
+  .row span { color: var(--mute); }
+  .row b { font-variant-numeric: tabular-nums; text-align: right; }
+  .warn { color: var(--bad); }
+  .ok { color: var(--ok); }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; font-size: 12px; min-width: 100%; }
+  th, td { border-bottom: 1px solid var(--line); padding: 6px 6px; text-align: left; vertical-align: top; white-space: nowrap; }
+  th { color: var(--mute); font-weight: 500; }
+  code { word-break: break-all; font-size: 13px; }
+  a { color: var(--acc); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<h1>夜テスト</h1>
+<p class="mute">本番と同じ夜にキャンパスを歩いて、位置の精度・更新の間隔・往復の速さ・回線・接続の切れ目を記録し、1か所に集める。</p>
+
+<div id="v-new" class="hidden">
+  <section>
+    <p>まず「テスト回」を作る。作ったリンクを、一緒に歩く全員のスマホで開く。</p>
+    <button id="btn-new">テスト回を作る</button>
+  </section>
+</div>
+
+<div id="v-setup" class="hidden">
+  <section>
+    <div class="mute">このテスト回のリンク（一緒に歩く全員が同じものを開く）</div>
+    <p><code id="share-url"></code></p>
+    <button class="ghost" id="btn-share">リンクを送る／コピーする</button>
+  </section>
+  <section>
+    <label for="in-label">呼び名（誰のどの機種か分かれば何でもいい）</label>
+    <input id="in-label" maxlength="20" placeholder="例：りょう iPhone15" autocomplete="off">
+    <label for="in-net">今つないでいる回線</label>
+    <select id="in-net"></select>
+    <button id="btn-start">記録を始める</button>
+    <p class="mute">始めると位置情報の許可を聞かれる。「正確な位置情報」はオンのまま。歩いている間は画面を消さない（iPhone は自動ロックを「なし」に）。ポケットに入れるときも画面はつけたまま。</p>
+  </section>
+  <section>
+    <button class="ghost" id="btn-results1">このテスト回の結果を見る</button>
+  </section>
+</div>
+
+<div id="v-run" class="hidden">
+  <section>
+    <div class="row"><span>経過</span><b id="o-elapsed">0:00</b></div>
+    <div class="row"><span>位置</span><b id="o-fix">—</b></div>
+    <div class="row"><span>精度（直近）</span><b id="o-acc">—</b></div>
+    <div class="row"><span>位置の更新の間隔（中央値）</span><b id="o-int">—</b></div>
+    <div class="row"><span>往復（直近／中央値）</span><b id="o-rtt">—</b></div>
+    <div class="row"><span>接続</span><b id="o-ws">—</b></div>
+    <div class="row"><span>最長の無音</span><b id="o-gap">—</b></div>
+    <div class="row"><span>実際の回線</span><b id="o-who">—</b></div>
+    <div class="row"><span>画面を消さない</span><b id="o-wake">—</b></div>
+    <div class="row"><span>まだ送っていない記録</span><b id="o-queue">0</b></div>
+  </section>
+  <section>
+    <label for="in-net2">回線を切り替えたら、ここも選び直す</label>
+    <select id="in-net2"></select>
+    <label for="in-mark">目印（建物・場所の名前）</label>
+    <input id="in-mark" maxlength="30" placeholder="例：鴨池の橋" autocomplete="off">
+    <button class="ghost" id="btn-mark">いま目印に立っている</button>
+  </section>
+  <section>
+    <button class="ghost" id="btn-sleep">電波の眠りを測る（約2分、その場で待つ）</button>
+    <p class="mute">通信を止めて、1〜20秒の無通信のあとの往復を測る。携帯の電波が何秒で待機に落ちるかが分かる。</p>
+  </section>
+  <section>
+    <button class="ghost" id="btn-stop">記録を終える</button>
+  </section>
+</div>
+
+<div id="v-results" class="hidden">
+  <section>
+    <button class="ghost" id="btn-back">戻る</button>
+    <div id="results"></div>
+    <p><a id="dl" href="#">生データ（JSON）を保存する</a></p>
+    <button class="ghost" id="btn-clear">このテスト回の記録を全部消す</button>
+    <p class="mute">記録（位置を含む）は、このテスト回のリンクを知っている人だけが見られる。</p>
+  </section>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const NETS = ['セルラー（Wi-Fiなし）', 'keiomobile2', 'CNS', 'eduroam', 'その他のWi-Fi'];
+  const VIEWS = ['v-new', 'v-setup', 'v-run', 'v-results'];
+  const show = (id) => { for (const v of VIEWS) $(v).classList.toggle('hidden', v !== id); };
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { /* 容量いっぱい・使えない */ } },
+  };
+  const ALPHA = 'abcdefghijkmnpqrstuvwxyz23456789';
+  const rid = (n) => { const a = new Uint8Array(n); crypto.getRandomValues(a); return Array.from(a, (b) => ALPHA[b % 32]).join(''); };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const r1 = (x, d) => (x == null || !isFinite(x) ? null : Math.round(x * 10 ** d) / 10 ** d);
+  const median = (xs) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.floor((s.length - 1) / 2)]; };
+  const pushCap = (arr, x, cap) => { arr.push(x); if (arr.length > cap) arr.shift(); };
+  const vis = () => (document.visibilityState === 'visible' ? 1 : 0);
+
+  for (const sel of [$('in-net'), $('in-net2')]) {
+    for (const n of NETS) { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.append(o); }
+  }
+
+  const params = new URLSearchParams(location.search);
+  const S = params.get('s') || '';
+  if (!/^[A-Za-z0-9_-]{6,40}$/.test(S)) {
+    show('v-new');
+    $('btn-new').onclick = () => { location.search = '?s=' + rid(10); };
+    return;
+  }
+
+  const shareUrl = location.origin + location.pathname + '?s=' + S;
+  $('share-url').textContent = shareUrl;
+  $('btn-share').onclick = async () => {
+    try { if (navigator.share) { await navigator.share({ title: '夜テスト', url: shareUrl }); return; } } catch { /* 閉じた */ }
+    try { await navigator.clipboard.writeText(shareUrl); $('btn-share').textContent = 'コピーした'; }
+    catch { window.prompt('このリンクをコピーする', shareUrl); }
+  };
+
+  let device = store.get('probe:dev');
+  if (!device || !/^[A-Za-z0-9_-]{6,40}$/.test(device)) { device = rid(12); store.set('probe:dev', device); }
+  $('in-label').value = store.get('probe:label') || '';
+
+  // ---------- 記録の入れ物 ----------
+
+  const QKEY = 'probe:q:' + S;
+  const SEQKEY = 'probe:seq:' + S + ':' + device;
+  let seq = Number(store.get(SEQKEY) || 0);
+  let queue = [];
+  try { queue = JSON.parse(store.get(QKEY) || '[]'); if (!Array.isArray(queue)) queue = []; } catch { queue = []; }
+
+  let running = false;
+  let paused = false;
+  let label = store.get('probe:label') || '';
+  let net = NETS[0];
+  let startedAt = 0;
+  let lastFix = null;
+  const st = { fixes: 0, acc: null, intervals: [], lastTs: null, rtts: [], rtt: null, ws: '—', closes: 0, maxGap: 0, who: '—', wake: '—' };
+
+  function log(k, data) {
+    queue.push(Object.assign({ q: ++seq, t: Date.now(), k }, data || {}));
+    if (queue.length > 20000) queue.splice(0, queue.length - 20000);
+  }
+  function persist() { store.set(QKEY, JSON.stringify(queue)); store.set(SEQKEY, String(seq)); }
+
+  let uploading = false;
+  async function upload(final) {
+    if (uploading || queue.length === 0) return;
+    uploading = true;
+    const batch = queue.slice(0, 1500);
+    const body = JSON.stringify({ d: device, label, ua: navigator.userAgent.slice(0, 300), events: batch });
+    try {
+      const res = await fetch('/api/probe/log?s=' + encodeURIComponent(S), {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body, keepalive: !!final && body.length < 60000,
+      });
+      if (res.ok) {
+        const sent = new Set(batch.map((e) => e.q));
+        queue = queue.filter((e) => !sent.has(e.q));
+        persist();
+      }
+    } catch { /* 次の回で送り直す */ } finally { uploading = false; }
+  }
+
+  // ---------- 位置 ----------
+
+  let watchId = null;
+  function startGeo() {
+    if (!('geolocation' in navigator)) { log('geoerr', { code: -1, msg: 'no geolocation' }); return; }
+    watchId = navigator.geolocation.watchPosition((p) => {
+      const c = p.coords;
+      log('fix', {
+        lat: r1(c.latitude, 7), lon: r1(c.longitude, 7), acc: r1(c.accuracy, 1),
+        alt: r1(c.altitude, 1), altAcc: r1(c.altitudeAccuracy, 1), spd: r1(c.speed, 2),
+        hdg: c.heading == null || isNaN(c.heading) ? null : Math.round(c.heading), ts: p.timestamp, vis: vis(),
+      });
+      st.fixes += 1;
+      st.acc = c.accuracy;
+      if (st.lastTs != null && p.timestamp > st.lastTs) pushCap(st.intervals, (p.timestamp - st.lastTs) / 1000, 300);
+      st.lastTs = p.timestamp;
+      lastFix = { lat: r1(c.latitude, 7), lon: r1(c.longitude, 7), acc: r1(c.accuracy, 1) };
+    }, (err) => {
+      log('geoerr', { code: err.code, msg: String(err.message || '').slice(0, 100) });
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+  }
+
+  // ---------- 往復（Worker だけで返す軽い問い合わせ。3秒ごと） ----------
+
+  let pingTimer = null;
+  async function ping() {
+    const t0 = performance.now();
+    try {
+      const r = await fetch('/api/probe/ping?x=' + Date.now(), { cache: 'no-store' });
+      await r.text();
+      return { rtt: Math.round(performance.now() - t0), ok: r.ok };
+    } catch { return { rtt: null, ok: false }; }
+  }
+  function schedulePing() {
+    clearTimeout(pingTimer);
+    pingTimer = setTimeout(async () => {
+      if (!running || paused) return;
+      const r = await ping();
+      log('ping', { rtt: r.rtt, ok: r.ok, vis: vis() });
+      if (r.ok && r.rtt != null) { st.rtt = r.rtt; pushCap(st.rtts, r.rtt, 300); }
+      schedulePing();
+    }, 3000);
+  }
+
+  // ---------- 接続の切れ目（サーバーが2秒ごとに合図を送る。アプリ本体と同じ） ----------
+
+  let ws = null;
+  let wsTimer = null;
+  let wsBackoff = 500;
+  let lastHb = 0;
+  let wsPingId = 0;
+  const wsPings = new Map();
+  function connectWs() {
+    if (!running || paused) return;
+    const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host
+      + '/api/probe/ws?s=' + encodeURIComponent(S) + '&d=' + device;
+    let sock;
+    try { sock = new WebSocket(url); } catch { scheduleWs(); return; }
+    ws = sock;
+    const openedAt = Date.now();
+    sock.onopen = () => {
+      if (ws !== sock) return;
+      wsBackoff = 500;
+      lastHb = Date.now();
+      st.ws = 'つながっている';
+      log('ws', { ev: 'open', ms: Date.now() - openedAt });
+    };
+    sock.onmessage = (ev) => {
+      if (ws !== sock) return;
+      let m;
+      try { m = JSON.parse(ev.data); } catch { return; }
+      const now = Date.now();
+      if (m.t === 'hb') {
+        const gap = now - lastHb;
+        if (gap > 4000) log('hbgap', { gap, vis: vis() });
+        if (gap > st.maxGap) st.maxGap = gap;
+        lastHb = now;
+      } else if (m.t === 'q') {
+        const a = wsPings.get(m.id);
+        if (a != null) { wsPings.delete(m.id); log('wsping', { rtt: Math.round(performance.now() - a) }); }
+      }
+    };
+    sock.onclose = (ev) => {
+      if (ws !== sock) return;
+      ws = null;
+      st.closes += 1;
+      st.ws = '切れた（つなぎ直す）';
+      log('ws', { ev: 'close', code: ev.code, since: lastHb ? Date.now() - lastHb : null, vis: vis() });
+      scheduleWs();
+    };
+    sock.onerror = () => { /* onclose が続く */ };
+  }
+  function scheduleWs() {
+    if (!running || paused) return;
+    clearTimeout(wsTimer);
+    wsTimer = setTimeout(connectWs, wsBackoff);
+    wsBackoff = Math.min(wsBackoff * 2, 10000);
+  }
+  function wsPing() {
+    if (!ws || ws.readyState !== 1) return;
+    const id = ++wsPingId;
+    wsPings.set(id, performance.now());
+    if (wsPings.size > 50) wsPings.delete(wsPings.keys().next().value);
+    try { ws.send(JSON.stringify({ t: 'p', id })); } catch { /* 次へ */ }
+  }
+
+  // ---------- 回線 ----------
+
+  function maskIp(ip) {
+    if (!ip) return null;
+    if (ip.includes('.')) { const p = ip.split('.'); return p[0] + '.' + p[1] + '.*.*'; }
+    return ip.split(':').slice(0, 3).join(':') + '::*';
+  }
+  async function who(reason) {
+    try {
+      const r = await fetch('/api/probe/who?x=' + Date.now(), { cache: 'no-store' });
+      const w = await r.json();
+      log('who', { reason, ip: maskIp(w.ip), asn: w.asn, org: w.org, colo: w.colo, http: w.http, tcpRtt: w.tcpRtt });
+      st.who = (w.org || '不明') + (w.colo ? '（' + w.colo + '）' : '');
+    } catch { log('who', { reason, err: 1 }); }
+  }
+  const conn = navigator.connection;
+  function logConn() {
+    if (!conn) return;
+    log('conn', { type: conn.type || null, eff: conn.effectiveType || null, rtt: conn.rtt ?? null, down: conn.downlink ?? null });
+  }
+
+  // ---------- 画面を消さない ----------
+
+  let sentinel = null;
+  async function requestWake() {
+    if (!running) return;
+    if (!('wakeLock' in navigator)) { st.wake = '使えない端末（自動ロックを切る）'; return; }
+    if (sentinel || document.visibilityState !== 'visible') return;
+    try {
+      const s = await navigator.wakeLock.request('screen');
+      sentinel = s;
+      st.wake = 'できている';
+      log('wake', { ok: 1 });
+      s.addEventListener('release', () => {
+        if (sentinel === s) sentinel = null;
+        st.wake = '外れた';
+        log('wake', { ok: 0, released: 1, vis: vis() });
+      });
+    } catch (e) {
+      st.wake = '断られた（自動ロックを切る）';
+      log('wake', { ok: 0, err: String((e && e.name) || e).slice(0, 60) });
+    }
+  }
+
+  // ---------- 始める・終える ----------
+
+  let uploadTimer = null;
+  let wsPingTimer = null;
+  let whoTimer = null;
+  let uiTimer = null;
+
+  function startLoops() {
+    connectWs();
+    schedulePing();
+    uploadTimer = setInterval(() => { persist(); upload(false); }, 15000);
+    wsPingTimer = setInterval(wsPing, 10000);
+    whoTimer = setInterval(() => who('interval'), 60000);
+  }
+  function stopLoops() {
+    clearTimeout(pingTimer); clearTimeout(wsTimer);
+    clearInterval(uploadTimer); clearInterval(wsPingTimer); clearInterval(whoTimer);
+    if (ws) { const s = ws; ws = null; try { s.close(); } catch { /* 閉じている */ } }
+  }
+
+  $('btn-start').onclick = () => {
+    label = $('in-label').value.trim().slice(0, 20) || '名無し';
+    store.set('probe:label', label);
+    net = $('in-net').value;
+    $('in-net2').value = net;
+    running = true;
+    startedAt = Date.now();
+    log('start', {
+      net, label, w: screen.width, h: screen.height, dpr: devicePixelRatio,
+      standalone: window.matchMedia('(display-mode: standalone)').matches ? 1 : 0,
+    });
+    requestWake();
+    startGeo();
+    logConn();
+    who('start');
+    startLoops();
+    uiTimer = setInterval(render, 1000);
+    show('v-run');
+    render();
+  };
+
+  $('in-net2').onchange = () => { net = $('in-net2').value; log('net', { net }); who('net'); };
+
+  $('btn-mark').onclick = () => {
+    const name = $('in-mark').value.trim().slice(0, 30) || '目印';
+    log('mark', Object.assign({ name }, lastFix || {}));
+    $('in-mark').value = '';
+    $('btn-mark').textContent = '記録した：' + name;
+    setTimeout(() => { $('btn-mark').textContent = 'いま目印に立っている'; }, 2500);
+  };
+
+  $('btn-sleep').onclick = async () => {
+    if (paused || !running) return;
+    paused = true;
+    $('btn-sleep').disabled = true;
+    stopLoops();
+    log('sleeptest', { ev: 'begin', net });
+    const gaps = [1, 2, 3, 5, 7, 10, 13, 16, 20];
+    for (let i = 0; i < gaps.length; i++) {
+      $('btn-sleep').textContent = '測っている… ' + (i + 1) + '/' + gaps.length + '（動かずに待つ）';
+      await sleep(gaps[i] * 1000);
+      const r = await ping();
+      log('sleep', { idle: gaps[i], rtt: r.rtt, ok: r.ok, net });
+    }
+    log('sleeptest', { ev: 'end' });
+    paused = false;
+    $('btn-sleep').disabled = false;
+    $('btn-sleep').textContent = '電波の眠りを測る（約2分、その場で待つ）';
+    if (running) startLoops();
+  };
+
+  $('btn-stop').onclick = async () => {
+    log('stop', {});
+    running = false;
+    paused = false;
+    stopLoops();
+    clearInterval(uiTimer);
+    if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    if (sentinel) { try { await sentinel.release(); } catch { /* 外れている */ } sentinel = null; }
+    persist();
+    for (let i = 0; i < 20 && queue.length; i++) { await upload(false); if (queue.length) await sleep(1000); }
+    show('v-setup');
+    $('btn-start').textContent = 'もう一度記録を始める';
+  };
+
+  document.addEventListener('visibilitychange', () => {
+    if (!running) return;
+    log('vis', { state: document.visibilityState });
+    if (document.visibilityState === 'hidden') { persist(); upload(true); }
+    else { requestWake(); who('visible'); }
+  });
+  document.addEventListener('pointerdown', () => { if (running) requestWake(); }, { passive: true });
+  window.addEventListener('online', () => { if (running) { log('online', {}); who('online'); } });
+  window.addEventListener('offline', () => { if (running) log('offline', {}); });
+  window.addEventListener('pagehide', () => { if (running) { persist(); upload(true); } });
+  if (conn && conn.addEventListener) conn.addEventListener('change', () => { if (running) { logConn(); who('conn'); } });
+
+  // ---------- 表示（1秒ごと）と、合図の途切れの見張り ----------
+
+  function render() {
+    const now = Date.now();
+    // 合図が10秒届かない接続は、見えない切断とみなして張り直す（アプリ本体と同じ考え方）
+    if (ws && ws.readyState === 1 && lastHb && now - lastHb > 10000 && !paused) {
+      log('ws', { ev: 'stale', since: now - lastHb, vis: vis() });
+      const s = ws; ws = null; st.closes += 1; st.ws = '無音で切れていた（つなぎ直す）';
+      try { s.close(); } catch { /* 閉じている */ }
+      scheduleWs();
+    }
+    const sec = Math.floor((now - startedAt) / 1000);
+    $('o-elapsed').textContent = Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+    $('o-fix').textContent = st.fixes + '件';
+    const acc = st.acc;
+    $('o-acc').textContent = acc == null ? '—' : '±' + Math.round(acc) + 'm';
+    $('o-acc').className = acc == null ? '' : acc <= 10 ? 'ok' : acc > 30 ? 'warn' : '';
+    const mi = median(st.intervals);
+    $('o-int').textContent = mi == null ? '—' : mi.toFixed(1) + '秒';
+    const mr = median(st.rtts);
+    $('o-rtt').textContent = st.rtt == null ? '—' : st.rtt + 'ms／' + mr + 'ms';
+    $('o-ws').textContent = paused ? '止めている（眠りの測定中）' : st.ws + (st.closes ? '・切断' + st.closes + '回' : '');
+    $('o-gap').textContent = st.maxGap ? (st.maxGap / 1000).toFixed(1) + '秒' : '—';
+    $('o-gap').className = st.maxGap > 6000 ? 'warn' : '';
+    $('o-who').textContent = st.who;
+    $('o-wake').textContent = st.wake;
+    $('o-queue').textContent = queue.length + '件';
+  }
+
+  // ---------- 結果 ----------
+
+  function cell(tr, text, tag) {
+    const td = document.createElement(tag || 'td');
+    td.textContent = text == null ? '—' : String(text);
+    tr.append(td);
+  }
+  function table(headers, rows) {
+    const wrap = document.createElement('div');
+    wrap.className = 'scroll';
+    const t = document.createElement('table');
+    const hr = document.createElement('tr');
+    for (const h of headers) cell(hr, h, 'th');
+    t.append(hr);
+    for (const r of rows) { const tr = document.createElement('tr'); for (const c of r) cell(tr, c); t.append(tr); }
+    wrap.append(t);
+    return wrap;
+  }
+  const mp = (o) => (o && o.median != null ? o.median + ' / ' + o.p90 : '—');
+
+  async function showResults() {
+    show('v-results');
+    const box = $('results');
+    box.textContent = '読み込んでいる…';
+    $('dl').href = '/api/probe/data?s=' + encodeURIComponent(S) + '&download=1';
+    try {
+      const r = await fetch('/api/probe/summary?s=' + encodeURIComponent(S), { cache: 'no-store' });
+      const sum = await r.json();
+      box.textContent = '';
+      const h1 = document.createElement('h2'); h1.textContent = '端末ごと'; box.append(h1);
+      box.append(table(
+        ['呼び名', '分', '位置', '間隔 秒（中央値/90%）', '精度 m（中央値/90%）', '10m以内', '往復 ms', 'WS往復 ms', '切断', '最長の無音 秒', '裏にいた秒', '回線'],
+        sum.devices.map((d) => [d.label, d.minutes, d.fixes, mp(d.fixIntervalSec), mp(d.accuracyM),
+          d.accuracyM.within10mPct == null ? '—' : d.accuracyM.within10mPct + '%', mp(d.httpRttMs), mp(d.wsRttMs),
+          d.wsCloses, d.longestSilenceSec ? (d.longestSilenceSec).toFixed(1) : 0, d.hiddenSec, d.orgs.join('、')]),
+      ));
+      const h2 = document.createElement('h2'); h2.textContent = '回線ごと'; box.append(h2);
+      box.append(table(
+        ['回線（選んだもの｜実際の AS）', '往復 ms（中央値/90%）', '回数', 'WS往復 ms', '切断', '4秒超の無音'],
+        sum.networks.map((n) => [n.network, mp(n.httpRttMs), n.httpRttMs.n, mp(n.wsRttMs), n.wsCloses, n.hbGapsOver4s]),
+      ));
+      const sleepRows = sum.networks.filter((n) => Object.keys(n.httpRttByIdleSec || {}).length);
+      if (sleepRows.length) {
+        const h3 = document.createElement('h2'); h3.textContent = '電波の眠り（無通信の秒数 → 往復 ms）'; box.append(h3);
+        const idles = [...new Set(sleepRows.flatMap((n) => Object.keys(n.httpRttByIdleSec)))].map(Number).sort((a, b) => a - b);
+        box.append(table(['回線', ...idles.map((s) => s + '秒')],
+          sleepRows.map((n) => [n.network, ...idles.map((s) => (n.httpRttByIdleSec[String(s)] || {}).median)])));
+      }
+      const p = document.createElement('p'); p.className = 'mute';
+      p.textContent = '集計した時刻：' + new Date(sum.generatedAt).toLocaleString('ja-JP');
+      box.append(p);
+    } catch {
+      box.textContent = '読み込めなかった。通信を確かめて、もう一度開く。';
+    }
+  }
+
+  $('btn-results1').onclick = () => { history.pushState(null, '', '?s=' + S + '&view=results'); showResults(); };
+  $('btn-back').onclick = () => { history.pushState(null, '', '?s=' + S); show(running ? 'v-run' : 'v-setup'); };
+  $('btn-clear').onclick = async () => {
+    if (!window.confirm('このテスト回の記録を全部消す？（元に戻せない）')) return;
+    try { await fetch('/api/probe/clear?s=' + encodeURIComponent(S), { method: 'POST' }); } catch { /* 次に開いたとき */ }
+    showResults();
+  };
+
+  if (params.get('view') === 'results') showResults();
+  else show('v-setup');
+  // 前回の未送信が残っていれば送っておく
+  if (queue.length) upload(false);
+})();
+</script>
+</body>
+</html>

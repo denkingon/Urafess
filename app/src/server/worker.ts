@@ -1,10 +1,13 @@
+import { handleProbe } from './probe';
 import type { Env } from './room';
 
+export { ProbeHub } from './probe';
 export { GameRoom } from './room';
 
 /**
  * /api/game/<ゲームID>/ws    … 参加者・主催者がつなぐ WebSocket
  * /api/game/<ゲームID>/debug … 主催者の合言葉つきで、全員の役を含む中身を見る
+ * /api/probe…                 … 夜テスト（位置・往復・回線・接続の切れ目を記録する画面と、その集計）
  * それ以外は画面（静的ファイル）。
  */
 export default {
@@ -16,6 +19,7 @@ export default {
       const stub = env.GAME.get(env.GAME.idFromName(m[1]), { locationHint: 'apac-ne' });
       return stub.fetch(request);
     }
+    if (url.pathname === '/api/probe' || url.pathname.startsWith('/api/probe/')) return handleProbe(request, env, url);
     if (url.pathname.startsWith('/api/')) return new Response('not found', { status: 404 });
     return env.ASSETS.fetch(request);
   },
