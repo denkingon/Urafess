@@ -40,6 +40,16 @@ export const START_LEAD_MS = 2_000;
 /** 往復の半分がこれ以下なら「時計が合っている」と数える */
 export const SYNC_OK_MS = 100;
 
+/**
+ * 試合中（配役〜タイマー）は、サーバーがこの間隔で短い合図（hb）を全員に送る。
+ * 送る側（サーバー→スマホ）は無料で、携帯の電波が待機に落ちる（5〜10秒）より短いので、
+ * 「捕まった」などの知らせが電波の寝起き（約1〜2秒）を待たずに届く
+ */
+export const HEARTBEAT_EVERY_MS = 2_000;
+
+/** 試合中に合図がこれだけ届かなければ、見えない切断とみなしてつなぎ直す（回線の詰まり1.5〜3秒では切らない長さ） */
+export const SILENCE_LIMIT_MS = 6_000;
+
 /** 段階ごとの長さの上下限（主催者が変えるとき） */
 export const DURATION_MIN_MS = 1_000;
 export const DURATION_MAX_MS = 60 * 60_000;

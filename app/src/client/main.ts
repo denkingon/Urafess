@@ -4,6 +4,7 @@ import { GameClient, type KeyValueStore } from './core/game-client';
 import { createHost } from './views/host';
 import { createJoin } from './views/join';
 import { createPhone } from './views/phone';
+import { createScreenKeeper } from './wake-lock';
 
 // ---------- しくみの用意 ----------
 
@@ -19,6 +20,10 @@ const storage: KeyValueStore = {
 };
 
 const root = document.getElementById('app')!;
+
+/** 試合中（配役〜タイマー）は画面を消さない */
+const screenKeeper = createScreenKeeper();
+const inMatch = (stage: string | undefined) => stage === 'assigned' || stage === 'timer';
 
 if (isHost) {
   // 主催者用の合言葉は URL の ?token= で一度渡せば、この端末に覚えさせて URL からは消す
@@ -53,6 +58,7 @@ function startPlayer(): void {
 
   loop(() => {
     const s = client.state;
+    screenKeeper.set(s.phase === 'ready' && inMatch(s.game?.stage));
     if (s.phase === 'need-name' || s.phase === 'joining') {
       show(join.el);
       join.update({ busy: s.phase === 'joining', error: s.joinError });
@@ -79,7 +85,9 @@ function startHost(token: string): void {
   root.replaceChildren(host.el);
   loop(() => {
     const s = client.state;
+    screenKeeper.set(inMatch(s.game?.stage));
     if (s.phase === 'denied') {
+      screenKeeper.set(false);
       storage.remove('urafess:host-token');
       showTokenForm('合言葉が違う。');
       return false;

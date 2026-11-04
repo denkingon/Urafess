@@ -5,6 +5,7 @@ import {
   DEFAULT_DURATIONS_MS,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
+  HEARTBEAT_EVERY_MS,
   NAME_MAX_LENGTH,
   PHASES,
   ROLES,
@@ -174,7 +175,43 @@ export class GameRoom extends DurableObject<Env> {
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({} satisfies Attachment);
+    // 試合中に全員が一度切れて合図が止まっていたら、最初につなぎ直した人の分から再開する
+    await this.ensureHeartbeat();
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // ---------- 試合中の合図 ----------
+
+  /** 合図を出すのは、配役からタイマーの間だけ（待合室や結果発表の間は出さない＝リクエストを使わない） */
+  private heartbeatActive(): boolean {
+    return this.game.stage === 'assigned' || this.game.stage === 'timer';
+  }
+
+  /**
+   * 合図はアラームで出す。setInterval だと休止（hibernation）できず起きている時間ぶん課金されるが、
+   * アラームなら合図の瞬間だけ起きる。アラーム1回＝1リクエスト（2秒ごとで1時間に1,800）
+   */
+  private async ensureHeartbeat(): Promise<void> {
+    if (!this.heartbeatActive()) return;
+    if ((await this.ctx.storage.getAlarm()) === null) {
+      await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_EVERY_MS);
+    }
+  }
+
+  async alarm(): Promise<void> {
+    if (!this.heartbeatActive()) return;
+    const sockets = this.ctx.getWebSockets();
+    if (sockets.length === 0) return;
+    // 全員に同じ1本を送る（組み立ては1回だけ）
+    const msg = JSON.stringify({ t: 'hb', s: Date.now() } satisfies ServerMsg);
+    for (const ws of sockets) {
+      try {
+        ws.send(msg);
+      } catch {
+        // 閉じかけの接続は、つなぎ直したときに全部を送り直すので捨ててよい
+      }
+    }
+    await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_EVERY_MS);
   }
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
@@ -215,6 +252,8 @@ export class GameRoom extends DurableObject<Env> {
       }
       case 'cmd':
         this.onCmd(ws, att, msg, now);
+        // 配役・開始で試合に入ったら合図を始める（止めるのはアラームの側：試合が終わっていたら次を予約しない）
+        await this.ensureHeartbeat();
         return;
     }
   }
