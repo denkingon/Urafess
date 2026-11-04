@@ -422,6 +422,40 @@ export class GameRoom extends DurableObject<Env> {
         this.commit({ durations: [...d] });
         break;
       }
+      case 'clear': {
+        // 部屋を空にする：参加者を全員外し、配役前に戻す（時間の設定は残す）。試合中はできない
+        if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        const next: GameState = {
+          ...g,
+          round: 0,
+          assignId: 0,
+          stage: 'lobby',
+          cv: g.cv + 1,
+          timer: null,
+          result: null,
+          nextNum: 1,
+          counts: { oni: 0, runner: 0 },
+        };
+        this.ctx.storage.transactionSync(() => {
+          this.sql.exec(`DELETE FROM participants`);
+          this.sql.exec(
+            `INSERT INTO meta (k, v) VALUES ('game', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`,
+            JSON.stringify(next),
+          );
+        });
+        this.people.clear();
+        this.game = next;
+        // つながっている参加者に「その人はもういない」と知らせる → スマホは入室画面に戻る
+        for (const sock of this.ctx.getWebSockets()) {
+          const a = sock.deserializeAttachment() as Attachment | null;
+          if (!a?.pid) continue;
+          delete a.pid;
+          delete a.syncErr;
+          sock.serializeAttachment(a);
+          this.send(sock, { t: 'unknown' });
+        }
+        break;
+      }
       default:
         return this.reject(ws, att, op, 'bad-input');
     }
