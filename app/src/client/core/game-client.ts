@@ -326,10 +326,13 @@ export class GameClient {
     if (now - this.lastSyncAt >= RESYNC_EVERY_MS) this.burst(BURST_PERIODIC);
   }
 
-  /** 試合中（合図が来るはずの間）に、合図も何も SILENCE_LIMIT_MS 以上届いていない */
+  /**
+   * 試合中（合図が来るはずの間）に、合図も何も SILENCE_LIMIT_MS 以上届いていない。
+   * 入室画面に戻された人（主催者が「部屋を空にする」を押した等）は、手元に古い段階が残っていても見張らない
+   */
   private isSilent(now: number): boolean {
     const stage = this.state.game?.stage;
-    const expecting = this.sawHeartbeat && (stage === 'assigned' || stage === 'timer');
+    const expecting = this.sawHeartbeat && this.state.phase === 'ready' && (stage === 'assigned' || stage === 'timer');
     return expecting && now - this.lastRecvAt > SILENCE_LIMIT_MS;
   }
 

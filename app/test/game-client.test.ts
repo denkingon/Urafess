@@ -54,6 +54,16 @@ function game(stage: Stage): GameView {
   };
 }
 
+/** 入室済みの参加者に届く状態（me つき） */
+function snap(stage: Stage): ServerMsg {
+  return {
+    t: 'snap',
+    now: Date.now(),
+    game: game(stage),
+    me: { pid: 'p1', num: 1, name: 'テスト', role: 'runner', assignId: 1, removed: false },
+  };
+}
+
 function memoryStore(): KeyValueStore {
   const m = new Map<string, string>();
   return { get: (k) => m.get(k) ?? null, set: (k, v) => void m.set(k, v), remove: (k) => void m.delete(k) };
@@ -92,7 +102,7 @@ afterEach(() => {
 describe('試合中の合図の見張り', () => {
   it('合図が2秒ごとに届いている間は切らない', () => {
     const s = sockets[0];
-    s.receive({ t: 'snap', now: Date.now(), game: game('timer') });
+    s.receive(snap('timer'));
     for (let i = 0; i < 30; i++) {
       s.receive({ t: 'hb', s: Date.now() });
       vi.advanceTimersByTime(2_000);
@@ -104,7 +114,7 @@ describe('試合中の合図の見張り', () => {
 
   it('合図も返事も届かなくなったら、SILENCE_LIMIT_MS ＋見張りの間隔（1秒）以内に切ってつなぎ直す', () => {
     const s = sockets[0];
-    s.receive({ t: 'snap', now: Date.now(), game: game('timer') });
+    s.receive(snap('timer'));
     s.receive({ t: 'hb', s: Date.now() });
     vi.advanceTimersByTime(1_500);
     s.answerPings();
@@ -121,7 +131,7 @@ describe('試合中の合図の見張り', () => {
 
   it('合図を一度も受け取っていない接続（合図を出さない古いサーバー）は見張らない', () => {
     const s = sockets[0];
-    s.receive({ t: 'snap', now: Date.now(), game: game('timer') });
+    s.receive(snap('timer'));
     vi.advanceTimersByTime(1_500);
     s.answerPings();
     vi.advanceTimersByTime(6_000);
@@ -133,9 +143,9 @@ describe('試合中の合図の見張り', () => {
 
   it('待合室・結果発表では合図が止まるので見張らない', () => {
     const s = sockets[0];
-    s.receive({ t: 'snap', now: Date.now(), game: game('timer') });
+    s.receive(snap('timer'));
     s.receive({ t: 'hb', s: Date.now() });
-    s.receive({ t: 'snap', now: Date.now(), game: game('result') });
+    s.receive(snap('result'));
     vi.advanceTimersByTime(1_500);
     s.answerPings();
     vi.advanceTimersByTime(6_000);
@@ -144,9 +154,25 @@ describe('試合中の合図の見張り', () => {
     expect(s.closed).toBe(false);
   });
 
+  it('入室画面に戻された人（主催者が部屋を空にした等）は、古い段階が残っていても見張らない', () => {
+    const s = sockets[0];
+    s.receive(snap('assigned'));
+    s.receive({ t: 'hb', s: Date.now() });
+    // 部屋を空にすると、サーバーは参加者に unknown を送り、合図も止まる（待合室に戻るため）
+    s.receive({ t: 'unknown' });
+    expect(client.state.phase).toBe('need-name');
+    vi.advanceTimersByTime(1_500);
+    s.answerPings();
+    vi.advanceTimersByTime(6_000);
+    s.answerPings();
+    vi.advanceTimersByTime(4_500);
+    expect(s.closed).toBe(false);
+    expect(sockets.length).toBe(1);
+  });
+
   it('画面に戻ったとき（wake）に合図が途切れていれば、待たずにその場でつなぎ直す', () => {
     const s = sockets[0];
-    s.receive({ t: 'snap', now: Date.now(), game: game('timer') });
+    s.receive(snap('timer'));
     s.receive({ t: 'hb', s: Date.now() });
     vi.advanceTimersByTime(1_500);
     s.answerPings();
