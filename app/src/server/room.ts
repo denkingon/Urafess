@@ -13,9 +13,12 @@ import {
   type RoleId,
 } from '../shared/rules';
 import { isDone, pauseTimer, resumeTimer, startTimer, type Timer } from '../shared/schedule';
+import type { ProbeHub } from './probe';
 
 export interface Env {
   GAME: DurableObjectNamespace<GameRoom>;
+  /** 夜テストの記録（テスト回ごとに1つ） */
+  PROBE: DurableObjectNamespace<ProbeHub>;
   ASSETS: Fetcher;
   /** 主催者用の合言葉。`wrangler secret put HOST_TOKEN` で入れる */
   HOST_TOKEN?: string;

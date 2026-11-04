@@ -12,11 +12,17 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
   },
-  // 1ゲーム＝1つの Durable Object（SQLite で保存）
+  // 1ゲーム＝1つの Durable Object（SQLite で保存）。夜テストの記録はテスト回ごとに1つ
   "durable_objects": {
-    "bindings": [{ "name": "GAME", "class_name": "GameRoom" }]
+    "bindings": [
+      { "name": "GAME", "class_name": "GameRoom" },
+      { "name": "PROBE", "class_name": "ProbeHub" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["GameRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["ProbeHub"] }
+  ],
   "observability": { "enabled": true }
   // 主催者用の合言葉 HOST_TOKEN は `wrangler secret put HOST_TOKEN` で入れる（ローカルは .dev.vars）
 }
