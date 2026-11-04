@@ -7,7 +7,11 @@
  *
  * 分類：
  * - 回線側：サーバーか途中の回線が閉じた（閉じコードと理由を残す）
- * - アプリ：つながりかけで止まった（8秒）／問い合わせに返事が来ない（8秒）／その他
+ * - アプリ：つながりかけで止まった（8秒）／問い合わせに返事が来ない（8秒）／試合中の合図が途切れた（6秒）／その他
+ *
+ * 部屋を試合中（配役済み）にすると、合図（hb）の届き方も測る。サーバーが出した間隔（hb に入っているサーバーの時刻）と、
+ * 受け取り側での間を分けて出すので、遅れがサーバー（アラーム）側か回線側かを見分けられる。主催者の操作は外のブラウザから。
+ * 結果は sim/diag-report.md（DIAG_REPORT で名前を変えられる）
  */
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,7 +38,7 @@ function memoryStore(): KeyValueStore {
   return { get: (k) => m.get(k) ?? null, set: (k, v) => void m.set(k, v), remove: (k) => void m.delete(k) };
 }
 
-type Cause = 'network' | 'connect-timeout' | 'pong-timeout' | 'replaced' | 'stop' | 'other';
+type Cause = 'network' | 'connect-timeout' | 'pong-timeout' | 'silence' | 'replaced' | 'stop' | 'other';
 
 interface SockRec {
   bot: number;
@@ -49,10 +53,18 @@ interface SockRec {
   lastMsgAt?: number;
   oldestPendingPingMs?: number;
   detail?: string;
+  /** 試合中の合図（hb）を最後に受け取った時刻と、合図どうしの最長の間 */
+  lastHbAt?: number;
+  maxHbGap?: number;
 }
 
 const recs: SockRec[] = [];
 const rtts: number[] = [];
+/** 合図（hb）：サーバーが送った時刻 s ごとに、各接続が受け取った時刻 */
+const hbRecv = new Map<number, number[]>();
+/** 同じ接続で、合図と合図の間（受け取り側の時計） */
+const hbGaps: number[] = [];
+let firstHbAt: number | null = null;
 
 class DiagSocket implements WebSocketLike {
   onopen: ((ev: unknown) => void) | null = null;
@@ -87,6 +99,25 @@ class DiagSocket implements WebSocketLike {
         } catch {
           // 無視
         }
+      } else if (data.startsWith('{"t":"hb"')) {
+        try {
+          const m = JSON.parse(data) as { s: number };
+          const list = hbRecv.get(m.s);
+          if (list) list.push(now);
+          else hbRecv.set(m.s, [now]);
+        } catch {
+          // 無視
+        }
+        if (firstHbAt === null) {
+          firstHbAt = now;
+          log('合図（hb）が届き始めた＝試合中の見張りが始まった');
+        }
+        if (this.rec.lastHbAt !== undefined) {
+          const g = now - this.rec.lastHbAt;
+          hbGaps.push(g);
+          if (g > (this.rec.maxHbGap ?? 0)) this.rec.maxHbGap = g;
+        }
+        this.rec.lastHbAt = now;
       }
       this.onmessage?.({ data });
     };
@@ -125,13 +156,17 @@ class DiagSocket implements WebSocketLike {
       this.rec.closedAt = now;
       const stack = new Error().stack ?? '';
       const state = this.inner.readyState;
-      let cause: Cause = 'other';
-      if (/\bstop\b/.test(stack)) cause = 'stop';
-      else if (/\btick\b/.test(stack)) cause = state === 0 ? 'connect-timeout' : 'pong-timeout';
-      else if (/\bconnect\b/.test(stack)) cause = 'replaced';
-      this.rec.cause = cause;
       const pending = [...this.pingSentAt.values()];
       if (pending.length) this.rec.oldestPendingPingMs = now - Math.min(...pending);
+      let cause: Cause = 'other';
+      if (/\bstop\b/.test(stack)) cause = 'stop';
+      else if (/\btick\b/.test(stack)) {
+        // tick で切るのは：つながりかけで8秒／問い合わせに8秒返事なし／試合中の合図が6秒途切れた（見る順も同じ）
+        if (state === 0) cause = 'connect-timeout';
+        else if ((this.rec.oldestPendingPingMs ?? 0) >= 7_900) cause = 'pong-timeout';
+        else cause = 'silence';
+      } else if (/\bconnect\b/.test(stack)) cause = 'replaced';
+      this.rec.cause = cause;
       if (cause === 'other') this.rec.detail = stack.split('\n').slice(2, 6).map((s) => s.trim()).join(' | ');
       if (cause !== 'stop') logClose(this.rec);
     }
@@ -152,6 +187,8 @@ function logClose(r: SockRec): void {
       ? `回線側が閉じた code=${r.code} reason="${r.reason ?? ''}" clean=${r.wasClean}`
       : r.cause === 'pong-timeout'
         ? `アプリが切った：問い合わせに返事なし（いちばん古い問い合わせから ${((r.oldestPendingPingMs ?? 0) / 1000).toFixed(1)}秒）`
+        : r.cause === 'silence'
+          ? `アプリが切った：試合中の合図が途切れた（最後の合図から ${r.lastHbAt ? ((r.closedAt! - r.lastHbAt) / 1000).toFixed(1) : '—'}秒、それまでの合図どうしの最長の間 ${((r.maxHbGap ?? 0) / 1000).toFixed(1)}秒）`
         : r.cause === 'connect-timeout'
           ? 'アプリが切った：つながりかけのまま8秒'
           : r.cause === 'replaced'
@@ -180,18 +217,39 @@ describe.skipIf(!BASE)(`つなぎ直しの診断（${N}人、${MINUTES}分、部
     }
     const sorted = [...rtts].sort((a, b) => a - b);
     const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? NaN;
+    const pct = (xs: number[], q: number) => {
+      const s = [...xs].sort((a, b) => a - b);
+      return s.length ? s[Math.min(s.length - 1, Math.floor(q * s.length))] : NaN;
+    };
+    const stats = (xs: number[]) => `中央値 ${pct(xs, 0.5)}ms / 95% ${pct(xs, 0.95)}ms / 99% ${pct(xs, 0.99)}ms / 最大 ${xs.length ? Math.max(...xs) : NaN}ms`;
+    // 合図：サーバーが出した間隔（サーバーの時計）と、受け取り側での間（受け取り側の時計）を分けて見る
+    const sent = [...hbRecv.keys()].sort((a, b) => a - b);
+    const sentGaps = sent.slice(1).map((s, i) => s - sent[i]);
+    // 同じ合図を全員が受け取るまでの幅（最初に受け取った人から最後の人まで）。半分以上が受け取った合図だけ
+    const spreads = [...hbRecv.values()].filter((l) => l.length >= N / 2).map((l) => Math.max(...l) - Math.min(...l));
+    const sockGapOver = recs.filter((r) => (r.maxHbGap ?? 0) > 6_000).length;
     const lines = [
       `つなぎ直しの診断（${BASE}、部屋 ${GAME}、${N}人、${MINUTES}分、${new Date().toISOString()}）`,
       `- 接続の本数：${recs.length}（最初の ${N}本を除くと ${recs.length - N}本のつなぎ直し）`,
       `- 切れた接続：${closes.length}本`,
       `  - 回線側が閉じた：${by('network').length}本 ${[...codes].map(([k, v]) => `${k}×${v}`).join('、')}`,
-      `  - アプリ：返事なし ${by('pong-timeout').length}本、つながりかけで止まった ${by('connect-timeout').length}本、古い接続を捨てた ${by('replaced').length}本、その他 ${by('other').length}本`,
+      `  - アプリ：返事なし ${by('pong-timeout').length}本、試合中の合図が途切れた ${by('silence').length}本、つながりかけで止まった ${by('connect-timeout').length}本、古い接続を捨てた ${by('replaced').length}本、その他 ${by('other').length}本`,
       `- 10秒ごとの切れた数：${[...buckets].sort((a, b) => a[0] - b[0]).map(([k, v]) => `${k}s:${v}`).join(' ')}`,
       `- 往復時間（問い合わせ ${sorted.length}回）：中央値 ${at(0.5)}ms / 95% ${at(0.95)}ms / 99% ${at(0.99)}ms / 最大 ${sorted[sorted.length - 1]}ms、2秒超 ${sorted.filter((x) => x > 2000).length}回、8秒超 ${sorted.filter((x) => x > 8000).length}回`,
+      firstHbAt === null
+        ? '- 合図（hb）：届かなかった（試合に入っていない）'
+        : `- 合図（hb）：見張りの時間 ${((Date.now() - firstHbAt) / 1000).toFixed(0)}秒、サーバーが出した合図 ${sent.length}回`,
+      ...(firstHbAt === null
+        ? []
+        : [
+            `  - サーバーが出した間隔（サーバーの時計）：${stats(sentGaps)}、3秒超 ${sentGaps.filter((g) => g > 3_000).length}回、6秒超 ${sentGaps.filter((g) => g > 6_000).length}回`,
+            `  - 同じ合図を全員が受け取るまでの幅：${stats(spreads)}`,
+            `  - 受け取り側で合図と合図の間：${stats(hbGaps)}、4秒超 ${hbGaps.filter((g) => g > 4_000).length}回、6秒超 ${hbGaps.filter((g) => g > 6_000).length}回（6秒超があった接続 ${sockGapOver}本）`,
+          ]),
       '',
     ];
     const text = lines.join('\n');
-    writeFileSync(join(process.cwd(), 'sim', 'diag-report.md'), text);
+    writeFileSync(join(process.cwd(), 'sim', process.env.DIAG_REPORT ?? 'diag-report.md'), text);
     process.stdout.write(`\n${text}\n`);
   });
 
