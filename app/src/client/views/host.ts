@@ -2,6 +2,10 @@ import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protoco
 import { DURATION_MAX_MS, DURATION_MIN_MS, PHASES } from '../../shared/rules';
 import { isDone } from '../../shared/schedule';
 import { hostStatus } from '../../shared/viewmodel';
+import { bigFontSize } from './phone';
+
+/** 主催者画面の大きい数字・文字の上限（「逃走者の勝ち」など長いときは枠に収まるまで縮める） */
+const HOST_BIG_MAX_PX = 56;
 
 /** 主催者の画面（キャンバスの「主催者」）。押せるボタンは今の段階で決まる */
 
@@ -57,6 +61,7 @@ export function createHost(actions: HostActions): HostScreen {
       <button type="button" data-op="win-oni">鬼の勝ち</button>
       <button type="button" data-op="win-runner">逃走者の勝ち</button>
       <button type="button" data-op="reset" class="wide">リセット（配役済みに戻す）</button>
+      <button type="button" data-op="clear" class="wide">部屋を空にする（全員を外す）</button>
     </div>
     <details class="durations">
       <summary>時間の設定</summary>
@@ -84,6 +89,9 @@ export function createHost(actions: HostActions): HostScreen {
   btn('reset').addEventListener('click', () => {
     if (confirm('タイマーを止めて、配役済みに戻す。役はそのまま。よいか？')) actions.command('reset');
   });
+  btn('clear').addEventListener('click', () => {
+    if (confirm('参加者を全員外して、配役前に戻す。スマホは入室画面に戻り、入り直しになる。よいか？')) actions.command('clear');
+  });
   inputs.forEach((i) => i.addEventListener('focus', () => (editingDurations = true)));
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -108,7 +116,9 @@ export function createHost(actions: HostActions): HostScreen {
       const s = hostStatus(game, serverNow);
       q('round').textContent = `ラウンド ${Math.max(game.round, 1)}${online ? '' : '・切断中'}`;
       q('title').textContent = s.title;
-      q('big').textContent = s.big;
+      const big = q('big');
+      big.textContent = s.big;
+      big.style.fontSize = `${Math.min(HOST_BIG_MAX_PX, bigFontSize(s.big, big.clientWidth || 290))}px`;
       q('next').textContent = s.next;
       q('total').textContent = String(host.total);
       const assigned = game.stage !== 'lobby';
@@ -137,6 +147,7 @@ export function createHost(actions: HostActions): HostScreen {
       const paused = game.stage === 'timer' && timer?.status === 'paused';
       setEnabled(btn('resume'), paused, paused);
       setEnabled(btn('reset'), game.stage === 'timer', false);
+      setEnabled(btn('clear'), (game.stage !== 'timer' || done) && host.total > 0, false);
       const canResult = game.stage === 'result' || done;
       setEnabled(btn('win-oni'), canResult, canResult && !game.result);
       setEnabled(btn('win-runner'), canResult, canResult && !game.result);

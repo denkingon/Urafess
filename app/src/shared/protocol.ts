@@ -65,7 +65,9 @@ export type HostOp =
   | 'reset'
   | 'result'
   | 'durations'
-  | 'remove';
+  | 'remove'
+  /** 部屋を空にする：参加者を全員外し、配役前に戻す（リハーサルのあと用） */
+  | 'clear';
 
 export type ClientMsg =
   | { t: 'join'; name: string }
