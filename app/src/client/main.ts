@@ -1,4 +1,5 @@
 import './styles.css';
+import { matchLive } from '../shared/schedule';
 import { participantView } from '../shared/viewmodel';
 import { GameClient, type KeyValueStore } from './core/game-client';
 import { createHost } from './views/host';
@@ -21,9 +22,9 @@ const storage: KeyValueStore = {
 
 const root = document.getElementById('app')!;
 
-/** 試合中（配役〜タイマー）は画面を消さない */
+/** 試合中（配役〜タイマーが0になるまで）は画面を消さない。結果待ちのまま放っておかれたら消える */
 const screenKeeper = createScreenKeeper();
-const inMatch = (stage: string | undefined) => stage === 'assigned' || stage === 'timer';
+const inMatch = (c: GameClient) => matchLive(c.state.game?.stage, c.state.game?.timer, c.serverNow() ?? Date.now());
 
 if (isHost) {
   // 主催者用の合言葉は URL の ?token= で一度渡せば、この端末に覚えさせて URL からは消す
@@ -58,7 +59,7 @@ function startPlayer(): void {
 
   loop(() => {
     const s = client.state;
-    screenKeeper.set(s.phase === 'ready' && inMatch(s.game?.stage));
+    screenKeeper.set(s.phase === 'ready' && inMatch(client));
     if (s.phase === 'need-name' || s.phase === 'joining') {
       show(join.el);
       join.update({ busy: s.phase === 'joining', error: s.joinError });
@@ -85,7 +86,7 @@ function startHost(token: string): void {
   root.replaceChildren(host.el);
   loop(() => {
     const s = client.state;
-    screenKeeper.set(inMatch(s.game?.stage));
+    screenKeeper.set(inMatch(client));
     if (s.phase === 'denied') {
       screenKeeper.set(false);
       storage.remove('urafess:host-token');

@@ -1,6 +1,7 @@
 import { ClockEstimator } from '../../shared/clock';
 import type { GameView, HostOp, HostSummary, MeView, ServerMsg, Winner } from '../../shared/protocol';
 import { SILENCE_LIMIT_MS } from '../../shared/rules';
+import { matchLive } from '../../shared/schedule';
 
 /**
  * しくみの層。接続・時計合わせ・状態だけを持ち、見た目は一切知らない。
@@ -328,11 +329,14 @@ export class GameClient {
 
   /**
    * 試合中（合図が来るはずの間）に、合図も何も SILENCE_LIMIT_MS 以上届いていない。
+   * 試合中かはサーバーと同じ matchLive で決める（時間が0になったら、結果を押す前でも合図は止まるので見張らない）。
    * 入室画面に戻された人（主催者が「部屋を空にする」を押した等）は、手元に古い段階が残っていても見張らない
    */
   private isSilent(now: number): boolean {
-    const stage = this.state.game?.stage;
-    const expecting = this.sawHeartbeat && this.state.phase === 'ready' && (stage === 'assigned' || stage === 'timer');
+    const g = this.state.game;
+    const offset = this.clock.offset() ?? this.roughOffset;
+    const serverNow = offset === null ? now : now + offset;
+    const expecting = this.sawHeartbeat && this.state.phase === 'ready' && matchLive(g?.stage, g?.timer, serverNow);
     return expecting && now - this.lastRecvAt > SILENCE_LIMIT_MS;
   }
 
