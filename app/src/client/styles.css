@@ -83,6 +83,42 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .error { margin: 0; color: var(--ink); font-size: 14px; }
 .note { margin: 0; font-size: 13px; line-height: 1.7; color: var(--quiet); }
 
+/* 置き方の案内（言葉なし）。数字は URAJI、押す場所は電話の絵の点 */
+.install [hidden] { display: none !important; }
+.install { position: relative; padding-top: calc(40px + env(safe-area-inset-top)); gap: 28px; }
+.install .skip {
+  position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 12px;
+  min-height: 0; width: 44px; height: 44px; padding: 10px; border: none; color: var(--faint);
+}
+.install .skip svg { width: 24px; height: 24px; display: block; }
+.install .target { display: flex; justify-content: center; }
+.install img.big { width: 96px; height: 96px; border-radius: 22px; display: block; box-shadow: 0 0 0 1px var(--line-strong); }
+.install .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.install .row {
+  display: grid; grid-template-columns: 28px 40px 1fr; align-items: center; gap: 18px;
+  padding: 10px 14px; border: 1px solid var(--line); border-radius: 14px;
+}
+.install .num { color: var(--ink); display: flex; }
+.install .num .uraji { width: 22px; height: auto; display: block; }
+.install .where { width: 40px; height: 72px; display: block; color: var(--ink); }
+.install .where .faint { opacity: .28; }
+.install .where .ring { opacity: 0; transform-box: fill-box; transform-origin: center; }
+.install .row.now { border-color: var(--line-strong); }
+.install .row.now .where .ring { opacity: 1; animation: install-ring 1s ease-out infinite; }
+@keyframes install-ring { 0% { transform: scale(.7); opacity: 1; } 100% { transform: scale(1.9); opacity: 0; } }
+.install .glyphs { display: flex; align-items: center; gap: 14px; color: var(--ink); }
+.install .glyphs .g { width: 44px; height: 44px; display: block; }
+.install .glyphs img.app { width: 44px; height: 44px; border-radius: 10px; display: block; box-shadow: 0 0 0 1px var(--line-strong); }
+.install .glyphs .scroll { display: flex; color: var(--quiet); }
+.install .glyphs .scroll .uraji { width: 18px; height: auto; display: block; }
+.install .one-tap {
+  align-self: center; display: flex; align-items: center; gap: 18px; padding: 14px 26px;
+  background: var(--ink); color: var(--bg); border: none; border-radius: 999px;
+}
+.install .one-tap img.app { width: 52px; height: 52px; border-radius: 12px; display: block; }
+.install .one-tap .arrow .uraji { width: 26px; height: auto; display: block; }
+@media (prefers-reduced-motion: reduce) { .install .row .where .ring { opacity: 1; animation: none; } }
+
 /* 主催者 */
 .host { gap: 16px; padding-top: calc(32px + env(safe-area-inset-top)); }
 .host-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; color: var(--quiet); }

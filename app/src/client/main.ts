@@ -1,7 +1,9 @@
 import './styles.css';
 import { participantView } from '../shared/viewmodel';
 import { GameClient, type KeyValueStore } from './core/game-client';
+import { detectInstall, lineEscapeUrl, type InstallPath } from './install/detect';
 import { createHost } from './views/host';
+import { createInstall, type InstallScreen } from './views/install';
 import { createJoin } from './views/join';
 import { createPhone } from './views/phone';
 import { createScreenKeeper } from './wake-lock';
@@ -37,10 +39,94 @@ if (isHost) {
   if (!token) showTokenForm();
   else startHost(token);
 } else {
-  startPlayer();
+  const path = installPath();
+  if (path === 'line' && escapeLine()) {
+    // LINE が外のブラウザで開き直す。この画面はこのまま閉じられる
+  } else if (path) {
+    showInstall(path);
+  } else {
+    startPlayer();
+  }
 }
 
 registerServiceWorker();
+
+// ---------- 置き方の案内 ----------
+
+/**
+ * ブラウザで開いた人には、入室の前にホーム画面への置き方を見せる（つなぐのは置いたあと＝アプリから開いたとき）。
+ * 出さないとき：ホーム画面のアプリ・パソコン・試し部屋（?g=）・この画面で一度「このまま」を選んだあと
+ */
+function installPath(): Exclude<InstallPath, 'installed' | 'desktop'> | null {
+  const standalone =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  const path = detectInstall({ ua: navigator.userAgent, standalone, maxTouchPoints: navigator.maxTouchPoints || 0 });
+  // LINE から外のブラウザへ開き直したあとは、目印の ?openExternalBrowser=1 を URL から消す（ホーム画面に置く URL に残さない）
+  if (path !== 'line' && params.has('openExternalBrowser')) {
+    params.delete('openExternalBrowser');
+    history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}${location.hash}`);
+  }
+  if (path === 'installed' || path === 'desktop') return null;
+  if (params.has('g')) return null;
+  if (sessionGet('urafess:install-skip')) return null;
+  return path;
+}
+
+function escapeLine(): boolean {
+  const to = lineEscapeUrl(location.href);
+  if (!to) return false; // 付けて開き直したのに LINE の中のまま → 右上のメニューからの案内を出す
+  location.replace(to);
+  return true;
+}
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+function showInstall(path: Exclude<InstallPath, 'installed' | 'desktop'>): void {
+  let screen: InstallScreen | null = createInstall({
+    path,
+    icon: '/apple-touch-icon.png',
+    onSkip: () => {
+      sessionSet('urafess:install-skip', '1');
+      screen?.stop();
+      screen = null;
+      startPlayer();
+    },
+  });
+  root.replaceChildren(screen.el);
+  // Android の Chrome：ボタン1つで入れられるようになったら、手順の代わりにボタンを出す
+  window.addEventListener('beforeinstallprompt', (e) => {
+    if (!screen) return; // 案内を閉じたあとは、ブラウザの出す帯に任せる
+    e.preventDefault();
+    const ev = e as BeforeInstallPromptEvent;
+    screen.setPrompt(async () => {
+      await ev.prompt();
+      const { outcome } = await ev.userChoice;
+      return outcome === 'accepted';
+    });
+  });
+  window.addEventListener('appinstalled', () => screen?.done());
+}
+
+function sessionGet(k: string): string | null {
+  try {
+    return sessionStorage.getItem(k);
+  } catch {
+    return null;
+  }
+}
+
+function sessionSet(k: string, v: string): void {
+  try {
+    sessionStorage.setItem(k, v);
+  } catch {
+    // 使えない端末では、次に開いたときにまた案内が出るだけ
+  }
+}
 
 // ---------- 参加者 ----------
 
