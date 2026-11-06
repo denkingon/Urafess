@@ -1,7 +1,7 @@
 import { SOUND_PROTOCOL, SOUND_VOLUME, type SoundProtocol } from '../../shared/rules';
 import { SOUND_PROTOCOLS } from '../sound/codec';
 import type { SoundEmitter } from '../sound/emitter';
-import type { SoundListener } from '../sound/listener';
+import { micLimit, type SoundListener } from '../sound/listener';
 
 /**
  * 音の試し（/lab）。部屋もサーバーも使わず、2台のスマホだけで「鳴らす」「拾う」を確かめる。
@@ -36,6 +36,14 @@ export function createLab(emitter: SoundEmitter, listener: SoundListener): HTMLE
     <label class="lab-field">鳴らす3桁<input type="text" inputmode="numeric" maxlength="3" value="${code}" data-k="code"></label>
     <div class="spacer"></div>
     <div class="lab-heard" data-k="heard" hidden></div>
+    <div class="lab-probe" data-k="probe" hidden>
+      <div class="lab-kv"><span>マイク</span><b data-k="micName">—</b></div>
+      <div class="lab-kv"><span>取り込み</span><b data-k="micRate">—</b></div>
+      <div class="lab-band"><span>聞こえる帯</span><span class="bar"><span class="fill" data-k="audBar"></span><span class="max" data-k="audMax"></span></span><b data-k="audDb">—</b></div>
+      <div class="lab-band"><span>超音波の帯</span><span class="bar"><span class="fill" data-k="ultBar"></span><span class="max" data-k="ultMax"></span></span><b data-k="ultDb">—</b></div>
+      <p class="lab-warn" data-k="micWarn" hidden></p>
+      <p class="lab-hint">相手が鳴らしている間に<b>超音波の帯</b>が伸びれば、番号の音は届いている。<b>聞こえる帯</b>だけ伸びるなら、超音波が途中で消えている（相手のスピーカーか、このマイク）。縦の線＝最近の長押しでいちばん強かった所。</p>
+    </div>
     <p class="note" data-k="status"></p>
     <button type="button" class="hold" data-k="hold"><span class="hold-fill"></span><b data-k="holdLabel">鳴らす</b><span>長押し</span></button>
   `;
@@ -49,11 +57,54 @@ export function createLab(emitter: SoundEmitter, listener: SoundListener): HTMLE
   let pressing: number | null = null;
   let pressStart = 0;
   const heard: { code: string; at: number }[] = [];
+  /** 長押しの間に見た、帯ごとのいちばん強い所（dB）。押し始めで戻す */
+  const holdMax = { aud: -160, ult: -160 };
+  /** 針の長さ：-110dB で 0、-30dB でいっぱい */
+  const pct = (db: number) => `${Math.max(0, Math.min(100, ((db + 110) / 80) * 100)).toFixed(1)}%`;
+
+  const renderProbe = () => {
+    const box = q('probe');
+    box.hidden = mode !== 'listen';
+    if (mode !== 'listen') return;
+    const p = listener.probe();
+    if (!p) {
+      q('micName').textContent = '—';
+      q('micRate').textContent = '—';
+      return;
+    }
+    if (pressing !== null) {
+      holdMax.aud = Math.max(holdMax.aud, p.audibleDb);
+      holdMax.ult = Math.max(holdMax.ult, p.ultraDb);
+    }
+    q('micName').textContent = p.label || '（名前を出さない端末）';
+    q('micRate').textContent = `${p.rate}Hz${p.trackRate && p.trackRate !== p.rate ? `（マイクは ${p.trackRate}Hz）` : ''}${p.echo === true ? '・エコー消しあり' : ''}`;
+    q('audBar').style.width = pct(p.audibleDb);
+    q('ultBar').style.width = pct(p.ultraDb);
+    q('audMax').style.left = pct(holdMax.aud);
+    q('ultMax').style.left = pct(holdMax.ult);
+    q('audMax').hidden = holdMax.aud <= -160;
+    q('ultMax').hidden = holdMax.ult <= -160;
+    q('audDb').textContent = `${Math.round(p.audibleDb)}dB`;
+    q('ultDb').textContent = `${Math.round(p.ultraDb)}dB`;
+    const limit = micLimit(p);
+    const warn = q('micWarn');
+    const lines = [
+      limit ? `${limit}。イヤホン（AirPods など）を外して、このページを開き直す。` : '',
+      p.echo === true ? 'エコー消しが入っている。超音波が消されることがある。' : '',
+    ].filter(Boolean);
+    warn.hidden = lines.length === 0;
+    warn.textContent = lines.join(' ');
+  };
 
   const render = () => {
+    // 試合では、鳴らす側（逃走者）のスマホはマイクを開けない。試しでも同じにする
+    // （マイクを開けたまま鳴らすと、端末によっては音の出し方が変わるおそれがある）。開き途中なら、開いたところで閉じる
+    if (mode === 'emit' && listener.state === 'ready') listener.close();
+    renderProbe();
     el.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => b.classList.toggle('primary', b.dataset.mode === mode));
     q('holdLabel').textContent = mode === 'emit' ? (pressing !== null ? '鳴らしている…' : '鳴らす') : pressing !== null ? '聞いている…' : '聞く';
-    (q('code').parentElement as HTMLElement).hidden = mode !== 'emit';
+    // 聞く側は送り方を選ばなくても全部の送り方を読める。鳴らす側の欄は隠して、長押しのボタンを画面の中に残す
+    for (const f of [q('code'), protocolSel, volume]) (f.parentElement as HTMLElement).hidden = mode !== 'emit';
     heardBox.hidden = mode !== 'listen';
     heardBox.replaceChildren(
       ...heard.slice(-6).reverse().map((h) => {
@@ -101,6 +152,8 @@ export function createLab(emitter: SoundEmitter, listener: SoundListener): HTMLE
       const c = /^\d{3}$/.test(codeInput.value) ? codeInput.value : code;
       emitter.start(c, protocolSel.value as SoundProtocol, Number(volume.value));
     } else {
+      holdMax.aud = -160;
+      holdMax.ult = -160;
       listener.listen((c) => {
         heard.push({ code: c, at: performance.now() - pressStart });
         try {
