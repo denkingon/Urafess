@@ -34,7 +34,7 @@ const KIND_NAME: Record<string, string> = {
   end: '夜を終える',
   durations: '時間の設定',
   remove: '外す',
-  clear: '部屋を空にする',
+  clear: '新しい夜を始める',
   hold: '長押し',
   heard: '音を拾った',
   nominate: '鬼が手動で選んだ',
