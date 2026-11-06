@@ -1,15 +1,19 @@
 import './styles.css';
-import { participantView } from '../shared/viewmodel';
+import { RunReporter } from '../shared/run';
+import { participantView, type PhoneView } from '../shared/viewmodel';
 import { GameClient, type KeyValueStore } from './core/game-client';
 import { detectInstall, lineEscapeUrl, type InstallPath } from './install/detect';
 import { getCodec } from './sound/codec';
 import { SoundEmitter } from './sound/emitter';
 import { SoundListener } from './sound/listener';
+import { Sensors } from './sense';
 import { createCapture } from './views/capture';
+import { createGlow } from './views/glow';
 import { createHost } from './views/host';
 import { createInstall, type InstallScreen } from './views/install';
 import { createJoin, type EntryMode } from './views/join';
 import { createLab } from './views/lab';
+import { createRunLab } from './views/lab-run';
 import { createPhone } from './views/phone';
 import { createScreenKeeper } from './wake-lock';
 
@@ -158,6 +162,26 @@ function startPlayer(): void {
   const listener = new SoundListener();
   const capture = createCapture({ client, emitter, listener });
   phone.slot.append(capture.el);
+  // 走ると光る：走っているかはこのスマホが決め、光っている間だけ位置を送る
+  const sensors = new Sensors();
+  const glow = createGlow({ sensors, root: phone.el });
+  phone.stage.append(glow.el);
+  const reporter = new RunReporter();
+  let lastView: PhoneView | null = null;
+  setInterval(() => {
+    const view = lastView;
+    const s = client.state;
+    // 位置と動きを見るのは配役〜ゲームの終わりだけ（電池のため）
+    sensors.setActive(s.phase === 'ready' && view !== null && view.glow !== 'none');
+    const now = Date.now();
+    const lit = sensors.tick(now);
+    const send = reporter.next(now, lit, !!view?.lightable && s.online, sensors.sendPos(now));
+    if (send) client.run(send.on, send.on ? send.pos : null);
+    if (sensors.asked || sensors.motion !== 'off' || sensors.geo !== 'off') {
+      const r = sensors.report();
+      client.sense(r.motion, r.geo);
+    }
+  }, 250);
   // 音は「画面に触れた直後」にしか出させてもらえない。長押しより前のタップで一度準備しておく
   const unlock = () => {
     emitter.unlock();
@@ -172,6 +196,7 @@ function startPlayer(): void {
       client,
       emitter,
       listener,
+      sensors,
       wavBase64: async (code: string) => {
         const url = await emitter.prepare(code);
         const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
@@ -211,16 +236,21 @@ function startPlayer(): void {
     }
     if (s.phase !== 'ready' || !s.game || !s.me) {
       show(phone.el);
-      phone.update({
+      const waiting: PhoneView = {
         round: '—', role: 'なし', step: 0, label: s.online ? 'つないでいる' : '通信を待っている',
-        big: '…', message: '', oni: '?', runners: '?', offline: !s.online, touch: 'none', caught: false,
-      });
+        big: '…', message: '', oni: '?', runners: '?', offline: !s.online, touch: 'none', caught: false, glow: 'none', lightable: false,
+      };
+      lastView = waiting;
+      phone.update(waiting);
+      glow.update(waiting, s, client.serverNow());
       return;
     }
     show(phone.el);
     const view = participantView(s.game, s.me, client.serverNow() ?? Date.now(), s.online);
+    lastView = view;
     phone.update(view);
     capture.update(view, s);
+    glow.update(view, s, client.serverNow());
     // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）
     if (s.me.code && s.me.code !== preparedCode) {
       preparedCode = s.me.code;
@@ -246,9 +276,13 @@ function entryModeOf(phase: string): EntryMode | null {
   }
 }
 
-// ---------- 音の試し（/lab） ----------
+// ---------- 音の試し（/lab）・走りの試し（/lab?k=run） ----------
 
 function startLab(): void {
+  if (params.get('k') === 'run') {
+    root.replaceChildren(createRunLab(new Sensors()));
+    return;
+  }
   const emitter = new SoundEmitter();
   const listener = new SoundListener();
   const unlock = () => {
@@ -268,6 +302,8 @@ function startLab(): void {
 function startHost(token: string): void {
   const client = makeClient({ kind: 'host', token });
   startUpdateChecks(() => !inMatch(client.state.game?.stage));
+  // 走ると光る：主催者の画面の地図の真ん中（位置）と向き。主催者は光らない
+  const sensors = new Sensors();
   const host = createHost({
     command: (op, extra) => client.command(op, extra),
     downloadLog: async () => {
@@ -282,7 +318,7 @@ function startHost(token: string): void {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
     },
-  });
+  }, sensors);
   root.replaceChildren(host.el);
   loop(() => {
     const s = client.state;
@@ -299,6 +335,7 @@ function startHost(token: string): void {
       serverNow: client.serverNow() ?? Date.now(),
       online: s.online,
       lastReject: s.lastReject,
+      glow: s.glow,
     });
   });
 }

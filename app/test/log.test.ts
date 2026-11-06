@@ -62,3 +62,18 @@ describe('古いサーバーとつながったとき（公開の切り替わり�
     expect(v.runners).toBe('残り7/7');
   });
 });
+
+describe('走ると光るの記録', () => {
+  it('光った・消えた（理由つき）を言葉で出す', () => {
+    const csv = eventsToCsv([
+      row({ kind: 'run', via: null, other_num: null, other_name: null, data: '{"lat":35.388,"lon":139.427,"acc":8}' }),
+      row({ id: 2, kind: 'run-end', via: null, other_num: null, other_name: null, data: '{"reason":"stop","ms":12000,"m":40,"path":[]}' }),
+      row({ id: 3, kind: 'run-end', via: null, other_num: null, other_name: null, data: '{"reason":"stale","ms":3000,"m":0,"path":[]}' }),
+      row({ id: 4, kind: 'run-end', via: null, other_num: null, other_name: null, data: '{"reason":"caught","ms":3000,"m":0,"path":[]}' }),
+    ]);
+    expect(csv).toContain(',光った（走り出した）,');
+    expect(csv).toContain(',消えた（止まった）,');
+    expect(csv).toContain(',消えた（位置が届かなくなった）,');
+    expect(csv).toContain(',消えた（捕まった）,');
+  });
+});

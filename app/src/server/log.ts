@@ -41,6 +41,17 @@ const KIND_NAME: Record<string, string> = {
   capture: '捕獲',
   cancel: '取り下げ',
   release: '捕獲の取り消し',
+  run: '光った（走り出した）',
+  'run-end': '消えた',
+};
+
+/** 走ると光る：消えた理由 */
+const RUN_END_NAME: Record<string, string> = {
+  stop: '消えた（止まった）',
+  stale: '消えた（位置が届かなくなった）',
+  closed: '消えた（ゲームの段階の外）',
+  caught: '消えた（捕まった）',
+  out: '消えた（配役から外れた）',
 };
 
 const HEADER = [
@@ -88,9 +99,10 @@ export function eventsToCsv(rows: readonly EventRow[]): string {
 
 function kindName(r: EventRow): string {
   const base = KIND_NAME[r.kind] ?? r.kind;
-  if (r.kind !== 'hold' || !r.data) return base;
+  if ((r.kind !== 'hold' && r.kind !== 'run-end') || !r.data) return base;
   try {
-    const d = JSON.parse(r.data) as { on?: boolean };
+    const d = JSON.parse(r.data) as { on?: boolean; reason?: string };
+    if (r.kind === 'run-end') return RUN_END_NAME[d.reason ?? ''] ?? base;
     return d.on ? '長押し（押した）' : '長押し（離した）';
   } catch {
     return base;

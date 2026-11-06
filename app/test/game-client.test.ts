@@ -343,3 +343,55 @@ describe('試合中の合図の見張り', () => {
     expect(sockets.length).toBe(2);
   });
 });
+
+describe('走ると光る（しくみの層）', () => {
+  const sentOf = (s: FakeSocket, t: string) => s.sent.map((x) => JSON.parse(x) as { t: string; [k: string]: unknown }).filter((m) => m.t === t);
+
+  it('光の知らせが届くたびに、いま光っている全員と seq が変わる', () => {
+    const s = sockets[0];
+    s.receive(snap('timer'));
+    const runs = [{ num: 3, name: 'たけ', lat: 35.388, lon: 139.427, acc: 8, since: 1, at: 2 }];
+    s.receive({ t: 'glow', s: 10, runs });
+    expect(client.state.glow).toEqual({ seq: 1, s: 10, runs });
+    s.receive({ t: 'glow', s: 11, runs: [] });
+    expect(client.state.glow).toEqual({ seq: 2, s: 11, runs: [] });
+  });
+
+  it('走っている（位置つき・位置なし）・止まったを送る。誤差は整数に丸める', () => {
+    const s = sockets[0];
+    client.run(true, { lat: 35.38801, lon: 139.42702, acc: 7.6 });
+    client.run(true, null);
+    client.run(false);
+    expect(sentOf(s, 'run')).toEqual([
+      { t: 'run', on: true, lat: 35.38801, lon: 139.42702, acc: 8 },
+      { t: 'run', on: true },
+      { t: 'run', on: false },
+    ]);
+  });
+
+  it('センサーの状態は変わったときだけ送り、つなぎ直したら送り直す', () => {
+    const s = sockets[0];
+    s.receive({ t: 'welcome', pid: 'p1', key: 'k', num: 1, name: 'テスト' });
+    client.sense('ok', 'off');
+    client.sense('ok', 'off');
+    client.sense('ok', 'ok');
+    expect(sentOf(s, 'sense')).toEqual([
+      { t: 'sense', motion: 'ok', geo: 'off' },
+      { t: 'sense', motion: 'ok', geo: 'ok' },
+    ]);
+    s.onclose?.({});
+    vi.advanceTimersByTime(1_000);
+    const s2 = sockets[1];
+    s2.open();
+    const hello = s2.sent.map((x) => JSON.parse(x) as { t: string });
+    expect(hello.findIndex((m) => m.t === 'resume')).toBeLessThan(hello.findIndex((m) => m.t === 'sense'));
+    expect(sentOf(s2, 'sense')).toEqual([{ t: 'sense', motion: 'ok', geo: 'ok' }]);
+  });
+
+  it('切れている間は送らない（つながったら、光っていれば次の1回で光り直す）', () => {
+    const s = sockets[0];
+    s.readyState = 3;
+    client.run(true, { lat: 1, lon: 2, acc: 3 });
+    expect(sentOf(s, 'run')).toEqual([]);
+  });
+});
