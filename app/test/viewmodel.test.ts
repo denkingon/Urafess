@@ -9,10 +9,12 @@ const D = [20_000, 60_000, 300_000, 120_000];
 function game(partial: Partial<GameView>): GameView {
   return {
     gameId: 'main', round: 1, assignId: 1, stage: 'assigned', cv: 1, timer: null,
-    counts: { oni: 9, runner: 21, total: 30 }, result: null, durations: D, ...partial,
+    counts: { oni: 9, runner: 21, total: 30, caught: 0 }, result: null, durations: D, ...partial,
   };
 }
-const oni: MeView = { pid: 'a', num: 1, name: 'あ', role: 'oni', assignId: 1, removed: false };
+const oni: MeView = {
+  pid: 'a', num: 1, name: 'あ', role: 'oni', assignId: 1, removed: false, code: '123', caught: null, catches: 0, claim: null,
+};
 const runner: MeView = { ...oni, pid: 'b', role: 'runner' };
 
 describe('参加者の画面（キャンバスの Phone に渡す中身）', () => {
@@ -52,6 +54,21 @@ describe('参加者の画面（キャンバスの Phone に渡す中身）', () 
   it('配役のあとに来た人は次の配役から', () => {
     const late: MeView = { ...runner, role: null, assignId: 0 };
     expect(participantView(game({}), late, 0, true)).toMatchObject({ role: 'なし', label: '次の配役から参加' });
+  });
+
+  it('捕獲の長押しボタンは「ゲーム」の段階（終わった直後の10秒を含む）だけ。捕まった人には出さない', () => {
+    const t = startTimer(D, 0);
+    const g = game({ stage: 'timer', timer: t, counts: { oni: 9, runner: 21, total: 30, caught: 3 } });
+    const at = (me: MeView, ms: number) => participantView(g, me, START_LEAD_MS + ms, true);
+    expect(at(runner, 30_000).touch).toBe('none');
+    expect(at(runner, 80_000).touch).toBe('runner');
+    expect(at(oni, 80_000).touch).toBe('oni');
+    expect(at(oni, 385_000).touch).toBe('oni');
+    expect(at(oni, 391_000).touch).toBe('none');
+    expect(at(runner, 80_000).runners).toBe('残り18/21');
+    const caught: MeView = { ...runner, caught: { byNum: 1, byName: 'あ', at: 0, via: 'sound' } };
+    expect(at(caught, 80_000)).toMatchObject({ touch: 'none', caught: true, label: '残り時間・捕まった' });
+    expect(at(caught, 80_000).message).toContain('あに捕まった');
   });
 
   it('通信が切れていたら、そう出す', () => {

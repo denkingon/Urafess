@@ -1,5 +1,6 @@
+import { captureOpenAt } from './capture';
 import type { GameView, MeView, Winner } from './protocol';
-import { PHASES, ROLE_NAME } from './rules';
+import { CLAIM_GRACE_MS, PHASES, ROLE_NAME } from './rules';
 import { formatClock, positionAt } from './schedule';
 
 /**
@@ -17,6 +18,10 @@ export interface PhoneView {
   oni: string;
   runners: string;
   offline: boolean;
+  /** 捕獲の長押しボタン：oni＝「捕まえた」、runner＝「捕まった」、none＝出さない（ゲームの段階だけ出す） */
+  touch: 'oni' | 'runner' | 'none';
+  /** 自分が今の配役で捕まった */
+  caught: boolean;
 }
 
 const MESSAGES: Record<'oni' | 'runner', string[]> = {
@@ -56,8 +61,14 @@ export function participantView(
     big: '',
     message: '',
     oni: assigned ? String(game.counts.oni) : '?',
-    runners: assigned ? String(game.counts.runner) : '?',
+    runners: !assigned
+      ? '?'
+      : game.stage === 'timer' || game.stage === 'result'
+        ? `残り${game.counts.runner - (game.counts.caught ?? 0)}/${game.counts.runner}`
+        : String(game.counts.runner),
     offline: !online,
+    touch: 'none',
+    caught: false,
   };
 
   if (me.removed) {
@@ -105,16 +116,28 @@ export function participantView(
   // stage === 'timer'
   const timer = game.timer!;
   const pos = positionAt(timer, serverNow);
+  // 古いサーバー（捕獲の前の版）は caught を送らない。undefined も「捕まっていない」
+  const caught = role === 'runner' && me.caught != null;
+  // 長押しはゲームの段階（終わった直後の少しを含む）だけ。捕まった人には出さない
+  const open = captureOpenAt(timer, serverNow) || captureOpenAt(timer, serverNow - CLAIM_GRACE_MS);
+  const touch: PhoneView['touch'] = !open ? 'none' : role === 'oni' ? 'oni' : caught ? 'none' : 'runner';
   if (pos.kind === 'done') {
-    return { ...base, step: 6, label: '結果発表', big: '発表待ち', message: '主催者の発表を待つ。' };
+    return { ...base, step: 6, label: '結果発表', big: '発表待ち', message: '主催者の発表を待つ。', touch, caught };
   }
   const paused = timer.status === 'paused';
+  const message = paused
+    ? '主催者の合図を待つ。'
+    : caught
+      ? `${me.caught?.byName ? `${me.caught.byName}に` : ''}捕まった。その場の決まりに従う。`
+      : MESSAGES[role][pos.index + 1];
   return {
     ...base,
     step: pos.index + 2,
-    label: paused ? `一時停止中（${PHASES[pos.index].label}）` : PHASES[pos.index].label,
+    label: paused ? `一時停止中（${PHASES[pos.index].label}）` : caught ? `${PHASES[pos.index].label}・捕まった` : PHASES[pos.index].label,
     big: formatClock(pos.remainingMs),
-    message: paused ? '主催者の合図を待つ。' : MESSAGES[role][pos.index + 1],
+    message,
+    touch,
+    caught,
   };
 }
 

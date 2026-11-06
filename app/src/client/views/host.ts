@@ -1,3 +1,4 @@
+import { VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
 import { DURATION_MAX_MS, DURATION_MIN_MS, PHASES } from '../../shared/rules';
 import { isDone } from '../../shared/schedule';
@@ -18,7 +19,9 @@ export interface HostInput {
 }
 
 export interface HostActions {
-  command(op: HostOp, extra?: { winner?: Winner; durations?: number[]; pid?: string }): void;
+  command(op: HostOp, extra?: { winner?: Winner; durations?: number[]; pid?: string; by?: string }): void;
+  /** 1イベント＝1行の記録を CSV で保存する */
+  downloadLog(): Promise<void>;
 }
 
 export interface HostScreen {
@@ -70,8 +73,15 @@ export function createHost(actions: HostActions): HostScreen {
         <button type="submit">時間を変える</button>
       </form>
     </details>
+    <section class="cap-host" data-k="cap" hidden>
+      <div class="cap-host-head"><b>捕獲</b><span data-k="capCount"></span></div>
+      <p class="note">逃走者を押すと、手で「捕まった」にする・取り消す。黒＝捕まった、点線＝本人が選んでいる途中。</p>
+      <div class="cap-host-grid" data-k="capRunners"></div>
+      <p class="note" data-k="capOni"></p>
+    </section>
     <div class="dups" data-k="duplist"></div>
     <div class="spacer"></div>
+    <button type="button" class="wide" data-op="csv">記録をCSVで保存（誰が・誰を・何分に）</button>
     <p class="note" data-k="foot"></p>
   `;
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
@@ -80,6 +90,24 @@ export function createHost(actions: HostActions): HostScreen {
   const form = el.querySelector('.durations form') as HTMLFormElement;
   let editingDurations = false;
 
+  btn('csv').addEventListener('click', () => {
+    const b = btn('csv');
+    b.disabled = true;
+    void actions
+      .downloadLog()
+      .catch(() => alert('記録を取り出せなかった。通信を確かめてもう一度押す。'))
+      .finally(() => (b.disabled = false));
+  });
+  q('capRunners').addEventListener('click', (e) => {
+    const t = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+    if (!t?.dataset.pid) return;
+    const label = t.dataset.label ?? '';
+    if (t.dataset.state === 'caught') {
+      if (confirm(`${label} の捕獲を取り消す。よいか？`)) actions.command('release', { pid: t.dataset.pid });
+    } else if (confirm(`${label} を、手で「捕まった」にする（鬼は空欄）。よいか？`)) {
+      actions.command('capture', { pid: t.dataset.pid });
+    }
+  });
   btn('assign').addEventListener('click', () => actions.command('assign'));
   btn('start').addEventListener('click', () => actions.command('start'));
   btn('pause').addEventListener('click', () => actions.command('pause'));
@@ -108,6 +136,7 @@ export function createHost(actions: HostActions): HostScreen {
   });
 
   let lastDupKey = '';
+  let lastCapKey = '';
 
   return {
     el,
@@ -158,6 +187,33 @@ export function createHost(actions: HostActions): HostScreen {
         if (!editingDurations) input.value = String(Math.round(game.durations[i] / 1000));
       });
       (form.querySelector('button') as HTMLButtonElement).disabled = !canEditDurations;
+
+      const cap = host.capture;
+      q('cap').hidden = !cap || !(game.stage === 'timer' || game.stage === 'result');
+      if (cap) {
+        const caught = cap.runners.filter((r) => r.caught).length;
+        q('capCount').textContent = `捕まった ${caught}/${cap.runners.length}人`;
+        const capKey = JSON.stringify(cap);
+        if (capKey !== lastCapKey) {
+          lastCapKey = capKey;
+          q('capRunners').replaceChildren(
+            ...cap.runners.map((r) => {
+              const b = document.createElement('button');
+              b.type = 'button';
+              b.dataset.pid = r.pid;
+              b.dataset.state = r.caught ? 'caught' : r.open ? 'open' : 'free';
+              b.dataset.label = `${r.name}（${r.num}番）`;
+              b.textContent = r.caught
+                ? `${r.num} ${r.name} ← ${r.byName ?? '手'}・${r.via ? VIA_NAME[r.via] : ''}`
+                : `${r.num} ${r.name}`;
+              return b;
+            }),
+          );
+          q('capOni').textContent = cap.oni.length
+            ? `鬼の捕まえた数：${cap.oni.map((o) => `${o.name} ${o.catches}`).join('　')}`
+            : '';
+        }
+      }
 
       const dupKey = JSON.stringify(host.dupNames);
       if (dupKey !== lastDupKey) {

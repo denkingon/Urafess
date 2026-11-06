@@ -52,7 +52,7 @@ function game(stage: Stage, timer: Timer | null = stage === 'timer' ? startTimer
     stage,
     cv: 1,
     timer,
-    counts: { oni: 1, runner: 2, total: 3 },
+    counts: { oni: 1, runner: 2, total: 3, caught: 0 },
     result: null,
     durations: timer?.durations ?? LONG,
   };
@@ -64,7 +64,10 @@ function snap(stage: Stage, timer?: Timer | null): ServerMsg {
     t: 'snap',
     now: Date.now(),
     game: game(stage, timer),
-    me: { pid: 'p1', num: 1, name: 'テスト', role: 'runner', assignId: 1, removed: false },
+    me: {
+      pid: 'p1', num: 1, name: 'テスト', role: 'runner', assignId: 1, removed: false,
+      code: '123', caught: null, catches: 0, claim: null,
+    },
   };
 }
 
