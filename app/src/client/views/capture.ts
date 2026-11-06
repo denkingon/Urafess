@@ -43,8 +43,9 @@ function vibrate(pattern: number | number[]): void {
 }
 
 /** 鬼のマイクのボタンに出す言葉：[大きい字, 小さい字, 押せるか] */
-function micPrompt(state: SoundListener['state']): [string, string, boolean] {
-  switch (state) {
+function micPrompt(listener: SoundListener): [string, string, boolean] {
+  if (listener.silent) return ['マイクに音が来ていない', '押して開き直す。直らなければアプリを開き直す', true];
+  switch (listener.state) {
     case 'starting':
       return ['マイクを準備中…', '許可を聞かれたら「許可」を押す', false];
     case 'ready':
@@ -399,7 +400,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
         const mic: Record<string, string> = {
           off: 'マイク：押すと使う',
           starting: 'マイク：準備中',
-          ready: !listener.live ? 'マイク：止まっている（上のボタンで戻す）' : holding ? `マイク：${'▮'.repeat(1 + Math.round(listener.level * 5))}` : 'マイク：準備OK',
+          ready: listener.silent ? 'マイク：音が来ていない（上のボタンで開き直す）' : !listener.live ? 'マイク：止まっている（上のボタンで戻す）' : holding ? `マイク：${'▮'.repeat(1 + Math.round(listener.level * 5))}` : 'マイク：準備OK',
           denied: 'マイクが使えない（長押しの時刻で候補に出る）',
           unsupported: 'マイクが使えない（長押しの時刻で候補に出る）',
           error: 'マイクが使えない（長押しの時刻で候補に出る）',
@@ -419,7 +420,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       const needMic = inRound && beforeOrDuring && role === '鬼' && !listener.live;
       mic.hidden = !needMic;
       if (needMic) {
-        const [label, sub, usable] = micPrompt(listener.state);
+        const [label, sub, usable] = micPrompt(listener);
         q('micLabel').textContent = label;
         q('micSub').textContent = sub;
         mic.disabled = !usable;
