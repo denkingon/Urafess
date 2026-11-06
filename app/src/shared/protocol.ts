@@ -99,7 +99,34 @@ export interface HostSummary {
   reclaims: { rid: string; name: string; at: number; here: boolean }[];
   /** 名簿の人数（今夜いない人も含む） */
   registry: number;
+  /**
+   * 走ると光る：今の配役に入っていてつながっている人（total）のうち、動きのセンサーが使える人・位置が使える人・いま光っている人。
+   * 古いサーバーは送らない
+   */
+  glow?: { total: number; motion: number; geo: number; lit: number };
 }
+
+/**
+ * 走ると光る：いま光っている1人。役は入れない（走っているのが鬼か逃走者かは、動きを見て決めること）。
+ * 位置は取れていなければ null。緯度・経度は小数5桁（約1m）、acc は位置の誤差の半径（m）
+ */
+export interface GlowEntry {
+  num: number;
+  name: string;
+  lat: number | null;
+  lon: number | null;
+  acc: number | null;
+  /** 光り始めたサーバー時刻 */
+  since: number;
+  /** 最後に届いたサーバー時刻 */
+  at: number;
+}
+
+/**
+ * スマホのセンサーが使えるか。off＝まだ聞いていない、ok＝使える、denied＝許可されていない、
+ * unsupported＝このスマホには無い、error＝開けない・位置が取れない
+ */
+export type SenseState = 'off' | 'ok' | 'denied' | 'unsupported' | 'error';
 
 export type HostOp =
   | 'assign'
@@ -168,7 +195,14 @@ export type ClientMsg =
   /** 手動で選ぶための一覧がほしい（鬼には捕まっていない逃走者、逃走者には鬼が届く） */
   | { t: 'roster' }
   /** 逃走者が「捕まった」を取り下げた（押し間違い） */
-  | { t: 'cancel' };
+  | { t: 'cancel' }
+  /**
+   * 走ると光る。on=true は「走っている」（光っている間 RUN_SEND_EVERY_MS ごとに送り直す）、false は「止まった」。
+   * 位置が取れていれば付ける（緯度・経度・誤差の半径 m）。ゲームの段階の外・捕まった人の分は、サーバーが捨てる
+   */
+  | { t: 'run'; on: boolean; lat?: number; lon?: number; acc?: number }
+  /** このスマホで、動きのセンサーと位置が使えるか（変わったときと、つなぎ直したときに送る。主催者画面に数が出る） */
+  | { t: 'sense'; motion: SenseState; geo: SenseState };
 
 /**
  * 本人だけに出す短い知らせ（画面の帯・振動）。状態そのものは snap の me で届く。
@@ -201,4 +235,6 @@ export type ServerMsg =
   | { t: 'hb'; s: number }
   | { t: 'notice'; kind: NoticeKind; other?: { num: number; name: string }; via?: CaptureVia; at: number }
   /** 手動で選ぶ一覧（頼んだ本人にだけ。鬼には捕まっていない逃走者、逃走者には鬼） */
-  | { t: 'roster'; people: RosterEntry[] };
+  | { t: 'roster'; people: RosterEntry[] }
+  /** 走ると光る：いま光っている全員（全員に同じものを送る。変わるたびに、まとめて）。s はサーバーの時刻 */
+  | { t: 'glow'; s: number; runs: GlowEntry[] };

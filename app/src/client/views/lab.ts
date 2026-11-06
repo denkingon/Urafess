@@ -24,7 +24,7 @@ export function createLab(emitter: SoundEmitter, listener: SoundListener): HTMLE
   const code = String(100 + Math.floor(Math.random() * 900));
   el.innerHTML = `
     <h1>音の試し</h1>
-    <p class="lead">2台で開く。片方は「鳴らす」、もう片方は「聞く」を長押しして、スマホを近づける。サーバーは使わない。</p>
+    <p class="lead">2台で開く。片方は「鳴らす」、もう片方は「聞く」を長押しして、スマホを近づける。サーバーは使わない。<a href="/lab?k=run">走りの試しへ</a></p>
     <div class="lab-mode">
       <button type="button" data-mode="emit" class="primary">鳴らす</button>
       <button type="button" data-mode="listen">聞く</button>
