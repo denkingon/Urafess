@@ -181,11 +181,11 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .reject { margin: 0; border: 1px solid var(--line-strong); border-radius: 8px; padding: 10px 12px; font-size: 14px; line-height: 1.6; }
 .buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .buttons .wide { grid-column: span 2; }
-.durations { border-top: 1px solid var(--line); padding-top: 12px; font-size: 14px; color: var(--quiet); }
-.durations summary { cursor: pointer; }
-.durations form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
-.durations label { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
-.durations input { width: 96px; height: 44px; text-align: right; }
+.durations, .ratio { border-top: 1px solid var(--line); padding-top: 12px; font-size: 14px; color: var(--quiet); }
+.durations summary, .ratio summary { cursor: pointer; }
+.durations form, .ratio form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.durations label, .ratio label { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.durations input, .ratio input { width: 96px; height: 44px; text-align: right; }
 .dups { display: flex; flex-direction: column; gap: 8px; }
 .dup-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
 .dup-row button { min-height: 44px; padding: 0 12px; font-size: 14px; }

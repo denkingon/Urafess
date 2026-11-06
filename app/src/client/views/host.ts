@@ -1,6 +1,17 @@
 import { VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
-import { DURATION_MAX_MS, DURATION_MIN_MS, PHASES, START_LEAD_MS } from '../../shared/rules';
+import { allocateCounts } from '../../shared/allocate';
+import {
+  DEFAULT_RATIO,
+  DURATION_MAX_MS,
+  DURATION_MIN_MS,
+  isValidRatio,
+  PHASES,
+  RATIO_MAX,
+  RATIO_MIN,
+  ROLES,
+  START_LEAD_MS,
+} from '../../shared/rules';
 import { isDone, positionAt } from '../../shared/schedule';
 import { hostStatus } from '../../shared/viewmodel';
 import { bigFontSize } from './phone';
@@ -22,7 +33,7 @@ export interface HostInput {
 }
 
 export interface HostActions {
-  command(op: HostOp, extra?: { winner?: Winner; durations?: number[]; pid?: string; by?: string }): void;
+  command(op: HostOp, extra?: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string }): void;
   /** 1イベント＝1行の記録を CSV で保存する */
   downloadLog(): Promise<void>;
 }
@@ -77,6 +88,15 @@ export function createHost(actions: HostActions): HostScreen {
         <button type="submit">時間を変える</button>
       </form>
     </details>
+    <details class="ratio">
+      <summary>鬼と逃走者の割合</summary>
+      <form>
+        <label>鬼<input type="number" min="${RATIO_MIN}" max="${RATIO_MAX}" step="1" data-r="oni" inputmode="numeric"></label>
+        <label>逃走者<input type="number" min="${RATIO_MIN}" max="${RATIO_MAX}" step="1" data-r="runner" inputmode="numeric"></label>
+        <p class="note" data-k="ratioPreview"></p>
+        <button type="submit">割合を変える</button>
+      </form>
+    </details>
     <section class="cap-host" data-k="cap" hidden>
       <div class="cap-host-head"><b>捕獲</b><span data-k="capCount"></span></div>
       <p class="note">逃走者を押すと、手で「捕まった」にする・取り消す。黒＝捕まった、点線＝本人が選んでいる途中。</p>
@@ -93,6 +113,33 @@ export function createHost(actions: HostActions): HostScreen {
   const inputs = [...el.querySelectorAll('.durations input')] as HTMLInputElement[];
   const form = el.querySelector('.durations form') as HTMLFormElement;
   let editingDurations = false;
+  const ratioInputs = [...el.querySelectorAll('.ratio input')] as HTMLInputElement[];
+  const ratioForm = el.querySelector('.ratio form') as HTMLFormElement;
+  let editingRatio = false;
+  let totalNow = 0;
+  const readRatio = () => ({
+    oni: Number(ratioInputs.find((i) => i.dataset.r === 'oni')!.value),
+    runner: Number(ratioInputs.find((i) => i.dataset.r === 'runner')!.value),
+  });
+  // いまの入室人数でこの割合だと、何人ずつになるか
+  const showPreview = () => {
+    const r = readRatio();
+    q('ratioPreview').textContent = isValidRatio(r)
+      ? totalNow > 0
+        ? `いま${totalNow}人なら 鬼 ${allocateCounts(totalNow, ROLES.map((x) => ({ ...x, weight: r[x.id] })))[0]}人・逃走者 ${allocateCounts(totalNow, ROLES.map((x) => ({ ...x, weight: r[x.id] })))[1]}人。次の配役（引き直しも）から効く`
+        : '次の配役（引き直しも）から効く'
+      : `${RATIO_MIN}〜${RATIO_MAX}の整数で入れる`;
+  };
+  ratioInputs.forEach((i) => {
+    i.addEventListener('focus', () => (editingRatio = true));
+    i.addEventListener('input', showPreview);
+  });
+  ratioForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    editingRatio = false;
+    const ratio = readRatio();
+    if (isValidRatio(ratio)) actions.command('ratio', { ratio });
+  });
 
   btn('csv').addEventListener('click', () => {
     const b = btn('csv');
@@ -168,6 +215,7 @@ export function createHost(actions: HostActions): HostScreen {
       q('dups').textContent = host.dupNames.length ? `${host.dupNames.length}組` : 'なし';
       q('foot').textContent =
         `時間：${PHASES.map((p, i) => `${p.label} ${fmt(game.durations[i])}`).join(' → ')}` +
+        `　／　割合 鬼${(game.ratio ?? DEFAULT_RATIO).oni}：逃走者${(game.ratio ?? DEFAULT_RATIO).runner}` +
         (host.waiting ? `　／　次の配役を待っている人 ${host.waiting}人` : '');
 
       const reject = q('reject');
@@ -204,6 +252,16 @@ export function createHost(actions: HostActions): HostScreen {
         if (!editingDurations) input.value = String(Math.round(game.durations[i] / 1000));
       });
       (form.querySelector('button') as HTMLButtonElement).disabled = !canEditDurations;
+
+      const canEditRatio = canEditDurations;
+      const ratio = game.ratio ?? DEFAULT_RATIO;
+      totalNow = host.total;
+      ratioInputs.forEach((input) => {
+        input.disabled = !canEditRatio;
+        if (!editingRatio) input.value = String(ratio[input.dataset.r as 'oni' | 'runner']);
+      });
+      (ratioForm.querySelector('button') as HTMLButtonElement).disabled = !canEditRatio;
+      if (!editingRatio) showPreview();
 
       const cap = host.capture;
       q('cap').hidden = !cap || !(game.stage === 'timer' || game.stage === 'result');

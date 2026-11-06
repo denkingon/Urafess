@@ -29,6 +29,8 @@ export interface GameView {
   counts: { oni: number; runner: number; total: number; caught: number };
   result: Winner | null;
   durations: number[];
+  /** 配役の比率（鬼：逃走者）。古いサーバーからは来ない */
+  ratio?: { oni: number; runner: number };
 }
 
 /** 本人だけに送る部分 */
@@ -94,6 +96,8 @@ export type HostOp =
   | 'reset'
   | 'result'
   | 'durations'
+  /** 鬼：逃走者の比率を変える（配役の前だけ） */
+  | 'ratio'
   | 'remove'
   /** 部屋を空にする：参加者を全員外し、配役前に戻す（リハーサルのあと用） */
   | 'clear'
@@ -111,7 +115,7 @@ export type ClientMsg =
   | { t: 'ping'; id: number; a: number }
   | { t: 'ack'; assignId: number }
   | { t: 'sync'; err: number }
-  | { t: 'cmd'; op: HostOp; cv: number; winner?: Winner; durations?: number[]; pid?: string; by?: string }
+  | { t: 'cmd'; op: HostOp; cv: number; winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string }
   /**
    * 長押し。on=true は押し始め（HOLD_MIN_MS 押し続けたら送る）、false は離した。
    * at はその瞬間のサーバー時刻の見積もり（押し始めは、指を置いた瞬間）。

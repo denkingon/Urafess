@@ -19,6 +19,17 @@ export const ROLES: readonly RoleRule[] = [
   { id: 'runner', name: '逃走者', weight: 7, min: 1, tiePriority: 0 },
 ];
 
+/** 鬼：逃走者の比率の重み。主催者が配役の前に変えられる（初期値は ROLES の重み） */
+export type Ratio = Record<RoleId, number>;
+export const DEFAULT_RATIO: Ratio = { oni: 3, runner: 7 };
+export const RATIO_MIN = 1;
+export const RATIO_MAX = 99;
+export function isValidRatio(r: unknown): r is Ratio {
+  if (typeof r !== 'object' || r === null) return false;
+  const { oni, runner } = r as Record<string, unknown>;
+  return [oni, runner].every((x) => Number.isInteger(x) && (x as number) >= RATIO_MIN && (x as number) <= RATIO_MAX);
+}
+
 export const ROLE_NAME: Record<RoleId, string> = { oni: '鬼', runner: '逃走者' };
 
 /** 1ラウンドの時間で区切られた段階（配役と結果発表は主催者が進める） */
