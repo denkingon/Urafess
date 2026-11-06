@@ -102,9 +102,17 @@ def main():
                     report["slivers"].append(name)
 
     kern_names = set(order)
-    lines = ["languagesystem DFLT dflt;", "languagesystem latn dflt;", "languagesystem kana dflt;", "feature kern {"]
+    lines = ["languagesystem DFLT dflt;", "languagesystem latn dflt;", "languagesystem kana dflt;", "languagesystem hani dflt;", "feature kern {"]
     lines += [f"  pos {a} {b} {v};" for a, b, v in data["kern"] if a in kern_names and b in kern_names]
     lines.append("} kern;")
+    if data.get("liga"):
+        lines += ["feature liga {"]
+        lines += [f"  sub {' '.join(seq)} by {lig};" for seq, lig in data["liga"]]
+        lines.append("} liga;")
+    if data.get("ss02"):
+        lines += ["feature ss02 {", '  featureNames { name "Urasai"; };']
+        lines += [f"  sub {a} by {b};" for a, b in data["ss02"]]
+        lines.append("} ss02;")
     if data["ss01"]:
         lines += ["feature ss01 {", '  featureNames { name "Stencil"; };']
         lines += [f"  sub {a} by {b};" for a, b in data["ss01"]]
@@ -121,12 +129,12 @@ def main():
     fb.setupNameTable({
         "copyright": "(c) 2026 Urafess",
         "familyName": family, "styleName": "Regular",
-        "uniqueFontIdentifier": f"{ps};0.2", "fullName": f"{family} {style}", "psName": ps,
-        "version": "Version 0.200", "typographicFamily": family, "typographicSubfamily": style,
-        "description": "裏フェスのための書体。字の高さの0.618に一本の線が走る。",
+        "uniqueFontIdentifier": f"{ps};0.4", "fullName": f"{family} {style}", "psName": ps,
+        "version": "Version 0.400", "typographicFamily": family, "typographicSubfamily": style,
+        "description": "裏フェスのための書体。字の高さの0.618に一本の線が走る。小文字は線の下に収まる。",
     })
     fb.setupOS2(version=4, sTypoAscender=880, sTypoDescender=-220, sTypoLineGap=0,
-                usWinAscent=900, usWinDescent=260, sxHeight=700, sCapHeight=700,
+                usWinAscent=900, usWinDescent=260, sxHeight=round(data["geo"]["S0"]), sCapHeight=700,
                 usWeightClass=900, fsSelection=0x0040 | 0x0080, achVendID="URAF",
                 ulUnicodeRange1=0b11, ulCodePageRange1=(1 << 0) | (1 << 17))
     fb.setupPost()

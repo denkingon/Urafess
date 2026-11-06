@@ -303,6 +303,8 @@
     T: 40,       // 線の厚さ（0 で線なし＝ベタ）
     SB: 62,      // 縦画側の字間
     WX: 1.0,     // 字幅の倍率（英数字のみ）
+    VL: 146,     // 小文字の縦画の太さ
+    BL: 104,     // 小文字の横画の太さ
   };
 
   const KNOBS = [
@@ -314,6 +316,8 @@
     { key: "R", label: "角の半径", group: "角", min: 0, max: 280, step: 1, fmt: (v) => String(Math.round(v)) },
     { key: "K", label: "角の張り", group: "角", min: 0.50, max: 0.82, step: 0.01, fmt: (v) => v.toFixed(2) },
     { key: "SB", label: "字間", group: "字間", min: 20, max: 120, step: 1, fmt: (v) => String(Math.round(v)) },
+    { key: "VL", label: "小文字の縦画", group: "小文字", min: 100, max: 200, step: 1, fmt: (v) => String(Math.round(v)) },
+    { key: "BL", label: "小文字の横画", group: "小文字", min: 70, max: 150, step: 1, fmt: (v) => String(Math.round(v)) },
   ];
 
   const KERN = [
@@ -326,6 +330,16 @@
     ["R", "T", -16], ["R", "V", -20], ["R", "W", -14], ["R", "Y", -24],
     ["K", "O", -22], ["K", "C", -22], ["K", "G", -22], ["K", "Q", -22], ["X", "O", -16],
     ["seven", "period", -60], ["seven", "comma", -60],
+    // 小文字
+    ...["a", "c", "e", "o", "s", "g", "q", "d"].map((c) => ["T", c, -52]), ...["u", "r", "m", "n", "p", "y", "v", "w", "x", "z"].map((c) => ["T", c, -40]),
+    ...["a", "c", "e", "o", "s", "g", "q", "d"].map((c) => ["V", c, -30]), ...["a", "c", "e", "o", "s", "g", "q", "d"].map((c) => ["W", c, -22]),
+    ...["a", "c", "e", "o", "s", "g", "q", "d"].map((c) => ["Y", c, -40]), ["Y", "u", -28], ["Y", "n", -28],
+    ...["a", "e", "o"].map((c) => ["F", c, -20]), ...["a", "e", "o"].map((c) => ["P", c, -20]),
+    ["L", "y", -40], ["L", "v", -32], ["L", "w", -24],
+    ["r", "comma", -54], ["r", "period", -54], ["r", "a", -12], ["r", "hyphen", -20],
+    ["v", "comma", -44], ["v", "period", -44], ["w", "comma", -36], ["w", "period", -36], ["y", "comma", -44], ["y", "period", -44],
+    ["f", "comma", -34], ["f", "period", -34], ["t", "comma", -10],
+    ["k", "o", -16], ["k", "e", -16], ["k", "c", -16], ["k", "a", -10], ["x", "o", -10], ["x", "e", -10],
   ];
 
   // ---------- 演算の木 ----------
@@ -414,87 +428,179 @@
 
     // ===== 英字 =====
     let W = ww(540);
-    add("A", [0x41, 0x61], W, st, st, U(D(rr(0, 0, W, H, R, R), rr(V, -10, W - V, H - B, [R - V, R - B], [R - V, R - B])), rect(V - 2, M0, W - V + 2, M1)));
+    add("A", [0x41], W, st, st, U(D(rr(0, 0, W, H, R, R), rr(V, -10, W - V, H - B, [R - V, R - B], [R - V, R - B])), rect(V - 2, M0, W - V + 2, M1)));
 
     W = ww(520);
-    add("B", [0x42, 0x62], W, st, rd, U(ring(0, M0, W - 24, H, 0, R, R, 0), ring(0, 0, W, M1, 0, R, R, 0)), { notch: [lowerNotch(B, M0)] });
+    add("B", [0x42], W, st, rd, U(ring(0, M0, W - 24, H, 0, R, R, 0), ring(0, 0, W, M1, 0, R, R, 0)), { notch: [lowerNotch(B, M0)] });
 
     W = ww(520);
-    add("C", [0x43, 0x63], W, rd, tb, D(ring(0, 0, W, H, R, R, R, R), rect(W - V - 2, R, W + 2, H - R)));
+    add("C", [0x43], W, rd, tb, D(ring(0, 0, W, H, R, R, R, R), rect(W - V - 2, R, W + 2, H - R)));
 
     W = ww(540);
-    add("D", [0x44, 0x64], W, st, rd, ring(0, 0, W, H, 0, R, R, 0));
+    add("D", [0x44], W, st, rd, ring(0, 0, W, H, 0, R, R, 0));
 
     W = ww(470);
-    add("E", [0x45, 0x65], W, st, tb, U(rect(0, 0, V, H), rect(0, H - B, W, H), rect(0, M0, W - 34, M1), rect(0, 0, W, B)));
+    add("E", [0x45], W, st, tb, U(rect(0, 0, V, H), rect(0, H - B, W, H), rect(0, M0, W - 34, M1), rect(0, 0, W, B)));
 
     W = ww(450);
-    add("F", [0x46, 0x66], W, st, tb, U(rect(0, 0, V, H), rect(0, H - B, W, H), rect(0, M0, W - 34, M1)));
+    add("F", [0x46], W, st, tb, U(rect(0, 0, V, H), rect(0, H - B, W, H), rect(0, M0, W - 34, M1)));
 
     W = ww(540);
-    add("G", [0x47, 0x67], W, rd, rd, U(D(ring(0, 0, W, H, R, R, R, R), rect(W - V - 2, M1, W + 2, H - R)), rect(W * 0.47, M0, W, M1)));
+    add("G", [0x47], W, rd, rd, U(D(ring(0, 0, W, H, R, R, R, R), rect(W - V - 2, M1, W + 2, H - R)), rect(W * 0.47, M0, W, M1)));
 
     W = ww(540);
-    add("H", [0x48, 0x68], W, st, st, U(rect(0, 0, V, H), rect(W - V, 0, W, H), rect(V - 1, M0, W - V + 1, M1)));
+    add("H", [0x48], W, st, st, U(rect(0, 0, V, H), rect(W - V, 0, W, H), rect(V - 1, M0, W - V + 1, M1)));
 
     W = V;
-    add("I", [0x49, 0x69], W, st, st, rect(0, 0, V, H));
+    add("I", [0x49], W, st, st, rect(0, 0, V, H));
 
     W = ww(470);
-    add("J", [0x4A, 0x6A], W, tb, st, D(D(rr(0, 0, W, H, 0, 0, R, R), rr(V, B, W - V, H + 60, 0, 0, [R - V, R - B], [R - V, R - B])), rect(-1, 250, V + 1, H + 1)));
+    add("J", [0x4A], W, tb, st, D(D(rr(0, 0, W, H, 0, 0, R, R), rr(V, B, W - V, H + 60, 0, 0, [R - V, R - B], [R - V, R - B])), rect(-1, 250, V + 1, H + 1)));
 
     W = ww(540);
-    add("K", [0x4B, 0x6B], W, st, dg, U(rect(0, 0, V, H), diag(V - 10, 250, W - 78, H + 40, 152), diag(V + 118, 360, W - 78, -40, 168)));
+    add("K", [0x4B], W, st, dg, U(rect(0, 0, V, H), diag(V - 10, 250, W - 78, H + 40, 152), diag(V + 118, 360, W - 78, -40, 168)));
 
     W = ww(440);
-    add("L", [0x4C, 0x6C], W, st, tb, U(rect(0, 0, V, H), rect(0, 0, W, B)));
+    add("L", [0x4C], W, st, tb, U(rect(0, 0, V, H), rect(0, 0, W, B)));
 
     W = ww(690);
-    add("M", [0x4D, 0x6D], W, st, st, U(rect(0, 0, V, H), rect(W - V, 0, W, H), diag(V * 0.45, H + 20, W / 2, 170, 148), diag(W - V * 0.45, H + 20, W / 2, 170, 148)));
+    add("M", [0x4D], W, st, st, U(rect(0, 0, V, H), rect(W - V, 0, W, H), diag(V * 0.45, H + 20, W / 2, 170, 148), diag(W - V * 0.45, H + 20, W / 2, 170, 148)));
 
     W = ww(560);
-    add("N", [0x4E, 0x6E], W, st, st, U(rect(0, 0, V, H), rect(W - V, 0, W, H), diag(V * 0.42, H + 30, W - V * 0.42, -30, 158)));
+    add("N", [0x4E], W, st, st, U(rect(0, 0, V, H), rect(W - V, 0, W, H), diag(V * 0.42, H + 30, W - V * 0.42, -30, 158)));
 
     W = ww(560);
-    add("O", [0x4F, 0x6F], W, rd, rd, ring(0, 0, W, H, R, R, R, R));
+    add("O", [0x4F], W, rd, rd, ring(0, 0, W, H, R, R, R, R));
 
     W = ww(510);
-    add("P", [0x50, 0x70], W, st, rd, U(rect(0, 0, V, H), ring(0, M0, W, H, 0, R, R, 0)));
+    add("P", [0x50], W, st, rd, U(rect(0, 0, V, H), ring(0, M0, W, H, 0, R, R, 0)));
 
     W = ww(560);
-    add("Q", [0x51, 0x71], W, rd, rd, I(U(ring(0, 0, W, H, R, R, R, R), diag(W * 0.60, 230, W + 18, -95, 150)), rect(0, -95, W + 30, H)), { clip: false });
+    add("Q", [0x51], W, rd, rd, I(U(ring(0, 0, W, H, R, R, R, R), diag(W * 0.60, 230, W + 18, -95, 150)), rect(0, -95, W + 30, H)), { clip: false });
 
     W = ww(530);
-    add("R", [0x52, 0x72], W, st, dg, U(rect(0, 0, V, H), ring(0, M0, W - 22, H, 0, R, R, 0), diag(W * 0.50, M0 + 70, W - 84, -40, 166)));
+    add("R", [0x52], W, st, dg, U(rect(0, 0, V, H), ring(0, M0, W - 22, H, 0, R, R, 0), diag(W * 0.50, M0 + 70, W - 84, -40, 166)));
 
     W = ww(510);
     {
       const up = D(ring(0, M0, W, H, R, 0, 0, Rs), rect(V, M1, W + 1, H - B), rect(W - Rs, M0 - 1, W + 1, M1));
       const lo = D(ring(0, 0, W, M1, 0, Rs, R, 0), rect(-1, B, W - V, M0), rect(-1, M0 - 1, Rs, M1 + 1));
-      add("S", [0x53, 0x73], W, rd, rd, U(up, lo));
+      add("S", [0x53], W, rd, rd, U(up, lo));
     }
 
     W = ww(520);
-    add("T", [0x54, 0x74], W, tb, tb, U(rect(0, H - B, W, H), rect(W / 2 - V / 2, 0, W / 2 + V / 2, H)));
+    add("T", [0x54], W, tb, tb, U(rect(0, H - B, W, H), rect(W / 2 - V / 2, 0, W / 2 + V / 2, H)));
 
     W = ww(540);
-    add("U", [0x55, 0x75], W, st, st, D(rr(0, 0, W, H, 0, 0, R, R), rr(V, B, W - V, H + 60, 0, 0, [R - V, R - B], [R - V, R - B])));
+    add("U", [0x55], W, st, st, D(rr(0, 0, W, H, 0, 0, R, R), rr(V, B, W - V, H + 60, 0, 0, [R - V, R - B], [R - V, R - B])));
 
     W = ww(570);
-    add("V", [0x56, 0x76], W, dg, dg, U(diag(V * 0.5, H + 20, W / 2 - 6, -10, 158), diag(W - V * 0.5, H + 20, W / 2 + 6, -10, 158)));
+    add("V", [0x56], W, dg, dg, U(diag(V * 0.5, H + 20, W / 2 - 6, -10, 158), diag(W - V * 0.5, H + 20, W / 2 + 6, -10, 158)));
 
     W = ww(840);
-    add("W", [0x57, 0x77], W, dg, dg, U(diag(80, H + 20, W * 0.285, -10, 150), diag(W / 2 - 4, 590, W * 0.285, -10, 142),
+    add("W", [0x57], W, dg, dg, U(diag(80, H + 20, W * 0.285, -10, 150), diag(W / 2 - 4, 590, W * 0.285, -10, 142),
       diag(W / 2 + 4, 590, W * 0.715, -10, 142), diag(W - 80, H + 20, W * 0.715, -10, 150)));
 
     W = ww(570);
-    add("X", [0x58, 0x78], W, dg, dg, U(diag(78, H + 20, W - 78, -20, 156), diag(W - 78, H + 20, 78, -20, 156)));
+    add("X", [0x58], W, dg, dg, U(diag(78, H + 20, W - 78, -20, 156), diag(W - 78, H + 20, 78, -20, 156)));
 
     W = ww(570);
-    add("Y", [0x59, 0x79], W, dg, dg, U(diag(80, H + 30, W / 2, 280, 156), diag(W - 80, H + 30, W / 2, 280, 156), rect(W / 2 - V / 2, 0, W / 2 + V / 2, 330)));
+    add("Y", [0x59], W, dg, dg, U(diag(80, H + 30, W / 2, 280, 156), diag(W - 80, H + 30, W / 2, 280, 156), rect(W / 2 - V / 2, 0, W / 2 + V / 2, 330)));
 
     W = ww(500);
-    add("Z", [0x5A, 0x7A], W, tb, tb, U(rect(0, H - B, W, H), rect(0, 0, W, B), diag(W - 92, H - B + 4, 92, B - 4, 166)));
+    add("Z", [0x5A], W, tb, tb, U(rect(0, H - B, W, H), rect(0, 0, W, B), diag(W - 92, H - B + 4, 92, B - 4, 166)));
+
+    // ===== 英小文字 =====
+    // 小文字は線の下（裏）にまるごと収まる：x の高さ＝線の下の縁（小さいかなと同じ決まり）。
+    // 上へ伸びる画（b d f h k l t）だけが線を越えて表へ出る。f と t の横画は x の高さのすぐ下＝線の真下（大文字の中間画と同じ）。
+    // 線が小文字の穴を開けないので、閉じた穴（a b d e g o p q）は型紙 ss01 で縦画に短い切れ目を入れる。
+    {
+      const XH = S0, VL = P.VL, BL = P.BL, BE = Math.round(P.BL * 0.88), DSC = -210;
+      const Rl = Math.round(Math.min(R, XH * 0.40));
+      const innL = (r) => [Math.max(r - VL, 0), Math.max(r - BL, 0)];
+      const ringL = (x0, y0, x1, y1, tl, tr, br, bl) => ring(x0, y0, x1, y1, tl, tr, br, bl, VL, BL);
+      const notchAt = (x0, yLo, yHi) => { const mid = (yLo + yHi) / 2; return rect(x0 - 1, mid - T / 2, x0 + VL + 1, mid + T / 2); };
+      const xcut = (n, w) => I(n, rect(-1, 0, w + 1, XH));          // x の高さで切りそろえる
+      const lo = { ymin: DSC };
+      let w;
+
+      // 丸（o c e）
+      w = ww(470);
+      add("o", [0x6F], w, rd, rd, ringL(0, 0, w, XH, Rl, Rl, Rl, Rl), { notch: [notchAt(0, BL, XH - BL)] });
+      w = ww(440);
+      add("c", [0x63], w, rd, rd - 20, D(ringL(0, 0, w, XH, Rl, Rl, Rl, Rl), rect(w - VL - 2, Rl * 0.82, w + 2, XH - Rl * 0.82)));
+      w = ww(460);
+      {
+        const e0 = Math.round((XH - BE) / 2 + BE * 0.25), e1 = e0 + BE;
+        add("e", [0x65], w, rd, rd - 10, U(D(ringL(0, 0, w, XH, Rl, Rl, Rl, Rl), rect(w - VL - 2, BL, w + 2, e0)), rect(VL - 1, e0, w - VL + 1, e1)), { notch: [notchAt(0, e1, XH - BL)] });
+      }
+
+      // 丸に縦画（a d q g ／ b p）
+      w = ww(470);
+      {
+        const bowlL = ringL(0, 0, w, XH, Rl, 0, 0, Rl), bowlR = ringL(0, 0, w, XH, 0, Rl, Rl, 0);
+        const nL = notchAt(0, BL, XH - BL), nR = notchAt(w - VL, BL, XH - BL);
+        add("a", [0x61], w, rd, st, U(bowlL, rect(w - VL, 0, w, XH)), { notch: [nL] });
+        add("d", [0x64], w, rd, st, U(bowlL, rect(w - VL, 0, w, H)), { notch: [nL] });
+        add("q", [0x71], w, rd, st, U(bowlL, rect(w - VL, DSC, w, XH)), Object.assign({ notch: [nL] }, lo));
+        add("b", [0x62], w, st, rd, U(bowlR, rect(0, 0, VL, H)), { notch: [nR] });
+        add("p", [0x70], w, st, rd, U(bowlR, rect(0, DSC, VL, XH)), Object.assign({ notch: [nR] }, lo));
+        const hook = D(D(rr(0, DSC, w, XH, 0, 0, Rl, Rl), rr(VL, DSC + BL, w - VL, XH + 60, 0, 0, innL(Rl), innL(Rl))), rect(-1, DSC + Rl * 0.9, VL + 1, XH + 1));
+        add("g", [0x67], w, rd, st, U(bowlL, hook, rect(w - VL, 0, w, XH)), Object.assign({ notch: [nL] }, lo));
+      }
+
+      // 弧と縦画（n h m u r）
+      w = ww(460);
+      {
+        const arch = (x) => move(D(rr(0, 0, w, XH, 0, Rl), rr(VL, -10, w - VL, XH - BL, 0, innL(Rl))), x, 0);
+        add("n", [0x6E], w, st, st, U(rect(0, 0, VL, XH), arch(0)));
+        add("h", [0x68], w, st, st, U(rect(0, 0, VL, H), arch(0)));
+        add("m", [0x6D], 2 * w - VL, st, st, U(rect(0, 0, VL, XH), arch(0), arch(w - VL)));
+        add("u", [0x75], w, st, st, U(D(rr(0, 0, w, XH, 0, 0, 0, Rl), rr(VL, BL, w - VL, XH + 60, 0, 0, 0, innL(Rl))), rect(w - VL, 0, w, XH)));
+        const wr = ww(330);
+        add("r", [0x72], wr, st, 0, U(rect(0, 0, VL, XH), D(rr(0, 0, wr, XH, 0, Rl), rr(VL, -10, wr + 10, XH - BL, 0, innL(Rl)), rect(-1, -1, wr + 1, XH - Rl * 0.82))));
+      }
+
+      // 縦画（i j l）。点は線の上に置く
+      const dot0 = Math.max(XH + 60, S1 + 44), DOTH = 132;
+      add("i", [0x69], VL, st, st, U(rect(0, 0, VL, XH), rect(0, dot0, VL, dot0 + DOTH)));
+      add("l", [0x6C], VL, st, st, rect(0, 0, VL, H));
+      w = ww(300);
+      {
+        const Rj = Math.round(Math.min(Rl, 150)), x0 = w - VL;
+        add("j", [0x6A], w, -30, st, U(D(rr(0, DSC, w, XH, 0, 0, Rj, 0), rr(-10, DSC + BL, x0, XH + 10, 0, 0, innL(Rj), 0)), rect(x0, dot0, w, dot0 + DOTH)), lo);
+      }
+
+      // t・f（横画は線の真下）
+      {
+        const wt = ww(330), s0 = 64, ttop = Math.round(XH + (H - XH) * 0.62);
+        add("t", [0x74], wt, 8, 0, U(D(rr(s0, 0, wt, ttop, 0, 0, 0, Rl), rr(s0 + VL, BL, wt + 10, ttop + 10, 0, 0, 0, innL(Rl))), rect(0, XH - BL, wt - 20, XH)));
+        const wf = ww(320), f0 = 50;
+        add("f", [0x66], wf, 8, -10, U(D(rr(f0, 0, wf, H, Rl, 0, 0, 0), rr(f0 + VL, -10, wf + 10, H - BL, innL(Rl), 0, 0, 0)), rect(0, XH - BL, wf - 30, XH)));
+      }
+
+      // 斜め（k v w x y z）と s
+      w = ww(470);
+      add("k", [0x6B], w, st, dg, U(rect(0, 0, VL, H), xcut(diag(VL - 10, XH * 0.30, w - 70, XH + 30, 136), w), diag(VL + 92, XH * 0.52, w - 70, -30, 150)));
+      w = ww(480);
+      add("v", [0x76], w, dg, dg, xcut(U(diag(VL * 0.5, XH + 20, w / 2 - 6, -10, 150), diag(w - VL * 0.5, XH + 20, w / 2 + 6, -10, 150)), w));
+      w = ww(700);
+      add("w", [0x77], w, dg, dg, xcut(U(diag(70, XH + 20, w * 0.29, -10, 140), diag(w / 2 - 4, XH * 0.86, w * 0.29, -10, 132), diag(w / 2 + 4, XH * 0.86, w * 0.71, -10, 132), diag(w - 70, XH + 20, w * 0.71, -10, 140)), w));
+      w = ww(480);
+      add("x", [0x78], w, dg, dg, xcut(U(diag(70, XH + 20, w - 70, -20, 148), diag(w - 70, XH + 20, 70, -20, 148)), w));
+      w = ww(490);
+      add("y", [0x79], w, dg, dg, I(U(diag(72, XH + 20, w * 0.5, -6, 148), diag(w - 72, XH + 20, w * 0.22, DSC - 10, 150)), rect(-1, DSC, w + 1, XH)), lo);
+      w = ww(430);
+      add("z", [0x7A], w, tb, tb, U(rect(0, XH - BL, w, XH), rect(0, 0, w, BL), diag(w - 84, XH - BL + 4, 84, BL - 4, 152)));
+      w = ww(430);
+      {
+        const Rs2 = Math.round(Math.min(Rl, 150));
+        const m1 = Math.round(XH / 2 + BL / 2), m0 = m1 - BL;
+        const up = D(ringL(0, m0, w, XH, Rl, 0, 0, Rs2), rect(VL, m1, w + 1, XH - BL), rect(w - Rs2, m0 - 1, w + 1, m1));
+        const dn = D(ringL(0, 0, w, m1, 0, Rs2, Rl, 0), rect(-1, BL, w - VL, m0), rect(-1, m0 - 1, Rs2, m1 + 1));
+        add("s", [0x73], w, rd, rd, U(up, dn));
+      }
+    }
 
     // ===== 数字（等幅） =====
     const WD = ww(480), DADV = ww(600), DSB = (DADV - WD) / 2;
@@ -574,6 +680,9 @@
     // かな（カタカナ）— kana.js の定義を読む
     if (root.URAJI_KANA) root.URAJI_KANA(J, { add: addabs, rect, poly, rr, ring, diag, U, D, I, O, X, mirrorX, mirrorY, scaleAt, move, EMPTY });
 
+    // 漢字（祭・裏祭）— kanji.js の定義を読む
+    if (root.URAJI_KANJI) root.URAJI_KANJI(J, { add: addabs, rect, poly, rr, ring, diag, U, D, I, O, X, mirrorX, mirrorY, scaleAt, move, EMPTY });
+
     addabs("uni3000", [0x3000], 1000, EMPTY);
 
     // ===== 線を入れる（ss01 は閉じた穴にも短い切れ目） =====
@@ -591,7 +700,12 @@
         ss01.push([g.name, g.name + ".ss01"]);
       }
     }
-    return { params: P, geo: { S0, S1, M0, M1, H }, glyphs: out, kern: KERN, ss01 };
+    // 新字（裏祭）：「裏」「祭」と続けて打つと一字（liga）。ss02 を入れると「裏」が全部新字になる。
+    // 置き換えは liga → ss02 → ss01 の順に効く（build.py が書く順）。ss01 の切れ目つきの裏も新字に替える。
+    const hasNew = !!byName["uni88CF_uni796D"];
+    const liga = hasNew ? [[["uni88CF", "uni796D"], "uni88CF_uni796D"]] : [];
+    const ss02 = hasNew ? [["[uni88CF uni88CF.ss01]", "uni88CF_uni796D"]] : [];
+    return { params: P, geo: { S0, S1, M0, M1, H }, glyphs: out, kern: KERN, ss01, ss02, liga };
   }
 
   const api = { DEFAULTS, KNOBS, KERN, build };
