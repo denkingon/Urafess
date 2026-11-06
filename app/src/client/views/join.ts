@@ -1,3 +1,5 @@
+import { esc, say, sent } from '../ui';
+
 /**
  * 入室の画面（キャンバスの「入室」）。4つの姿を持つ
  * - 名前：はじめての人がニックネームを入れる（一度入れたら名簿に残る）
@@ -36,34 +38,34 @@ export function createJoin(actions: EntryActions): JoinScreen {
   const el = document.createElement('main');
   el.className = 'phone join';
   el.innerHTML = `
-    <h1>Urafess</h1>
+    <h1 class="u">Urafess</h1>
     <section data-mode="name">
-      <p class="lead">ニックネームを入れて参加する。一度入れたら、次からは名前を押すだけで入れる。</p>
+      <p class="lead">${sent(['ニックネームを入れて参加する。一度入れたら、次からは名前を押すだけで入れる', 'Enter a nickname to join. Next time, just tap your name'])}</p>
       <form>
-        <label for="nick">ニックネーム</label>
+        <label for="nick">${say(['ニックネーム', 'NICKNAME'])}</label>
         <input id="nick" name="nick" type="text" maxlength="20" autocomplete="nickname" placeholder="例：ゆう" required>
         <p class="error" hidden></p>
-        <button type="submit">参加する</button>
+        <button type="submit"></button>
       </form>
     </section>
     <section data-mode="known" hidden>
-      <p class="lead">名前を押すと、今夜に入る。</p>
+      <p class="lead">${sent(['名前を押すと、今夜に入る', 'Tap your name to join tonight'])}</p>
       <button type="button" class="me" data-a="enter"></button>
       <p class="error" hidden></p>
     </section>
     <section data-mode="taken" hidden>
-      <p class="lead"><span data-k="taken"></span>は、前に来た人の名前。</p>
-      <button type="button" class="primary" data-a="reclaim">前の自分に戻る</button>
-      <button type="button" data-a="other">ちがう名前にする</button>
-      <p class="note">前の自分に戻るときは、主催者がつなぐ。スマホを変えた・置き直したときに。</p>
+      <p class="lead" data-k="takenLead"></p>
+      <button type="button" class="primary" data-a="reclaim">${say(['前の自分に戻る', "IT'S ME"])}</button>
+      <button type="button" data-a="other">${say(['ちがう名前にする', 'USE ANOTHER NAME'])}</button>
+      <p class="note">${sent(['前の自分に戻るときは、主催者がつなぐ。スマホを変えた・置き直したときに', 'The host reconnects you. For a new phone or a reinstalled app'])}</p>
     </section>
     <section data-mode="wait" hidden>
-      <p class="lead">主催者が<span data-k="wait"></span>とつなぐのを待っている。主催者に声をかける。</p>
-      <button type="button" data-a="stop">やめる</button>
+      <p class="lead" data-k="waitLead"></p>
+      <button type="button" data-a="stop">${say(['やめる', 'CANCEL'])}</button>
     </section>
     <div class="spacer"></div>
-    <p class="note" data-k="foot">ホーム画面に追加したアプリから開く。LINEの中では開かない。</p>
-    <button type="button" class="quiet" data-a="forget" hidden>別の人として入る</button>
+    <p class="note" data-k="foot">${sent(['ホーム画面に追加したアプリから開く。LINEの中では開かない', 'Open it from the app on your home screen, not inside LINE'])}</p>
+    <button type="button" class="quiet" data-a="forget" hidden>${say(['別の人として入る', 'JOIN AS SOMEONE ELSE'])}</button>
   `;
   const sections = [...el.querySelectorAll('section')] as HTMLElement[];
   const form = el.querySelector('form')!;
@@ -74,6 +76,13 @@ export function createJoin(actions: EntryActions): JoinScreen {
   const errors = [...el.querySelectorAll('.error')] as HTMLElement[];
   let mode: EntryMode = 'name';
   let takenName = '';
+  // 同じ中身なら書き換えない（毎フレーム呼ばれるので、押している途中のボタンを作り直さない）
+  const last = new Map<string, string>();
+  const setOnce = (key: string, html: string, target?: HTMLElement) => {
+    if (last.get(key) === html) return;
+    last.set(key, html);
+    (target ?? (el.querySelector(`[data-k="${key}"]`) as HTMLElement)).innerHTML = html;
+  };
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -87,13 +96,13 @@ export function createJoin(actions: EntryActions): JoinScreen {
         actions.enter();
         return;
       case 'forget':
-        if (confirm('このスマホは、いまの名前を忘れる（名簿には残る）。別の人として入るか？')) actions.forget();
+        if (confirm('このスマホは、いまの名前を忘れる（名簿には残る）。別の人として入るか？\nThis phone forgets your name (it stays on the list). Join as someone else?')) actions.forget();
         return;
       case 'reclaim':
         actions.reclaim();
         return;
       case 'other':
-        actions.backToName(`「${takenName}」は前に来た人の名前。ちがう名前にする（例：${takenName}2）。`);
+        actions.backToName(`「${takenName}」は前に来た人の名前。ちがう名前にする（例：${takenName}2）／"${takenName}" is taken. Try another (e.g. ${takenName}2)`);
         return;
       case 'stop':
         actions.backToName(null);
@@ -110,12 +119,13 @@ export function createJoin(actions: EntryActions): JoinScreen {
         if (next === 'name') setTimeout(() => input.focus(), 0);
       }
       if (next === 'taken' || next === 'wait') takenName = name ?? '';
-      (el.querySelector('[data-k="taken"]') as HTMLElement).textContent = `「${takenName}」`;
-      (el.querySelector('[data-k="wait"]') as HTMLElement).textContent = `「${takenName}」`;
-      me.textContent = busy && next === 'known' ? '入っている…' : name ?? '';
+      const t = esc(takenName);
+      setOnce('takenLead', sent([`「${t}」は、前に来た人の名前`, `"${t}" is a name from a past night`]));
+      setOnce('waitLead', sent([`主催者が「${t}」とつなぐのを待っている。主催者に声をかける`, `Waiting for the host to reconnect "${t}". Tell the host`]));
+      setOnce('me', busy && next === 'known' ? say(['入っている…', 'JOINING…']) : esc(name ?? ''), me);
       me.disabled = busy;
       submit.disabled = busy;
-      submit.textContent = busy && next === 'name' ? '参加しています…' : '参加する';
+      setOnce('submit', say(busy && next === 'name' ? ['参加しています…', 'JOINING…'] : ['参加する', 'JOIN']), submit);
       forget.hidden = next !== 'known';
       for (const err of errors) {
         const show = !!error && err.closest('section')?.dataset.mode === next;

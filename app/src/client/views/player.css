@@ -1,0 +1,311 @@
+/*
+ * 参加者の画面の見た目（全画面の元＝Phone と、捕獲）。値はパレット「裏フェス 画面のパレット」の既定。
+ * 主催者・置き方の案内には効かない（.player と .join の中だけ）。
+ * 文字の最低ライン：画面の中の字は全部 --min より小さくしない。URAJI は字の背が低いので --min の 1.2 倍を下限にする
+ */
+
+@font-face {
+  font-family: "URAJI";
+  src: url("/fonts/URAJI-Black.woff2") format("woff2");
+  font-weight: 900;
+  font-display: swap;
+}
+
+.player {
+  /* 裏フェスの色（ピクトのトークン） */
+  --yami: #0b0c10; --raised: #181a21; --sen: #2b2e38; --tsuki: #f1ede4; --tsuki-muted: #a29d93; --shu: #ff6a3d; --chikko: #b8ff5a;
+  --min: 16px;
+  --ground: var(--yami);
+  --rc: var(--tsuki);
+  --picto-ground: var(--ground);
+  /* 段階バーの「まだ」と「済み」 */
+  --later: #4c4d55; --done-bar: #5a5853;
+  max-width: none;
+  width: 100%;
+  background: var(--ground);
+  color: var(--tsuki);
+  padding: calc(16px + env(safe-area-inset-top)) max(20px, calc((100% - 390px) / 2)) calc(20px + env(safe-area-inset-bottom));
+}
+.player[data-role="oni"] { --rc: var(--shu); }
+.player[data-role="caught"] { --rc: var(--tsuki-muted); }
+
+.player .u, .join .u { font-family: "URAJI", "Hiragino Sans", system-ui, sans-serif; font-weight: 900; letter-spacing: .02em; }
+.player .ja, .player .en, .join .ja, .join .en { display: block; }
+.player .en.u:not(.solo), .join .en.u:not(.solo) { font-size: max(calc(var(--min) * 1.2), .8em); line-height: 1.2; letter-spacing: .04em; opacity: .88; }
+.player .en:not(.u):not(.solo), .join .en:not(.u):not(.solo) { font-size: max(var(--min), .86em); line-height: 1.4; opacity: .88; }
+
+/* 通信が切れたとき */
+.player .p-offline { margin-bottom: 10px; border: 1px solid var(--tsuki-muted); border-radius: 10px; padding: 10px 14px; font-size: max(var(--min), 16px); line-height: 1.5; font-weight: 700; }
+
+/* 段階バー：配役・0:20・1:00・5:00・2:00・結果 */
+.player .p-bar { flex: 0 0 auto; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 5px; }
+.player .p-bar .s { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+.player .p-bar .s i { display: block; width: 100%; height: 6px; border-radius: 3px; background: var(--sen); }
+.player .p-bar .s.done i { background: var(--done-bar); }
+.player .p-bar .s.now i { background: var(--rc); }
+.player .p-bar .lbl { display: flex; flex-direction: column; align-items: center; font-size: max(var(--min), 12px); line-height: 1.15; font-weight: 700; white-space: nowrap; color: var(--later); }
+.player .p-bar .s.done .lbl { color: var(--tsuki-muted); }
+.player .p-bar .s.now .lbl { color: var(--rc); }
+.player .p-bar .lbl .t { font-family: "URAJI", "Hiragino Sans", system-ui, sans-serif; font-weight: 900; font-size: max(calc(var(--min) * 1.2), 15px); }
+
+/* 真ん中の絵（ピクト）。線（0.618）は絵の中にあって動かない */
+.player .p-pic { flex: 1 1 0; min-height: 96px; margin-top: 10px; position: relative; display: flex; align-items: center; justify-content: center; }
+.player .p-box { height: 100%; aspect-ratio: 1 / 1; max-width: min(86vw, 336px); max-height: 336px; }
+.player .p-box svg { display: block; width: 100%; height: 100%; }
+.player .p-box.lose { opacity: .35; }
+.player .p-over { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: min(60vw, 240px); line-height: 1; }
+.player .p-over[hidden] { display: none; }
+
+/* 大きい数字（URAJI） */
+.player .p-time { flex: 0 0 auto; text-align: center; line-height: 1; white-space: nowrap; font-size: clamp(calc(var(--min) * 1.2), 14dvh, 112px); font-variant-numeric: tabular-nums; }
+.player[data-touch="oni"] .p-time, .player[data-touch="runner"] .p-time { font-size: clamp(calc(var(--min) * 1.2), 11dvh, 90px); }
+.player:has(.cap-cands:not([hidden])) .p-time { font-size: clamp(calc(var(--min) * 1.2), 8dvh, 62px); }
+/* 「捕まえたのは？」が出ている間は、候補と長押しの板が親指の届く所に収まるよう、絵を縮め、人数とひとことを隠す */
+.player:has(.cap-cands:not([hidden])) .p-pic { min-height: 0; }
+.player:has(.cap-cands:not([hidden])) .p-counts,
+.player:has(.cap-cands:not([hidden])) .p-word,
+.player:has(.cap-cands:not([hidden])) .p-note { display: none; }
+.player[data-role="caught"] .p-time { color: var(--tsuki-muted); }
+.player .p-time .unit, .player .p-time .unit .gl { display: inline-block; }
+.player .p-time .unit .gl { width: .62em; height: .62em; margin-left: .14em; vertical-align: baseline; }
+
+/* 人数の印 */
+.player .p-counts { flex: 0 0 auto; margin-top: 12px; display: flex; justify-content: center; align-items: center; gap: 16px; }
+.player .p-counts .grp { display: flex; gap: 5px; align-items: center; }
+.player .p-counts .oni { color: var(--shu); }
+.player .p-counts .grp.oni .gl { width: 22px; height: 22px; }
+.player .p-counts .dot { display: block; width: 14px; height: 14px; border-radius: 50%; background: var(--tsuki); }
+.player .p-counts .dot.out { background: transparent; border: 2.5px solid var(--tsuki-muted); }
+.player .p-counts .num { display: flex; align-items: center; gap: 6px; font-size: max(calc(var(--min) * 1.2), 22px); }
+.player .p-counts .num .gl { width: 22px; height: 22px; }
+.player .p-counts .num.run { color: var(--tsuki); }
+
+/* ひとことと、大事なときだけの文 */
+.player .p-word { flex: 0 0 auto; margin-top: 10px; text-align: center; font-size: max(var(--min), 26px); line-height: 1.3; font-weight: 700; }
+.player .p-note { flex: 0 0 auto; margin-top: 4px; text-align: center; font-size: max(var(--min), 18px); line-height: 1.5; font-weight: 700; }
+.player[data-role="caught"] .p-word, .player[data-role="caught"] .p-note { color: var(--tsuki-muted); }
+
+.player .gl { display: block; flex: 0 0 auto; }
+
+/* 夜の最後：SEE YOU AGAIN だけ */
+.player .p-end { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; text-align: center; font-size: clamp(calc(var(--min) * 1.2), 16vw, 88px); line-height: 1.1; letter-spacing: .04em; }
+.player .p-end[hidden] { display: none; }
+.player.is-ended .p-bar, .player.is-ended .p-pic, .player.is-ended .p-time, .player.is-ended .p-counts,
+.player.is-ended .p-word, .player.is-ended .p-note, .player.is-ended .slot { display: none; }
+/* もとの styles.css の、中の span を小さく灰色にする決まりを打ち消す（字は最低ラインより小さくしない） */
+.player .hold span, .player .cap-mic span, .player .cap-title span, .player .cap-cand span, .player .cap-prep span { font-size: inherit; color: inherit; opacity: 1; font-weight: inherit; }
+.player .slot { margin: 12px 0 0; }
+
+/* ---------- 捕獲 ---------- */
+.player .capture { gap: 12px; }
+.player .capture[data-mode="oni"] { --pad: var(--shu); }
+.player .capture[data-mode="runner"] { --pad: var(--tsuki); }
+.player .cap-lab { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
+
+/* 長押しの板：鬼は朱に角の頭、逃走者は月白に両手を上げた人。字を読まなくても色と形で分かれる */
+.player .hold {
+  min-height: clamp(120px, 19dvh, 156px); border-radius: 22px; border: 2px solid var(--pad); background: var(--pad); color: var(--yami);
+  flex-direction: row; gap: 12px; padding: 0 16px;
+}
+.player .hold .hold-icon .gl { width: 60px; height: 60px; }
+.player .hold b { font-size: max(var(--min), min(28px, 6.8vw)); line-height: 1.2; font-weight: 900; white-space: nowrap; }
+.player .hold .cap-lab > span { display: none; } /* 言葉の量「ひとこと」：「長押し」などの小さい文は出さない */
+.player .hold-fill { background: var(--yami); opacity: .18; }
+.player .is-holding .hold { background: var(--pad); color: var(--yami); box-shadow: 0 0 0 5px var(--ground), 0 0 0 9px var(--pad); }
+.player .is-holding .hold span { color: inherit; }
+.player .hold .waves { display: none; width: 42px; height: 60px; }
+.player .is-holding .hold .waves { display: block; }
+.player .capture.is-passive[data-mode="oni"]:not(.is-holding) .hold .waves { display: block; opacity: .5; }
+@media (prefers-reduced-motion: no-preference) {
+  .player .capture[data-mode="runner"].is-holding .waves path { animation: p-wave-out 1.2s ease-out infinite; }
+  .player .capture[data-mode="oni"].is-holding .waves path { animation: p-wave-in 1.2s ease-out infinite; }
+  .player .is-holding .waves path:nth-child(2) { animation-delay: .2s; }
+  .player .is-holding .waves path:nth-child(3) { animation-delay: .4s; }
+  .player .capture.is-passive[data-mode="oni"]:not(.is-holding) .waves path { animation: p-wave-in 2.4s ease-out infinite; }
+  .player .capture.is-passive[data-mode="oni"]:not(.is-holding) .waves path:nth-child(2) { animation-delay: .4s; }
+  .player .capture.is-passive[data-mode="oni"]:not(.is-holding) .waves path:nth-child(3) { animation-delay: .8s; }
+}
+@keyframes p-wave-out { 0% { opacity: 0; transform: translateX(-8px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateX(10px); } }
+@keyframes p-wave-in { 0% { opacity: 0; transform: translateX(10px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateX(-8px); } }
+
+/* 鬼のマイク：長押しの板の場所に点線の板で出す。一度試したあとは小さくして、長押しの板も出す */
+.player .cap-mic {
+  min-height: clamp(120px, 19dvh, 156px); border-radius: 22px; border: 3px dashed var(--shu); background: transparent; color: var(--shu);
+  flex-direction: row; gap: 16px; padding: 12px 20px; text-align: left;
+}
+.player .cap-mic.compact { min-height: 76px; }
+.player .cap-mic > .gl { width: 56px; height: 56px; }
+.player .cap-mic.compact > .gl { width: 36px; height: 36px; }
+.player .cap-mic b { font-size: max(var(--min), 28px); line-height: 1.2; font-weight: 900; }
+.player .cap-mic.compact b { font-size: max(var(--min), 20px); }
+.player .cap-mic .cap-lab > span { font-size: max(var(--min), 14px); line-height: 1.45; opacity: 1; color: var(--tsuki); }
+.player .cap-mic[data-state="off"] .cap-lab > span { display: none; }
+.player .cap-mic:disabled { background: transparent; color: var(--shu); opacity: .7; }
+@media (prefers-reduced-motion: no-preference) {
+  .player .cap-mic:not(:disabled) { animation: p-mic-pulse 1.4s ease-in-out infinite; }
+}
+@keyframes p-mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 106, 61, .45); } 50% { box-shadow: 0 0 0 10px rgba(255, 106, 61, 0); } }
+
+/* 捕まえたのは？（逃走者） */
+.player .cap-cands { border: none; border-radius: 18px; background: var(--raised); padding: 12px; gap: 10px; }
+.player .cap-title { color: var(--tsuki); font-size: max(var(--min), 18px); font-weight: 700; display: flex; align-items: center; justify-content: flex-start; gap: 8px; line-height: 1.25; }
+.player .cap-title > .gl { width: 28px; height: 28px; color: var(--shu); }
+.player .cap-grid { gap: 8px; }
+.player .cap-cand {
+  min-height: 84px; border-radius: 14px; border: 2px solid var(--shu); background: transparent; color: var(--tsuki);
+  flex-direction: row; justify-content: flex-start; align-items: center; gap: 10px; padding: 10px 12px; text-align: left;
+}
+.player .cap-cand > .gl { width: 36px; height: 36px; color: var(--shu); }
+.player .cap-grid[data-kind="runner"] .cap-cand { border-color: var(--tsuki-muted); }
+.player .cap-grid[data-kind="runner"] .cap-cand > .gl { color: var(--tsuki); width: 22px; height: 22px; }
+.player .cap-cand .nm { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.player .cap-cand b { font-size: max(var(--min), 22px); line-height: 1.25; font-weight: 900; }
+.player .cap-cand small { font-size: max(var(--min), 13px); line-height: 1.35; color: var(--tsuki-muted); }
+.player .cap-cand.is-sent { background: var(--shu); color: var(--yami); }
+.player .cap-cand.is-sent > .gl, .player .cap-cand.is-sent small { color: var(--yami); }
+.player .cap-wait { display: flex; justify-content: center; gap: 8px; padding: 12px 0; }
+.player .cap-wait i { display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--tsuki-muted); }
+
+/* 手動で選ぶ・やめる：丸い印 */
+.player .cap-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.player button.rb {
+  min-height: 0; padding: 0; border: none; background: none; color: var(--tsuki-muted);
+  display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: max(var(--min), 11px); font-weight: 700;
+}
+.player button.rb i { width: 52px; height: 52px; border-radius: 26px; border: 2px solid var(--tsuki-muted); display: flex; align-items: center; justify-content: center; color: var(--tsuki); }
+.player button.rb .gl { width: 26px; height: 26px; }
+.player button.rb .ja, .player button.rb .en { display: block; text-align: center; }
+
+/* ロックオン（鬼）：蓄光の点と相手の名前 */
+.player .cap-lock { border: 2px solid var(--shu); border-radius: 18px; background: var(--raised); padding: 14px 16px; flex-direction: row; align-items: center; gap: 10px; }
+.player .cap-lock > .gl { width: 20px; height: 20px; }
+.player .cap-lock b { font-size: max(var(--min), 24px); font-weight: 900; }
+.player .cap-lock span { display: none; }
+
+/* 音を試す（逃走者、ゲームの前） */
+.player .cap-prep { border: 1px solid var(--tsuki-muted); border-radius: 14px; font-size: max(var(--min), 15px); color: var(--tsuki); }
+.player .cap-prep button.ghost { min-height: 48px; font-size: max(var(--min), 15px); color: var(--tsuki); border-color: var(--tsuki-muted); }
+
+/* 長押しの下の行（鬼の「手動」と、困ったときだけ出る一言） */
+.player .cap-status { font-size: max(var(--min), 12px); line-height: 1.4; color: var(--tsuki-muted); text-align: right; }
+.player .cap-status:empty { display: none; }
+
+/* 手動の一覧・知らせ */
+.player .sheet-body { background: var(--yami); border-top-color: var(--tsuki-muted); }
+.player .sheet .cap-title { font-size: max(var(--min), 18px); }
+.player .sheet button[data-act="close"] { color: var(--tsuki); border-color: var(--tsuki-muted); font-size: max(var(--min), 16px); }
+.player .sheet .cap-wait { color: var(--tsuki-muted); font-size: max(var(--min), 15px); }
+.player .toast { background: var(--tsuki); color: var(--yami); font-size: max(var(--min), 16px); }
+
+/* ---------- 入室 ---------- */
+.join { --min: 16px; --yami: #0b0c10; --tsuki: #f1ede4; --tsuki-muted: #a29d93; background: var(--yami); color: var(--tsuki); max-width: none; padding-inline: max(24px, calc((100% - 382px) / 2)); }
+.join h1.u { font-size: 48px; letter-spacing: .04em; }
+.join .lead, .join .note { font-size: max(var(--min), 15px); color: var(--tsuki-muted); }
+.join label { font-size: max(var(--min), 14px); color: var(--tsuki-muted); }
+.join .error { font-size: max(var(--min), 14px); }
+.join button[type="submit"] { background: var(--tsuki); color: var(--yami); font-size: max(var(--min), 18px); min-height: 60px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2; }
+.join label .ja, .join label .en { display: inline; }
+.join label .en { margin-left: 8px; }
+/* 名簿：名前のボタン・前の自分に戻る・待つ（2つの言葉を縦に積む） */
+.join section button { min-height: 60px; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2; font-size: max(var(--min), 18px); }
+.join section button:not(.me):not(.primary):not([type="submit"]) { background: transparent; color: var(--tsuki); border: 1px solid #2b2e38; }
+.join .primary { background: var(--tsuki); color: var(--yami); border: none; }
+.join .me { background: var(--tsuki); color: var(--yami); min-height: 112px; font-size: 34px; }
+.join .me:disabled { background: transparent; color: var(--tsuki-muted); border: 1px solid #2b2e38; }
+.join button.quiet { color: var(--tsuki-muted); font-size: max(var(--min), 14px); display: flex; flex-direction: column; align-items: center; gap: 2px; }
+
+/* ---------- 走ると光る ---------- */
+/*
+ * 置き場所：配役〜追跡開始までは長押しの上（「オンにする」）、ゲームの段階は真ん中の絵の場所（光の地図）。
+ * 光っている人の点・道すじは蓄光（--chikko）。自分の印は役の色（--rc）、自分が光ると蓄光になる。
+ * もとの styles.css の白黒の決まり（.phone.is-glow …）より強くするため、.phone.player から書く
+ */
+.phone.player .stage { order: 1; flex: 0 0 auto; min-height: 0; margin: 0; gap: 0; justify-content: flex-start; }
+.phone.player .slot { order: 2; }
+.phone.player .glow { margin-top: 12px; gap: 8px; }
+.phone.player .glow[hidden] { display: none; }
+.phone.player.is-glow { height: 100dvh; min-height: 0; }
+.phone.player.is-glow .p-pic { display: none; }
+.phone.player.is-glow .stage { order: 0; flex: 1 1 0; min-height: 0; margin: 0; overflow: hidden; }
+.phone.player.is-glow .glow { flex: 1 1 0; margin-top: 10px; }
+.phone.player.is-glow .p-time { margin-top: 8px; font-size: clamp(calc(var(--min) * 1.2), 8dvh, 64px); }
+.phone.player.is-glow .hold { min-height: clamp(120px, 19dvh, 156px); }
+/* ゲームの段階は、鬼の「手動」を横並びの小さい形にして、地図に高さを譲る（押す場所の大きさは 44px） */
+.phone.player.is-glow .cap-foot button.rb { flex-direction: row; gap: 10px; }
+.phone.player.is-glow .cap-foot button.rb i { width: 44px; height: 44px; border-radius: 22px; }
+.phone.player.is-glow .cap-foot button.rb .gl { width: 22px; height: 22px; }
+.phone.player.is-glow .cap-foot button.rb .ja, .phone.player.is-glow .cap-foot button.rb .en { text-align: left; }
+/* 「捕まえたのは？」が出ている間は、地図をしまって候補に場所を譲る */
+.phone.player.is-glow:has(.cap-cands:not([hidden])) .stage { display: none; }
+
+/* オンにする：蓄光の点線の板（鬼のマイクと同じ形、色で分ける） */
+.player .glow-ask { min-height: 76px; border-radius: 18px; border: 3px dashed var(--chikko); background: transparent; color: var(--chikko); padding: 12px 16px; gap: 6px; }
+.player .glow-ask b { font-size: max(var(--min), 22px); line-height: 1.2; font-weight: 900; }
+/* もとの styles.css の、板の中の span を小さく灰色にする決まりを打ち消す */
+.player .glow-ask b span { font-size: inherit; color: inherit; font-weight: inherit; line-height: inherit; }
+.player .glow-ask b .en { font-size: max(calc(var(--min) * 1.2), .8em); }
+.player .glow-ask span[data-k="askSub"] { font-size: max(var(--min), 15px); line-height: 1.45; color: var(--tsuki); font-weight: 500; opacity: 1; }
+.player .glow-ask span[data-k="askSub"] span { font-size: inherit; color: inherit; }
+.player .glow[data-glow="live"] .glow-ask { min-height: 56px; padding: 8px 12px; }
+.player .glow[data-glow="live"] .glow-ask b { font-size: max(var(--min), 18px); }
+.player .glow[data-glow="live"] .glow-ask span[data-k="askSub"] { display: none; }
+.player .glow-note { margin: 0; text-align: center; font-size: max(var(--min), 16px); line-height: 1.4; font-weight: 700; color: var(--chikko); }
+.player .glow-note .en.u { font-size: max(calc(var(--min) * 1.2), 1em); }
+.player .glow-note.is-problem { text-align: left; font-weight: 500; color: var(--tsuki); border: 1px solid var(--tsuki-muted); border-radius: 12px; padding: 10px 12px; line-height: 1.5; }
+
+/* 光の地図 */
+.player .glow-board { gap: 8px; }
+.player .radar { max-height: 336px; }
+.player .radar-bg { fill: var(--raised); stroke: var(--sen); stroke-width: 1; }
+.player .radar-rings circle { stroke: var(--sen); }
+.player .radar-ring-label { fill: var(--tsuki-muted); }
+.player .radar-north { fill: var(--tsuki-muted); paint-order: stroke; stroke: var(--raised); stroke-width: calc(var(--radar-font, 12px) * 0.28); }
+.player .radar.is-north-up .radar-north { fill: var(--tsuki); }
+.player .radar-me-dot { fill: var(--ground); stroke: var(--rc); stroke-width: 2.2; }
+.player .radar-me-arrow { fill: var(--rc); }
+.player .radar-me-halo { fill: var(--chikko); }
+.player .radar.is-lit .radar-me-dot { fill: var(--chikko); stroke: var(--chikko); }
+.player .radar-trail { stroke: var(--chikko); opacity: .7; }
+.player .radar-halo { fill: var(--chikko); }
+.player .radar-dot { fill: var(--chikko); }
+.player .radar-name { fill: var(--tsuki); stroke: var(--raised); }
+.player .radar-ping { stroke: var(--chikko); }
+.player .glow-radar-msg { font-size: max(var(--min), 16px); line-height: 1.45; color: var(--tsuki); font-weight: 700; }
+
+/* いちばん近い人の行：向きの矢印・名前・距離（英語は1行に並べる） */
+.player .glow-list li { grid-template-columns: 28px auto 1fr; gap: 10px; font-size: max(var(--min), 18px); }
+.player .glow-list li.has-more { grid-template-columns: 28px auto 1fr auto; }
+.player .glow-list .glow-dir { width: 28px; height: 28px; }
+.player .glow-list .glow-dir path { fill: var(--chikko); }
+.player .glow-list b { color: var(--tsuki); font-size: max(var(--min), 20px); }
+.player .glow-list em { color: var(--tsuki); }
+.player .glow-list .ja, .player .glow-list .en { display: inline; }
+.player .glow-list em span, .player .glow-list .glow-others span { font-size: inherit; color: inherit; }
+.player .glow-list em .en, .player .glow-list .glow-others .en { color: var(--tsuki-muted); }
+.player .glow-list .glow-others { font-size: max(var(--min), 16px); color: var(--tsuki-muted); }
+.player .glow-list .glow-none { font-size: max(var(--min), 16px); color: var(--tsuki-muted); text-align: center; }
+.player .glow-list .glow-none .ja, .player .glow-list .glow-none .en { display: block; }
+
+/* 自分が光っている間：ひとことの場所に「光っている」、画面の縁が蓄光に光る */
+.player .p-lit { display: none; flex: 0 0 auto; margin-top: 10px; text-align: center; color: var(--chikko); font-size: max(var(--min), 28px); line-height: 1.2; font-weight: 900; }
+.player.is-lit .p-lit { display: block; }
+.player.is-lit .p-word { display: none; }
+.player.is-lit { box-shadow: inset 0 0 0 3px var(--chikko); }
+@media (prefers-reduced-motion: no-preference) {
+  .player.is-lit .p-lit { animation: p-lit-pulse 1.2s ease-in-out infinite; }
+  .player.is-lit { animation: p-lit-edge 1.2s ease-in-out infinite; }
+}
+@keyframes p-lit-pulse { 0%, 100% { text-shadow: 0 0 0 rgba(184, 255, 90, 0); } 50% { text-shadow: 0 0 18px rgba(184, 255, 90, .8); } }
+@keyframes p-lit-edge { 0%, 100% { box-shadow: inset 0 0 0 3px var(--chikko); } 50% { box-shadow: inset 0 0 0 3px var(--chikko), inset 0 0 28px 0 rgba(184, 255, 90, .35); } }
+.player.is-ended .stage, .player.is-ended .p-lit { display: none; }
+
+/* ---------- 牢屋 ---------- */
+/* 「助ける」は蓄光（光る一か所）の点線の板、牢屋の「助けて」は月白の二重の板。マイクは月白の点線 */
+.player .jail { display: flex; flex-direction: column; gap: 12px; }
+.player .jail[data-mode="save"] { --pad: var(--chikko); }
+.player .jail[data-mode="help"] { --pad: var(--tsuki); }
+.player .jail[data-mode="save"] .hold { background: transparent; color: var(--chikko); border: 3px dashed var(--chikko); min-height: 88px; }
+.player .jail[data-mode="save"].is-holding .hold { background: var(--chikko); color: var(--yami); }
+.player .jail[data-mode="help"] .hold { border: 6px double var(--yami); }
+.player .jail .cap-mic { border-color: var(--tsuki); color: var(--tsuki); }
+.player .jail .cap-status { margin: 0; text-align: center; }

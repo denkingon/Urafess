@@ -90,6 +90,37 @@ describe('参加者の画面（キャンバスの Phone に渡す中身）', () 
     expect(hostStatus(game({ stage: 'ended' }), 0)).toMatchObject({ title: '夜は終わった', big: 'SEE YOU AGAIN' });
   });
 
+  it('見た目の層：段階ごとの絵とひとこと（日本語・英語）、大きい数字、人数の印', () => {
+    const t = startTimer(D, 0);
+    const g = game({ stage: 'timer', timer: t, counts: { oni: 3, runner: 7, total: 10, caught: 1 } });
+    const at = (me: MeView, ms: number) => participantView(g, me, START_LEAD_MS + ms, true);
+    expect(at(runner, 5_000)).toMatchObject({ scene: 'ready', word: ['待つ', 'WAIT'], time: '0:15' });
+    expect(at(runner, 30_000)).toMatchObject({ scene: 'run', word: ['逃げろ', 'RUN'] });
+    expect(at(oni, 30_000)).toMatchObject({ scene: 'chaser', word: ['待つ', 'WAIT'] });
+    expect(at(runner, 100_000)).toMatchObject({ scene: 'wall', word: ['隠れろ', 'HIDE'], counts: { oni: 3, runners: 7, left: 6 } });
+    expect(at(oni, 100_000)).toMatchObject({ scene: 'search', word: ['探せ', 'HUNT'] });
+    expect(at(runner, 400_000)).toMatchObject({ scene: 'gather', word: ['戻る', 'BACK'] });
+    expect(at(runner, 0).times).toEqual(['0:20', '1:00', '5:00', '2:00']);
+    const caught: MeView = { ...runner, caught: { byNum: 1, byName: 'さむ', at: 0, via: 'sound' } };
+    expect(at(caught, 100_000)).toMatchObject({ scene: 'jail', word: ['牢屋', 'JAIL'], rescue: 'help' });
+    const lobby = participantView(game({ stage: 'lobby', assignId: 0 }), { ...oni, role: null, assignId: 0 }, 0, true);
+    expect(lobby).toMatchObject({ scene: 'gather', time: '30', unit: 'person', counts: null });
+    expect(participantView(game({}), oni, 0, true)).toMatchObject({ scene: 'chaser', word: ['鬼', 'CHASER'], time: null });
+  });
+
+  it('結果は、自分の側が勝ったか負けたかで出す', () => {
+    const g = game({ stage: 'result', result: 'runner' });
+    expect(participantView(g, runner, 0, true)).toMatchObject({ outcome: 'win', word: ['勝ち', 'WIN'], note: ['逃走者の勝ち', 'Runners win'] });
+    expect(participantView(g, oni, 0, true)).toMatchObject({ outcome: 'lose', word: ['負け', 'LOSE'] });
+    // 結果がまだ無ければ、アプリと同じ決め方で出す（誰も牢屋にいなければ逃走者の勝ち）
+    expect(participantView(game({ stage: 'result', result: null }), oni, 0, true)).toMatchObject({ outcome: 'lose', word: ['負け', 'LOSE'] });
+  });
+
+  it('主催者が時間を変えたら、段階バーの時間も変わる', () => {
+    const t = startTimer([30_000, 90_000, 600_000, 60_000], 0);
+    expect(participantView(game({ stage: 'timer', timer: t }), runner, 0, true).times).toEqual(['0:30', '1:30', '10:00', '1:00']);
+  });
+
   it('走ると光る：配役〜追跡開始までは準備、ゲームの段階は地図。光るのは、配役に入っていて捕まっていない人が、ゲームの段階が動いている間だけ', () => {
     const t = startTimer(D, 0);
     const g = game({ stage: 'timer', timer: t });

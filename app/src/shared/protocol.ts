@@ -42,6 +42,8 @@ export interface GameView {
   allCaughtAt?: number | null;
   /** result をアプリが決めた（true）か、主催者が押した（false）か */
   resultAuto?: boolean;
+  /** 鬼のマイクの聞き方（always＝ずっと聞く／hold＝押している間だけ）。古いサーバーからは来ない（そのときは always） */
+  micMode?: 'always' | 'hold';
 }
 
 /** 本人だけに送る部分 */
@@ -155,6 +157,8 @@ export type HostOp =
   | 'durations'
   /** 鬼：逃走者の比率を変える（配役の前だけ） */
   | 'ratio'
+  /** 鬼のマイクの聞き方を切り替える（いつでも。試合中に変えても、そのときから全員に効く） */
+  | 'mic'
   | 'remove'
   /** 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。名簿は残る */
   | 'clear'
@@ -193,6 +197,7 @@ export type ClientMsg =
       winner?: Winner;
       durations?: number[];
       ratio?: { oni: number; runner: number };
+      mic?: 'always' | 'hold';
       pid?: string;
       by?: string;
       rid?: string;

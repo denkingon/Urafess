@@ -55,12 +55,12 @@ export function createJail({ client, emitter, listener }: JailDeps): JailScreen 
   el.className = 'jail';
   el.innerHTML = `
     <button type="button" class="cap-mic" data-act="mic" data-k="mic" hidden>
-      <b data-k="micLabel"></b><span data-k="micSub"></span>
+      <span class="cap-lab"><b data-k="micLabel"></b><span data-k="micSub"></span></span>
     </button>
     <p class="cap-status" data-k="status" hidden></p>
     <button type="button" class="hold hold-rescue" data-k="hold" hidden>
       <span class="hold-fill"></span>
-      <b data-k="holdLabel"></b><span data-k="holdSub"></span>
+      <span class="cap-lab"><b data-k="holdLabel"></b><span data-k="holdSub"></span></span>
     </button>
     <div class="toast" data-k="toast" hidden></div>
   `;

@@ -43,7 +43,17 @@ export interface HostInput {
 export interface HostActions {
   command(
     op: HostOp,
-    extra?: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string; rid?: string; ok?: boolean; n?: number },
+    extra?: {
+      winner?: Winner;
+      durations?: number[];
+      ratio?: { oni: number; runner: number };
+      mic?: 'always' | 'hold';
+      pid?: string;
+      by?: string;
+      rid?: string;
+      ok?: boolean;
+      n?: number;
+    },
   ): void;
   /** 1イベント＝1行の記録を CSV で保存する */
   downloadLog(): Promise<void>;
@@ -95,6 +105,14 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       <button type="button" data-op="reset" class="wide">リセット（配役済みに戻す）</button>
       <button type="button" data-op="end" class="wide">夜を終える（全員の画面を SEE YOU AGAIN に）</button>
       <button type="button" data-op="clear" class="wide">新しい夜を始める（名簿は残す）</button>
+    </div>
+    <div class="mic-mode">
+      <span>鬼のマイク</span>
+      <div class="seg" role="group" aria-label="鬼のマイクの聞き方">
+        <button type="button" data-mic="always" aria-pressed="false">ずっと聞く</button>
+        <button type="button" data-mic="hold" aria-pressed="false">押している間だけ</button>
+      </div>
+      <p class="note" data-k="micNote"></p>
     </div>
     <details class="durations">
       <summary>時間の設定</summary>
@@ -169,6 +187,15 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     const ratio = readRatio();
     if (isValidRatio(ratio)) actions.command('ratio', { ratio });
   });
+
+  // 鬼のマイクの聞き方：いつでも切り替えられる（試合中でも、そのときから全員に効く）。どちらで記録したかは CSV に残る
+  const micBtns = [...el.querySelectorAll('[data-mic]')] as HTMLButtonElement[];
+  micBtns.forEach((b) =>
+    b.addEventListener('click', () => {
+      if (b.getAttribute('aria-pressed') === 'true') return;
+      actions.command('mic', { mic: b.dataset.mic as 'always' | 'hold' });
+    }),
+  );
 
   btn('csv').addEventListener('click', () => {
     const b = btn('csv');
@@ -274,6 +301,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       q('foot').textContent =
         `時間：${PHASES.map((p, i) => `${p.label} ${fmt(game.durations[i])}`).join(' → ')}` +
         `　／　割合 鬼${(game.ratio ?? DEFAULT_RATIO).oni}：逃走者${(game.ratio ?? DEFAULT_RATIO).runner}` +
+        `　／　鬼のマイク ${(game.micMode ?? 'always') === 'always' ? 'ずっと聞く' : '押している間だけ'}` +
         (host.waiting ? `　／　次の配役を待っている人 ${host.waiting}人` : '') +
         (host.registry !== undefined ? `　／　名簿 ${host.registry}人` : '');
       // 前の夜のまま集め始めないように：待合室で、夜を始めてから半日以上たっていたら知らせる
@@ -354,6 +382,13 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         if (!editingDurations) input.value = String(Math.round(game.durations[i] / 1000));
       });
       (form.querySelector('button') as HTMLButtonElement).disabled = !canEditDurations;
+
+      const mic = game.micMode ?? 'always';
+      micBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mic === mic)));
+      q('micNote').textContent =
+        mic === 'always'
+          ? 'マイクをオンにした鬼は、押さなくても聞いている。逃走者の長押しの間に拾えば記録される'
+          : '鬼は「捕まえた」を押している間だけ聞く（前の版と同じ）';
 
       const canEditRatio = canEditDurations;
       const ratio = game.ratio ?? DEFAULT_RATIO;

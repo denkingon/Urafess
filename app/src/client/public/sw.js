@@ -1,7 +1,7 @@
 // アプリ本体をスマホに保存しておき、当日の読み込みを通信に頼らないための Service Worker。
 // 状態のやり取り（/api/）は保存しない。
-const CACHE = 'urafess-v2';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png'];
+const CACHE = 'urafess-v3';
+const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png', '/fonts/URAJI-Black.woff2'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

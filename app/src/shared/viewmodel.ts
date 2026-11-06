@@ -23,6 +23,25 @@ export interface PhoneView {
   touch: 'oni' | 'runner' | 'none';
   /** 自分が今の配役で捕まった */
   caught: boolean;
+
+  // ---- 見た目の層（アニメと同じ枠：上＝段階、真ん中＝絵、下＝時間と人数の印）が使う ----
+  /** 真ん中に出すピクトの id（裏フェス ピクトグラムの正本） */
+  scene: string;
+  /** ひとこと（日本語・英語） */
+  word: Pair | null;
+  /** 大事なときだけ出す文（誰に捕まった・一時停止・見学など） */
+  note: Pair | null;
+  /** 大きい数字（残り時間・待合室の人数）。出さないときは null */
+  time: string | null;
+  /** 数字の横に出す印 */
+  unit: 'person' | null;
+  /** 結果で、自分の側が勝ったか */
+  outcome: 'win' | 'lose' | null;
+  /** 人数の印（配役のあと） */
+  counts: { oni: number; runners: number; left: number } | null;
+  /** 段階バーの時間（逃走開始まで〜広場に戻るまで。主催者が変えた長さ） */
+  times: string[];
+  paused: boolean;
   /** 夜が終わった（SEE YOU AGAIN の画面）。古い呼び出し側は省略できる */
   ended?: boolean;
   /**
@@ -44,6 +63,9 @@ export interface PhoneView {
 /** 夜の最後の画面に出す言葉 */
 export const FAREWELL = 'SEE YOU AGAIN';
 
+/** 日本語と英語の組 */
+export type Pair = readonly [ja: string, en: string];
+
 const MESSAGES: Record<'oni' | 'runner', string[]> = {
   // 配役, 逃走開始まで, 追跡開始まで, ゲーム, 広場に戻る
   runner: [
@@ -63,6 +85,25 @@ const MESSAGES: Record<'oni' | 'runner', string[]> = {
 };
 
 const WINNER_TEXT: Record<Winner, string> = { oni: '鬼の勝ち', runner: '逃走者の勝ち' };
+const WINNER_PAIR: Record<Winner, Pair> = { oni: ['鬼の勝ち', 'Chasers win'], runner: ['逃走者の勝ち', 'Runners win'] };
+
+/** 段階ごとの絵とひとこと（配役・逃走開始まで・追跡開始まで・ゲーム・広場に戻るまで） */
+const SCENES: Record<'oni' | 'runner', { scene: string; word: Pair }[]> = {
+  runner: [
+    { scene: 'runner', word: ['逃走者', 'RUNNER'] },
+    { scene: 'ready', word: ['待つ', 'WAIT'] },
+    { scene: 'run', word: ['逃げろ', 'RUN'] },
+    { scene: 'wall', word: ['隠れろ', 'HIDE'] },
+    { scene: 'gather', word: ['戻る', 'BACK'] },
+  ],
+  oni: [
+    { scene: 'chaser', word: ['鬼', 'CHASER'] },
+    { scene: 'ready', word: ['待つ', 'WAIT'] },
+    { scene: 'chaser', word: ['待つ', 'WAIT'] },
+    { scene: 'search', word: ['探せ', 'HUNT'] },
+    { scene: 'gather', word: ['戻る', 'BACK'] },
+  ],
+};
 
 export function participantView(
   game: GameView,
@@ -89,17 +130,31 @@ export function participantView(
     offline: !online,
     touch: 'none',
     caught: false,
+    scene: 'gather',
+    word: null,
+    note: null,
+    time: null,
+    unit: null,
+    outcome: null,
+    counts: assigned
+      ? { oni: game.counts.oni, runners: game.counts.runner, left: game.counts.runner - (game.counts.caught ?? 0) }
+      : null,
+    times: (game.timer?.durations ?? game.durations).map((d) => formatClock(d)),
+    paused: false,
     glow: 'none',
     lightable: false,
   };
 
   // 夜の最後：入室している人にも、途中で外された人にも、同じ言葉を出す
   if (game.stage === 'ended') {
-    return { ...base, step: 6, label: '', big: FAREWELL, message: '', ended: true };
+    return { ...base, step: 6, label: '', big: FAREWELL, message: '', ended: true, scene: 'home', counts: null };
   }
 
   if (me.removed) {
-    return { ...base, label: '参加していない', big: '—', message: '主催者に確認する。' };
+    return {
+      ...base, label: '参加していない', big: '—', message: '主催者に確認する。',
+      scene: 'quiet', word: ['参加していない', 'NOT IN'], note: ['主催者に確認する', 'Ask the host'], counts: null,
+    };
   }
 
   if (game.stage === 'lobby') {
@@ -108,6 +163,10 @@ export function participantView(
       label: '配役を待っている',
       big: `${game.counts.total}人`,
       message: '主催者が配役を始めるまで、そのまま待つ。',
+      scene: 'gather',
+      word: ['待つ', 'WAIT'],
+      time: String(game.counts.total),
+      unit: 'person',
     };
   }
 
@@ -122,6 +181,10 @@ export function participantView(
       label: '次の配役から参加',
       big: game.timer && step >= 2 && step <= 5 ? bigClock(game, serverNow) : '待機',
       message: 'このラウンドは見学。次の配役で役が決まる。',
+      scene: 'quiet',
+      word: ['見学', 'WATCH'],
+      note: ['次の配役から参加', 'You join from the next round'],
+      time: game.timer && step >= 2 && step <= 5 ? bigClock(game, serverNow) : null,
       glow,
     };
   }
@@ -129,7 +192,7 @@ export function participantView(
   const role = me.role as 'oni' | 'runner';
 
   if (game.stage === 'assigned') {
-    return { ...base, step: 1, label: 'あなたの役', big: roleName, message: MESSAGES[role][0], glow };
+    return { ...base, step: 1, label: 'あなたの役', big: roleName, message: MESSAGES[role][0], ...SCENES[role][0], glow };
   }
 
   if (game.stage === 'result') {
@@ -140,6 +203,10 @@ export function participantView(
       label: '結果発表',
       big: WINNER_TEXT[winner],
       message: `${game.resultAuto === false ? '' : endReason(game)}次のラウンドは配役から。`,
+      scene: 'result',
+      word: winner === role ? ['勝ち', 'WIN'] : ['負け', 'LOSE'],
+      note: WINNER_PAIR[winner],
+      outcome: winner === role ? 'win' : 'lose',
     };
   }
 
@@ -160,7 +227,12 @@ export function participantView(
     role !== 'runner' || !rescueOpen ? 'none' : caught ? 'help' : (game.counts.caught ?? 0) > 0 ? 'save' : 'none';
   if (pos.kind === 'done') {
     // 時間が0になった：結果はアプリが決める（サーバーの確定を待たずに、同じ決め方で出す）
-    return { ...base, step: 6, label: '結果発表', big: WINNER_TEXT[decideWinner(game)], message: endReason(game), touch, caught };
+    const winner = decideWinner(game);
+    return {
+      ...base, step: 6, label: '結果発表', big: WINNER_TEXT[winner], message: endReason(game), touch, caught,
+      scene: 'result', word: winner === role ? ['勝ち', 'WIN'] : ['負け', 'LOSE'], note: WINNER_PAIR[winner],
+      outcome: winner === role ? 'win' : 'lose',
+    };
   }
   // 光るのは、ゲームの段階が動いている間だけ（止めている間・始まる前の2秒は光らない）。捕まった人は光らない
   const lightable = !caught && captureOpenAt(timer, serverNow);
@@ -186,10 +258,41 @@ export function participantView(
     message,
     touch,
     caught,
+    scene: caught ? 'jail' : SCENES[role][pos.index + 1].scene,
+    word: paused
+      ? ['一時停止', 'PAUSED']
+      : caught && !afterGame
+        ? allCaught
+          ? ['ゲーム終了', 'GAME OVER']
+          : ['牢屋', 'JAIL']
+        : immuneMs > 0
+          ? ['捕まらない', 'SAFE']
+          : SCENES[role][pos.index + 1].word,
+    note: paused
+      ? ['主催者の合図を待つ', 'Wait for the host']
+      : allCaught || (afterGame && everyoneJailed(game.counts))
+        ? ['全員が牢屋に入った', 'Every runner is in jail']
+        : caught && !afterGame
+          ? ['仲間に触れてもらうか、ミッションで出られる', 'A teammate’s touch or a mission gets you out']
+          : immuneMs > 0
+            ? [`あと${Math.ceil(immuneMs / 1000)}秒は捕まらない。牢屋から離れる`, `Safe for ${Math.ceil(immuneMs / 1000)}s. Get away from the jail`]
+            : null,
+    time: formatClock(pos.remainingMs),
+    paused,
     glow,
     lightable,
     rescue,
     immuneMs,
+  };
+}
+
+/** つないでいる間（まだ部屋の様子が来ていない）の画面 */
+export function connectingView(online: boolean): PhoneView {
+  return {
+    round: '—', role: 'なし', step: 0, label: online ? 'つないでいる' : '通信を待っている',
+    big: '…', message: '', oni: '?', runners: '?', offline: !online, touch: 'none', caught: false,
+    scene: 'gather', word: online ? ['つないでいる', 'CONNECTING'] : ['通信を待っている', 'OFFLINE'], note: null,
+    time: null, unit: null, outcome: null, counts: null, times: [], paused: false, glow: 'none', lightable: false,
   };
 }
 
