@@ -25,6 +25,8 @@ const HOST_BIG_MAX_PX = 56;
 /** 「次に進む」の行き先（いまの段階の番号ごと）。ゲームの段階の名前は「残り時間」なので、ここでは「ゲーム」と書く */
 const SKIP_TO = ['追跡開始まで', 'ゲーム', '広場に戻るまで', '結果発表'] as const;
 const GAME_PHASE = PHASES.findIndex((p) => p.id === 'game');
+/** 待合室でこれより前に始めた夜のままなら、「新しい夜を始める」を促す */
+const OLD_NIGHT_MS = 12 * 3_600_000;
 
 /** 主催者の画面（キャンバスの「主催者」）。押せるボタンは今の段階で決まる */
 
@@ -39,7 +41,10 @@ export interface HostInput {
 }
 
 export interface HostActions {
-  command(op: HostOp, extra?: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string }): void;
+  command(
+    op: HostOp,
+    extra?: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string; rid?: string; ok?: boolean },
+  ): void;
   /** 1イベント＝1行の記録を CSV で保存する */
   downloadLog(): Promise<void>;
 }
@@ -54,7 +59,7 @@ const REASONS: Record<string, string> = {
   'not-allowed': '今の段階ではできない操作。',
   'no-participants': 'まだ誰も入室していない。',
   'bad-input': '入力が正しくない。',
-  'not-found': 'その参加者は見つからない。',
+  'not-found': 'その人は見つからない（もう待っていない・つながっていない）。',
 };
 
 export function createHost(actions: HostActions, sensors?: Sensors): HostScreen {
@@ -73,9 +78,11 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       <div><b data-k="runner"></b><span>逃走者</span></div>
       <div><b data-k="received"></b><span>役の受け取り</span></div>
       <div><b data-k="synced"></b><span>時計が合っている</span></div>
-      <div><b data-k="dups"></b><span>同じ名前</span></div>
+      <div><b data-k="asks"></b><span>戻りたい人</span></div>
     </div>
     <p class="reject" data-k="reject" hidden></p>
+    <p class="note" data-k="old" hidden></p>
+    <section class="asks" data-k="asklist" hidden></section>
     <div class="buttons">
       <button type="button" data-op="assign"></button>
       <button type="button" data-op="start">開始</button>
@@ -86,7 +93,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       <button type="button" data-op="win-runner">逃走者の勝ち</button>
       <button type="button" data-op="reset" class="wide">リセット（配役済みに戻す）</button>
       <button type="button" data-op="end" class="wide">夜を終える（全員の画面を SEE YOU AGAIN に）</button>
-      <button type="button" data-op="clear" class="wide">部屋を空にする（全員を外す）</button>
+      <button type="button" data-op="clear" class="wide">新しい夜を始める（名簿は残す）</button>
     </div>
     <details class="durations">
       <summary>時間の設定</summary>
@@ -191,7 +198,16 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     if (confirm('夜を終える。全員の画面が SEE YOU AGAIN になる。配役で再開もできる。よいか？')) actions.command('end');
   });
   btn('clear').addEventListener('click', () => {
-    if (confirm('参加者を全員外して、配役前に戻す。スマホは入室画面に戻り、入り直しになる。よいか？')) actions.command('clear');
+    if (confirm('今夜の参加者を全員外して、新しい夜にする（配役前に戻る）。名簿は残るので、スマホには名前のボタンが出て、押せば入れる。よいか？')) {
+      actions.command('clear');
+    }
+  });
+  q('asklist').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+    if (!b?.dataset.rid) return;
+    const ok = b.dataset.ok === '1';
+    if (ok && b.dataset.here === '1' && !confirm(`${b.dataset.name} はいまも別のスマホでつながっている。それでもつなぐか？`)) return;
+    actions.command('link', { rid: b.dataset.rid, ok });
   });
   inputs.forEach((i) => i.addEventListener('focus', () => (editingDurations = true)));
   form.addEventListener('submit', (e) => {
@@ -210,6 +226,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
 
   let lastDupKey = '';
   let lastCapKey = '';
+  let lastAskKey = '';
   // 走ると光る：主催者の画面にも光の地図（真ん中はこの画面の場所。たいてい広場）
   const board = createLightsBoard(6);
   q('glowBoard').append(board.el);
@@ -234,11 +251,48 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       q('runner').textContent = assigned ? String(game.counts.runner) : '—';
       q('received').textContent = assigned ? `${host.received}/${host.assigned}` : '—';
       q('synced').textContent = `${host.synced}/${host.connected}`;
-      q('dups').textContent = host.dupNames.length ? `${host.dupNames.length}組` : 'なし';
+      const asks = host.reclaims ?? [];
+      q('asks').textContent = asks.length ? `${asks.length}人` : 'なし';
       q('foot').textContent =
         `時間：${PHASES.map((p, i) => `${p.label} ${fmt(game.durations[i])}`).join(' → ')}` +
         `　／　割合 鬼${(game.ratio ?? DEFAULT_RATIO).oni}：逃走者${(game.ratio ?? DEFAULT_RATIO).runner}` +
-        (host.waiting ? `　／　次の配役を待っている人 ${host.waiting}人` : '');
+        (host.waiting ? `　／　次の配役を待っている人 ${host.waiting}人` : '') +
+        (host.registry !== undefined ? `　／　名簿 ${host.registry}人` : '');
+      // 前の夜のまま集め始めないように：待合室で、夜を始めてから半日以上たっていたら知らせる
+      const old = q('old');
+      const age = game.nightAt !== undefined ? serverNow - game.nightAt : 0;
+      old.hidden = !(game.stage === 'lobby' && age > OLD_NIGHT_MS);
+      old.textContent = old.hidden ? '' : `この夜は${fmtAge(age)}前に始めたまま。今夜集めるなら、先に「新しい夜を始める」を押す。`;
+
+      const askKey = JSON.stringify(asks);
+      if (askKey !== lastAskKey) {
+        lastAskKey = askKey;
+        const list = q('asklist');
+        list.hidden = asks.length === 0;
+        list.replaceChildren(
+          ...asks.map((a) => {
+            const row = document.createElement('div');
+            row.className = 'ask-row';
+            const label = document.createElement('span');
+            label.textContent = a.here ? `「${a.name}」に戻りたい人（${a.name}はいまも別のスマホでつながっている）` : `「${a.name}」に戻りたい人`;
+            const yes = document.createElement('button');
+            yes.type = 'button';
+            yes.className = 'primary';
+            yes.textContent = 'つなぐ';
+            const no = document.createElement('button');
+            no.type = 'button';
+            no.textContent = '断る';
+            for (const [b, ok] of [[yes, '1'], [no, '0']] as const) {
+              b.dataset.rid = a.rid;
+              b.dataset.ok = ok;
+              b.dataset.name = a.name;
+              b.dataset.here = a.here ? '1' : '0';
+            }
+            row.append(label, yes, no);
+            return row;
+          }),
+        );
+      }
 
       const reject = q('reject');
       reject.hidden = !lastReject;
@@ -270,7 +324,8 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       setEnabled(btn('skip'), !!phaseNow && phaseNow.remainingMs > START_LEAD_MS + 500, false);
       setEnabled(btn('end'), game.stage !== 'ended' && (game.stage !== 'timer' || done), game.stage === 'result');
       setEnabled(btn('reset'), game.stage === 'timer', false);
-      setEnabled(btn('clear'), (game.stage !== 'timer' || done) && host.total > 0, false);
+      // 新しい夜は、誰もいなくても始められる（前の夜のままなら目立たせる）
+      setEnabled(btn('clear'), game.stage !== 'timer' || done, !old.hidden);
       const canResult = game.stage === 'result' || done;
       setEnabled(btn('win-oni'), canResult, canResult && !game.result);
       setEnabled(btn('win-runner'), canResult, canResult && !game.result);
@@ -306,10 +361,8 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
               b.type = 'button';
               b.dataset.pid = r.pid;
               b.dataset.state = r.caught ? 'caught' : r.open ? 'open' : 'free';
-              b.dataset.label = `${r.name}（${r.num}番）`;
-              b.textContent = r.caught
-                ? `${r.num} ${r.name} ← ${r.byName ?? '手'}・${r.via ? VIA_NAME[r.via] : ''}`
-                : `${r.num} ${r.name}`;
+              b.dataset.label = r.name;
+              b.textContent = r.caught ? `${r.name} ← ${r.byName ?? '手'}・${r.via ? VIA_NAME[r.via] : ''}` : r.name;
               return b;
             }),
           );
@@ -363,8 +416,9 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
               const b = document.createElement('button');
               b.type = 'button';
               b.dataset.pid = p.pid;
-              b.dataset.label = `${d.name}（${p.num}番）`;
-              b.textContent = `${p.num}番を外す`;
+              const at = clock(p.joinedAt);
+              b.dataset.label = `${d.name}（${at}に入った人）`;
+              b.textContent = `${at}に入った人を外す`;
               row.append(b);
             }
             return row;
@@ -383,4 +437,17 @@ function setEnabled(button: HTMLButtonElement, enabled: boolean, primary: boolea
 function fmt(ms: number): string {
   const s = Math.round(ms / 1000);
   return s % 60 === 0 && s >= 60 ? `${s / 60}分` : `${s}秒`;
+}
+
+/** 夜を始めてからの長さ（「半日」「3日」など、ざっくり） */
+function fmtAge(ms: number): string {
+  const h = ms / 3_600_000;
+  if (h < 24) return `${Math.round(h)}時間`;
+  return `${Math.round(h / 24)}日`;
+}
+
+/** 入った時刻（同じ名前の人を見分けるため） */
+function clock(at: number): string {
+  const d = new Date(at);
+  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
 }

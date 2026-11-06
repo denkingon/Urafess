@@ -11,7 +11,7 @@ import { createCapture } from './views/capture';
 import { createGlow } from './views/glow';
 import { createHost } from './views/host';
 import { createInstall, type InstallScreen } from './views/install';
-import { createJoin } from './views/join';
+import { createJoin, type EntryMode } from './views/join';
 import { createLab } from './views/lab';
 import { createRunLab } from './views/lab-run';
 import { createPhone } from './views/phone';
@@ -146,7 +146,16 @@ function sessionSet(k: string, v: string): void {
 function startPlayer(): void {
   const client = makeClient({ kind: 'player' });
   startUpdateChecks(() => !(client.state.phase === 'ready' && inMatch(client.state.game?.stage)));
-  const join = createJoin((name) => client.join(name));
+  const join = createJoin({
+    join: (name) => client.join(name),
+    enter: () => client.enter(),
+    forget: () => client.forget(),
+    reclaim: () => client.reclaim(),
+    backToName: (message) => client.backToName(message),
+  });
+  // 入室画面が最後に出していた姿（「入っている…」の間も、押した画面のまま待つ）
+  let entryMode: EntryMode = 'name';
+  let askedPersist = false;
   const phone = createPhone();
   // 捕獲：逃走者のスマホは長押しの間3桁を鳴らし、鬼のスマホはマイクで聞く
   const emitter = new SoundEmitter();
@@ -208,9 +217,21 @@ function startPlayer(): void {
   loop(() => {
     const s = client.state;
     screenKeeper.set(s.phase === 'ready' && inMatch(s.game?.stage));
-    if (s.phase === 'need-name' || s.phase === 'joining') {
+    // 名簿に入ったら、このスマホの保存場所を消さないでほしいと頼む（iPhone はホーム画面のアプリだと通りやすい）
+    if (s.identity && !askedPersist) {
+      askedPersist = true;
+      void navigator.storage?.persist?.().catch(() => false);
+    }
+    const mode = entryModeOf(s.phase);
+    if (mode || s.phase === 'joining') {
+      if (mode) entryMode = mode;
       show(join.el);
-      join.update({ busy: s.phase === 'joining', error: s.joinError });
+      join.update({
+        mode: entryMode,
+        busy: s.phase === 'joining',
+        error: s.joinError,
+        name: entryMode === 'known' ? s.identity?.name ?? null : s.takenName,
+      });
       return;
     }
     if (s.phase !== 'ready' || !s.game || !s.me) {
@@ -238,6 +259,21 @@ function startPlayer(): void {
         .catch(() => undefined);
     }
   });
+}
+
+function entryModeOf(phase: string): EntryMode | null {
+  switch (phase) {
+    case 'need-name':
+      return 'name';
+    case 'known':
+      return 'known';
+    case 'taken':
+      return 'taken';
+    case 'reclaiming':
+      return 'wait';
+    default:
+      return null;
+  }
 }
 
 // ---------- 音の試し（/lab）・走りの試し（/lab?k=run） ----------

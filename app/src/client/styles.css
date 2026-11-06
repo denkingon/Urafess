@@ -69,6 +69,15 @@ html, body {
 .join .lead { margin: 0; font-size: 15px; line-height: 1.8; color: var(--quiet); }
 .join form { margin-top: 24px; display: flex; flex-direction: column; gap: 12px; }
 .join label { font-size: 14px; font-weight: 700; color: var(--quiet); }
+.join section { display: flex; flex-direction: column; gap: 12px; }
+.join section[hidden] { display: none; }
+/* 名簿にいる人の、名前のボタン（押すと今夜に入る） */
+.join .me {
+  min-height: 112px; margin-top: 12px; padding: 12px 16px; border: none; border-radius: 16px;
+  background: var(--ink); color: var(--bg); font-size: 34px; font-weight: 900; overflow-wrap: anywhere;
+}
+.join .me:disabled { background: transparent; color: var(--faint); border: 1px solid var(--line); }
+button.quiet { min-height: 44px; border: none; color: var(--quiet); font-size: 14px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
 input {
   height: 52px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line-strong);
   background: var(--field); color: var(--ink); font-size: 18px; font-family: inherit;
@@ -189,6 +198,10 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .dups { display: flex; flex-direction: column; gap: 8px; }
 .dup-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
 .dup-row button { min-height: 44px; padding: 0 12px; font-size: 14px; }
+.asks { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--ink); border-radius: 12px; padding: 12px; }
+.ask-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 15px; }
+.ask-row span { flex: 1 1 100%; }
+.ask-row button { min-height: 44px; padding: 0 16px; font-size: 15px; }
 
 /* hidden 属性は、display を持つ部品でも必ず隠す */
 [hidden] { display: none !important; }

@@ -59,8 +59,12 @@ export interface Notice {
 }
 
 export interface ClientState {
-  /** need-name: 入室前 / ready: 状態を受け取った / denied: 主催者の合言葉が違う */
-  phase: 'connecting' | 'need-name' | 'joining' | 'ready' | 'denied';
+  /**
+   * need-name: 入室前（名前を入れる） / known: 名簿にいる。名前のボタンを押せば今夜に入る /
+   * taken: 入れた名前が名簿のほかの人のもの（「前の◯◯？」） / reclaiming: 「前の◯◯に戻る」で主催者を待っている /
+   * joining: 入っているところ / ready: 状態を受け取った / denied: 主催者の合言葉が違う
+   */
+  phase: 'connecting' | 'need-name' | 'known' | 'taken' | 'reclaiming' | 'joining' | 'ready' | 'denied';
   online: boolean;
   game: GameView | null;
   me: MeView | null;
@@ -68,6 +72,8 @@ export interface ClientState {
   identity: Identity | null;
   lastReject: { op: HostOp; reason: string } | null;
   joinError: string | null;
+  /** taken・reclaiming のときの、名簿にある名前 */
+  takenName: string | null;
   notice: Notice | null;
   /** 手動で選ぶための一覧（頼んだあとに届く）。seq は届くたびに増える */
   roster: { seq: number; people: RosterEntry[] } | null;
@@ -123,6 +129,10 @@ export class GameClient {
   private roughOffset: number | null = null;
   private ackedAssignId = 0;
   private pendingJoinName: string | null = null;
+  /** 名前のボタンを押した（つなぎ直したら送り直す） */
+  private pendingEnter = false;
+  /** 「前の◯◯に戻る」を頼んでいる名前（つなぎ直したら頼み直す） */
+  private pendingReclaimName: string | null = null;
   /** 押している長押し（押し始めのサーバー時刻）。つなぎ直したら送り直す */
   private holding: { at: number | undefined } | null = null;
   /** 最近離した長押し。切れていて届いたか分からないので、つなぎ直したら送り直す（サーバーは同じ押し始めを2回数えない） */
@@ -153,6 +163,7 @@ export class GameClient {
       identity: mode.kind === 'player' ? this.loadIdentity() : null,
       lastReject: null,
       joinError: null,
+      takenName: null,
       notice: null,
       roster: null,
       glow: null,
@@ -201,9 +212,49 @@ export class GameClient {
 
   join(name: string): void {
     this.pendingJoinName = name;
-    this.state = { ...this.state, phase: 'joining', joinError: null };
+    this.pendingReclaimName = null;
+    this.state = { ...this.state, phase: 'joining', joinError: null, takenName: null };
     this.emit();
     if (this.isOpen()) this.send({ t: 'join', name });
+  }
+
+  /** 名簿にいる人が、名前のボタンを押して今夜に入る（known のとき） */
+  enter(): void {
+    if (!this.state.identity) return;
+    this.pendingEnter = true;
+    this.state = { ...this.state, phase: 'joining', joinError: null };
+    this.emit();
+    if (this.isOpen()) this.send({ t: 'enter' });
+  }
+
+  /** 「別の人として入る」：このスマホが覚えている人を忘れて、名前の入力に戻る（名簿からは消えない） */
+  forget(): void {
+    this.clearIdentity();
+    this.pendingEnter = false;
+    this.pendingJoinName = null;
+    this.pendingReclaimName = null;
+    this.state = { ...this.state, identity: null, me: null, phase: 'need-name', joinError: null, takenName: null };
+    this.emit();
+  }
+
+  /** taken のとき「そう（前の自分に戻る）」：主催者がつなぐのを待つ */
+  reclaim(): void {
+    const name = this.state.takenName;
+    if (!name) return;
+    this.pendingReclaimName = name;
+    this.state = { ...this.state, phase: 'reclaiming', joinError: null };
+    this.emit();
+    if (this.isOpen()) this.send({ t: 'reclaim', name });
+  }
+
+  /** taken・reclaiming から、名前の入力に戻る（「ちがう名前にする」「やめる」） */
+  backToName(message: string | null = null): void {
+    const asked = this.pendingReclaimName !== null;
+    this.pendingReclaimName = null;
+    this.pendingJoinName = null;
+    this.state = { ...this.state, phase: 'need-name', takenName: null, joinError: message };
+    this.emit();
+    if (asked && this.isOpen()) this.send({ t: 'reclaim-stop' });
   }
 
   // ---------- 捕獲 ----------
@@ -301,7 +352,10 @@ export class GameClient {
     else if (pnd.kind === 'cancel') this.send({ t: 'cancel' });
   }
 
-  command(op: HostOp, extra: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string } = {}): boolean {
+  command(
+    op: HostOp,
+    extra: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string; rid?: string; ok?: boolean } = {},
+  ): boolean {
     const game = this.state.game;
     if (!this.isOpen() || !game) return false;
     this.state = { ...this.state, lastReject: null };
@@ -438,11 +492,16 @@ export class GameClient {
       else this.send({ t: 'hold', on: false, at: this.toServer(now), resume: true });
       // 選んだ・取り下げたが効いたかは、最初に届く状態を見てから決めて送り直す
       this.resendAfterSnap = this.pending !== null;
+      // 名前のボタンを押したが、届いたか分からない（サーバーは2回入れない）
+      if (this.pendingEnter) this.send({ t: 'enter' });
       if (this.senseState) this.send({ t: 'sense', ...this.senseState });
+    } else if (this.pendingReclaimName) {
+      // 「前の◯◯に戻る」の頼みは接続ごとなので、つなぎ直したら頼み直す
+      this.send({ t: 'reclaim', name: this.pendingReclaimName });
     } else if (this.pendingJoinName) {
       this.send({ t: 'join', name: this.pendingJoinName });
       if (this.senseState) this.send({ t: 'sense', ...this.senseState });
-    } else {
+    } else if (this.state.phase !== 'taken') {
       this.state = { ...this.state, phase: 'need-name' };
     }
   }
@@ -536,20 +595,60 @@ export class GameClient {
       case 'welcome': {
         const identity: Identity = { pid: msg.pid, key: msg.key, num: msg.num, name: msg.name };
         this.pendingJoinName = null;
+        this.pendingEnter = false;
+        this.pendingReclaimName = null;
         this.saveIdentity(identity);
-        this.state = { ...this.state, identity };
+        this.state = { ...this.state, identity, takenName: null, joinError: null };
         break;
       }
-      case 'unknown': {
-        // 保存してあった本人の印がサーバーに無い（別のゲーム・外された記録の消去など）か、名前が不正
-        const triedJoin = this.pendingJoinName !== null;
+      case 'known': {
+        // 名簿にいるが、今夜にはまだ入っていない（新しい夜が始まった・別の夜にいた）。
+        // 名前のボタンを押した直後なら、入るのを待つ（enter は送ってある）
+        const identity = this.state.identity ? { ...this.state.identity, name: msg.name } : null;
+        if (identity) this.saveIdentity(identity);
         this.pendingJoinName = null;
-        if (!triedJoin) this.clearIdentity();
         this.state = {
           ...this.state,
-          identity: triedJoin ? this.state.identity : null,
+          identity,
+          me: null,
+          phase: this.pendingEnter ? 'joining' : 'known',
+          joinError: null,
+          takenName: null,
+        };
+        break;
+      }
+      case 'taken':
+        // 入れた名前は名簿のほかの人のもの。「前の◯◯？」と聞く
+        this.pendingJoinName = null;
+        this.state = { ...this.state, phase: 'taken', takenName: msg.name, joinError: null };
+        break;
+      case 'reclaim':
+        if (msg.status === 'denied') {
+          this.pendingReclaimName = null;
+          this.state = {
+            ...this.state,
+            phase: 'need-name',
+            takenName: null,
+            joinError: `主催者が「${msg.name}」とはつながなかった。ちがう名前で入る。`,
+          };
+        } else if (this.pendingReclaimName !== null) {
+          this.state = { ...this.state, phase: 'reclaiming', takenName: msg.name };
+        }
+        break;
+      case 'unknown': {
+        // 保存してあった本人の印がサーバーに無い（別のゲーム・外された記録の消去など）か、名前が不正
+        const tried = this.pendingJoinName !== null || this.pendingReclaimName !== null;
+        this.pendingJoinName = null;
+        this.pendingReclaimName = null;
+        this.pendingEnter = false;
+        if (!tried) this.clearIdentity();
+        this.state = {
+          ...this.state,
+          identity: tried ? this.state.identity : null,
+          me: tried ? this.state.me : null,
           phase: 'need-name',
-          joinError: triedJoin ? 'ニックネームは1〜20文字で入れる。' : null,
+          takenName: null,
+          joinError: tried ? 'ニックネームは1〜20文字で入れる。' : null,
         };
         break;
       }
