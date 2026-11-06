@@ -222,6 +222,8 @@ function startLab(): void {
   document.addEventListener('pointerup', unlock, { capture: true, passive: true });
   document.addEventListener('click', unlock, { capture: true, passive: true });
   void getCodec().catch(() => undefined);
+  // 試験用（?debug=1）：ヘッドレスのブラウザからマイクの様子を読むため。/lab はサーバーも部屋も使わない
+  if (params.get('debug') === '1') (window as unknown as { __urafessLab?: unknown }).__urafessLab = { emitter, listener };
   root.replaceChildren(createLab(emitter, listener));
 }
 

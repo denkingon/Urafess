@@ -117,7 +117,7 @@ export function createLab(emitter: SoundEmitter, listener: SoundListener): HTMLE
     const meter = '▮'.repeat(1 + Math.round(listener.level * 9));
     q('status').textContent =
       mode === 'listen'
-        ? `マイク：${{ off: '長押しで開く', starting: '準備中', ready: meter, denied: '許可されていない', unsupported: '使えない', error: '開けなかった' }[listener.state]}`
+        ? `マイク：${{ off: '長押しで開く', starting: '準備中', ready: listener.silent ? `音が来ていない。「聞く」をもう一度押すと開き直す${listener.rebuilds ? `（作り直し ${listener.rebuilds}回目）` : ''}` : meter, denied: '許可されていない', unsupported: '使えない', error: '開けなかった' }[listener.state]}`
         : emitter.playing
           ? '鳴らしている'
           : emitter.unlocked

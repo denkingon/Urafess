@@ -2,6 +2,13 @@ import { getCodec, parseSoundPayload, type SoundDecoder } from './codec';
 
 export type MicState = 'off' | 'starting' | 'ready' | 'denied' | 'unsupported' | 'error';
 
+/** 開いてからこれだけの間、音の処理が1回も回らないか、届くデータがぴったり無音のままなら「音が来ていない」 */
+const SILENT_MS = 1_500;
+/** 一度は本物の音が届いたあとは、これだけ無音が続いたら「音が来ていない」（静かな所で、雑音を消す端末が止まって見えないように長め） */
+const SILENT_AFTER_SOUND_MS = 20_000;
+/** これより小さい揺れしかないなら、マイクの音ではなく無音のデータ（本物のマイクには必ず小さな雑音がある） */
+const DIGITAL_SILENCE = 1e-6;
+
 /** 音の試し（/lab）で見る、マイクの様子。どちらのスマホが弱いかを切り分けるため */
 export interface MicProbe {
   /** 音の処理の速さ（Hz）。超音波（15kHz より上）を拾うには 40000 以上が要る */
@@ -47,15 +54,29 @@ export class SoundListener {
   private listening = false;
   private onCode: ((code: string) => void) | null = null;
   private opening: Promise<void> | null = null;
+  /** 開いた時刻と、最後に本物の音（無音でないデータ）が届いた時刻（0＝まだ一度も届いていない） */
+  private openedAt = 0;
+  private lastSoundAt = 0;
+  /** 次に開くとき、音の処理（AudioContext）をマイクのあとに作り直す */
+  private rebuild = false;
+  /** 音が来ていなくて、音の処理ごと作り直した回数（/lab に出す） */
+  rebuilds = 0;
   state: MicState = 'off';
   /** 聞こえている音の大きさ（0〜1）。画面の針に使う */
   level = 0;
 
-  /** タップの直後に呼ぶ。AudioContext を作って動かしておく */
-  unlock(): void {
+  /** タップの直後に呼ぶ。AudioContext を作って動かしておく。sampleRate を渡すと、その速さで作る（作り直すときだけ） */
+  unlock(sampleRate?: number): void {
     const AC = typeof window === 'undefined' ? undefined : (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
     if (!AC) return;
-    if (!this.ctx || this.ctx.state === 'closed') this.ctx = new AC();
+    if (!this.ctx || this.ctx.state === 'closed') {
+      try {
+        this.ctx = sampleRate ? new AC({ sampleRate }) : new AC();
+      } catch {
+        // 速さを指定できない古い端末
+        this.ctx = new AC();
+      }
+    }
     // iPhone は電話や別の音で止めると 'interrupted' になる。'suspended' と同じく、タップの直後に動かし直す
     if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => undefined);
   }
@@ -68,7 +89,17 @@ export class SoundListener {
   get live(): boolean {
     if (this.state !== 'ready') return false;
     const track = this.stream?.getAudioTracks()[0];
-    return !!track && track.readyState === 'live' && !track.muted && this.ctx?.state === 'running';
+    return !!track && track.readyState === 'live' && !track.muted && this.ctx?.state === 'running' && !this.silent;
+  }
+
+  /**
+   * 開けたのに、音が来ていない：マイクも音の処理も「動いている」と言うのに、届くデータが無音のまま（または処理が回らない）。
+   * 11/6 夜の実機テストで、鬼の iPhone で起きた（声を出しても針が伸びなかった）
+   */
+  get silent(): boolean {
+    if (this.state !== 'ready') return false;
+    const now = performance.now();
+    return this.lastSoundAt === 0 ? now - this.openedAt > SILENT_MS : now - this.lastSoundAt > SILENT_AFTER_SOUND_MS;
   }
 
   /** マイクを開く（許可を聞かれるのはここ）。開いたまま、読むのは listen() の間だけ */
@@ -76,12 +107,15 @@ export class SoundListener {
     if (this.live) return Promise.resolve();
     if (this.state === 'ready') {
       const track = this.stream?.getAudioTracks()[0];
-      if (track && track.readyState === 'live' && !track.muted) {
+      const trackOk = !!track && track.readyState === 'live' && !track.muted;
+      if (trackOk && this.ctx?.state !== 'running') {
         // マイクは生きていて、音の処理だけ止まっている：動かし直すだけでよい（このタップの中で）
         this.unlock();
         return Promise.resolve();
       }
-      // マイクが止まった：閉じて、開き直す
+      // マイクも音の処理も動いているのに音が来ていない：音の処理（AudioContext）ごと、マイクのあとに作り直す
+      if (trackOk) this.rebuild = true;
+      // マイクが止まった・音が来ていない：閉じて、開き直す
       this.close();
     }
     this.opening ??= this.doOpen().finally(() => {
@@ -103,14 +137,26 @@ export class SoundListener {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
       });
-      this.unlock();
+      if (this.rebuild) {
+        // 先に作った音の処理とマイクがつながらない端末がある：古いものを閉じ、マイクのあとに、マイクと同じ速さで作り直す
+        this.rebuild = false;
+        this.rebuilds++;
+        const old = this.ctx;
+        this.ctx = null;
+        void old?.close().catch(() => undefined);
+        const rate = (stream.getAudioTracks()[0]?.getSettings?.() as { sampleRate?: number } | undefined)?.sampleRate;
+        this.unlock(typeof rate === 'number' && rate > 0 ? rate : undefined);
+      } else {
+        this.unlock();
+      }
       const ctx = this.ctx;
       if (!ctx) {
         stream.getTracks().forEach((t) => t.stop());
         this.state = 'unsupported';
         return;
       }
-      if (ctx.state === 'suspended') await ctx.resume().catch(() => undefined);
+      // 動かし直しを待つのは少しだけ（iPhone はタップの外だと、許されるまで答えを返さないことがある。そのときは画面のボタンで動かす）
+      if (ctx.state !== 'running') await Promise.race([ctx.resume().catch(() => undefined), new Promise((r) => setTimeout(r, 500))]);
       this.decoder?.free();
       this.decoder = codec.decoder(ctx.sampleRate);
       const source = ctx.createMediaStreamSource(stream);
@@ -131,6 +177,8 @@ export class SoundListener {
       this.source = source;
       this.node = node;
       this.sink = sink;
+      this.openedAt = performance.now();
+      this.lastSoundAt = 0;
       this.state = 'ready';
     } catch (e) {
       if (stream && this.stream !== stream) stream.getTracks().forEach((t) => t.stop());
@@ -142,7 +190,15 @@ export class SoundListener {
   private process(input: Float32Array): void {
     // 針：入ってくる音の大きさ（RMS）を 0〜1 にならす
     let sum = 0;
-    for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+    let max = 0;
+    for (let i = 0; i < input.length; i++) {
+      const x = input[i];
+      sum += x * x;
+      const a = x < 0 ? -x : x;
+      if (a > max) max = a;
+    }
+    // ぴったり無音でなければ、マイクから本物の音が来ている
+    if (max > DIGITAL_SILENCE) this.lastSoundAt = performance.now();
     const rms = Math.sqrt(sum / input.length);
     this.level = this.level * 0.6 + Math.min(1, rms * 8) * 0.4;
     if (!this.listening || !this.decoder) return;
