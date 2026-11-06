@@ -85,8 +85,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 
 /* 置き方の案内。押すものを押す順に、全部を一度に並べる（勝手に進まない）。数字は URAJI */
 .install [hidden] { display: none !important; }
-.install { position: relative; padding-top: calc(60px + env(safe-area-inset-top)); gap: 14px; }
-.install[data-pointer^="bottom"] { padding-bottom: calc(92px + env(safe-area-inset-bottom)); }
+.install { position: relative; padding-top: calc(50px + env(safe-area-inset-top)); gap: 10px; }
+.install[data-pointer^="bottom"] { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 .install .skip {
   position: absolute; top: calc(8px + env(safe-area-inset-top)); left: 8px;
   min-height: 0; width: 44px; height: 44px; padding: 10px; border: none; color: var(--faint);
@@ -94,31 +94,32 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .install .skip svg { width: 24px; height: 24px; display: block; }
 .install .ttl { display: flex; align-items: center; gap: 12px; }
 .install .ttl img { width: 40px; height: 40px; border-radius: 9px; display: block; }
-.install .ttl h1 { margin: 0; font-size: 22px; font-weight: 900; letter-spacing: .02em; }
-.install .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.install .ttl h1 { margin: 0; font-size: 22px; font-weight: 900; letter-spacing: .02em; line-height: 1.2; }
+.install .ttl .sub { display: block; margin-top: 2px; font-size: 13px; font-weight: 700; color: var(--quiet); }
+.install .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
 .install .st {
   display: grid; grid-template-columns: 28px 1fr; align-items: center; column-gap: 12px;
-  min-height: 58px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 14px;
+  min-height: 46px; padding: 4px 12px; border: 1px solid var(--line-strong); border-radius: 14px;
 }
 .install .st[data-optional] { border-style: dashed; }
 .install .st .no { color: var(--ink); }
 .install .st .no .uraji { width: 17px; height: auto; display: block; margin: 0 auto; }
 .install .st .what { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
-.install .st .hint { grid-column: 2; font-size: 13px; color: var(--quiet); display: none; padding-bottom: 2px; }
-.install[data-words="on"] .st .hint { display: block; }
+.install .st .hint { grid-column: 2; display: flex; flex-wrap: wrap; gap: 0 10px; margin: 1px 0 2px; font-size: 12px; line-height: 1.35; color: var(--quiet); }
+.install .st .hint .alt { color: var(--faint); }
 .install .ctl { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); min-width: 0; }
-.install .ctl b { font-size: 17px; font-weight: 700; white-space: nowrap; }
+.install .ctl b { font-size: 16px; font-weight: 700; white-space: nowrap; }
 .install .ctl .gl { display: block; flex: none; }
-.install .ctl.circle, .install .ctl.tool { width: 46px; height: 46px; justify-content: center; }
-.install .ctl.circle { border-radius: 23px; background: #2b2b2b; }
-.install .ctl.menu, .install .ctl.row { padding: 9px 14px; border-radius: 10px; background: #2e2e2e; }
+.install .ctl.circle, .install .ctl.tool { width: 40px; height: 40px; justify-content: center; }
+.install .ctl.circle { border-radius: 20px; background: #2b2b2b; }
+.install .ctl.menu, .install .ctl.row { padding: 7px 12px; border-radius: 10px; background: #2e2e2e; }
 .install .ctl.row { gap: 20px; }
-.install .ctl.action { flex-direction: column; gap: 3px; }
-.install .ctl.action .disc { width: 44px; height: 44px; border-radius: 22px; background: #2e2e2e; display: flex; align-items: center; justify-content: center; }
-.install .ctl.action b { font-size: 12px; }
-.install .ctl.pill { padding: 7px 20px; border-radius: 999px; background: var(--ink); }
+.install .ctl.action { flex-direction: column; gap: 2px; }
+.install .ctl.action .disc { width: 34px; height: 34px; border-radius: 17px; background: #2e2e2e; display: flex; align-items: center; justify-content: center; }
+.install .ctl.action b { font-size: 11.5px; }
+.install .ctl.pill { padding: 6px 18px; border-radius: 999px; background: var(--ink); }
 .install .ctl.pill b { color: var(--bg); font-size: 16px; }
-.install .ctl.appicon img { width: 44px; height: 44px; border-radius: 10px; display: block; }
+.install .ctl.appicon img { width: 40px; height: 40px; border-radius: 9px; display: block; }
 /* 画面のどこにあるか：小さな電話の縁と、隅の点 */
 .install .where { position: relative; width: 18px; height: 32px; border: 2px solid var(--quiet); border-radius: 5px; flex: none; }
 .install .where::after { content: ""; position: absolute; width: 6px; height: 6px; border-radius: 3px; background: var(--ink); }
