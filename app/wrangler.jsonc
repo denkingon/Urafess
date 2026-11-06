@@ -3,6 +3,8 @@
   "name": "urafess",
   "main": "src/server/worker.ts",
   "compatibility_date": "2026-11-01",
+  // wrangler deploy / dev の前に、毎回画面をビルドし直す（古い画面を公開しないように。Cloudflare 側のビルド設定が空でも通る）
+  "build": { "command": "npm run build" },
   // 画面（PWA）はビルド済みの静的ファイル。/api/* だけ Worker が受ける
   "assets": {
     "directory": "./dist/client",
@@ -10,11 +12,17 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
   },
-  // 1ゲーム＝1つの Durable Object（SQLite で保存）
+  // 1ゲーム＝1つの Durable Object（SQLite で保存）。夜テストの記録はテスト回ごとに1つ
   "durable_objects": {
-    "bindings": [{ "name": "GAME", "class_name": "GameRoom" }]
+    "bindings": [
+      { "name": "GAME", "class_name": "GameRoom" },
+      { "name": "PROBE", "class_name": "ProbeHub" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["GameRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["ProbeHub"] }
+  ],
   "observability": { "enabled": true }
   // 主催者用の合言葉 HOST_TOKEN は `wrangler secret put HOST_TOKEN` で入れる（ローカルは .dev.vars）
 }

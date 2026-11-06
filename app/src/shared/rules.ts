@@ -19,6 +19,17 @@ export const ROLES: readonly RoleRule[] = [
   { id: 'runner', name: '逃走者', weight: 7, min: 1, tiePriority: 0 },
 ];
 
+/** 鬼：逃走者の比率の重み。主催者が配役の前に変えられる（初期値は ROLES の重み） */
+export type Ratio = Record<RoleId, number>;
+export const DEFAULT_RATIO: Ratio = { oni: 3, runner: 7 };
+export const RATIO_MIN = 1;
+export const RATIO_MAX = 99;
+export function isValidRatio(r: unknown): r is Ratio {
+  if (typeof r !== 'object' || r === null) return false;
+  const { oni, runner } = r as Record<string, unknown>;
+  return [oni, runner].every((x) => Number.isInteger(x) && (x as number) >= RATIO_MIN && (x as number) <= RATIO_MAX);
+}
+
 export const ROLE_NAME: Record<RoleId, string> = { oni: '鬼', runner: '逃走者' };
 
 /** 1ラウンドの時間で区切られた段階（配役と結果発表は主催者が進める） */
@@ -40,8 +51,113 @@ export const START_LEAD_MS = 2_000;
 /** 往復の半分がこれ以下なら「時計が合っている」と数える */
 export const SYNC_OK_MS = 100;
 
+/**
+ * 試合中（配役〜タイマー）は、サーバーがこの間隔で短い合図（hb）を全員に送る。
+ * 送る側（サーバー→スマホ）は無料で、携帯の電波が待機に落ちる（5〜10秒）より短いので、
+ * 「捕まった」などの知らせが電波の寝起き（約1〜2秒）を待たずに届く
+ */
+export const HEARTBEAT_EVERY_MS = 2_000;
+
+/** 試合中に合図がこれだけ届かなければ、見えない切断とみなしてつなぎ直す（回線の詰まり1.5〜3秒では切らない長さ） */
+export const SILENCE_LIMIT_MS = 6_000;
+
 /** 段階ごとの長さの上下限（主催者が変えるとき） */
 export const DURATION_MIN_MS = 1_000;
 export const DURATION_MAX_MS = 60 * 60_000;
 
 export const NAME_MAX_LENGTH = 20;
+
+// ---------- 捕獲の記録 ----------
+//
+// 体で捕まえたあと、鬼は「捕まえた」、逃走者は「捕まった」を長押しする。
+// 逃走者のスマホは長押しの間、自分のその回の3桁を音で鳴らし、鬼のスマホは長押しの間マイクで聞く。
+// 鬼のスマホが音を拾うと「◯◯をロックオン」と出て、鬼は離して次を追える。
+// サーバーは「音を拾った鬼」「同じ時間に長押ししていた鬼」「前後に長押しした鬼」「手動で選んだ鬼」を
+// 逃走者の画面に同じ大きさで並べ、逃走者本人がどれか1人を選んだら記録する。
+
+/** 長押しとみなすまでの時間。これより短く離したら何もしない（押し間違い・ポケットの中） */
+export const HOLD_MIN_MS = 500;
+
+/** 長押しの長さの上限。押しっぱなしのまま「離した」が届かない長押しも、ここで離したとみなす */
+export const HOLD_MAX_MS = 30_000;
+
+/** 離した瞬間が分からない長押し（切断・「離した」が届かなかった）は、押し始めからこの長さで離したとみなす */
+export const HOLD_UNKNOWN_END_MS = 8_000;
+
+/** 重なっていなくても、前後この時間に長押しした鬼は候補に出す */
+export const CLAIM_PAIR_WINDOW_MS = 20_000;
+
+/** 逃走者の「捕まった」は、この時間選ばないままなら閉じる。ゲームが終わったあとも、この間は選べる（終了間際の捕獲のため） */
+export const CLAIM_OPEN_MS = 90_000;
+
+/** ゲームの段階が終わった直後も、この時間は長押しを受け付ける（終了間際に体で捕まえた分） */
+export const CLAIM_GRACE_MS = 10_000;
+
+/** 鬼のスマホが逃走者の音を拾った記録・鬼が手動で選んだ記録を、候補として使う時間 */
+export const EVIDENCE_VALID_MS = 60_000;
+
+/**
+ * 番号を運ぶ音の送り方。ultrasound は 15kHz より上でほとんど聞こえず、話し声と重ならないので強い。
+ * audible は 1.9〜6.4kHz でピロピロ聞こえるが、話し声と重なって読み落としやすい（test/sound.test.ts の表）。
+ * 聞こえる音は、別に重ねる3音のフレーズ（SOUND_MELODY）で出す
+ */
+export type SoundProtocol =
+  | 'ultrasound-fastest'
+  | 'ultrasound-fast'
+  | 'ultrasound-normal'
+  | 'audible-fastest'
+  | 'audible-fast'
+  | 'audible-normal';
+
+export const SOUND_PROTOCOL: SoundProtocol = 'ultrasound-fast';
+
+/** 長押しの間、番号の超音波に「その人だけの3音のフレーズ」（聞こえる音）を重ねる。0 で重ねない */
+export const SOUND_MELODY_GAIN = 0.3;
+
+/** 音の大きさ（ggwave の 1〜100） */
+export const SOUND_VOLUME = 50;
+
+/** 鳴らす合間（長押しの間、3桁を繰り返す） */
+export const SOUND_GAP_MS = 250;
+
+// ---------- 走ると光る ----------
+//
+// 走っている人は、全員の画面に名前と場所が光る。止まると消える（走りは見せつける行為。走る奴は囮であり勇者）。
+// 走っているかは、スマホが自分で決める：動きのセンサーの揺れ（1歩ごとの強い揺れと、そのテンポ）。
+// 動きのセンサーが使えないスマホは、スマホが出す速さで決める（位置の差からは出さない。止まっていても位置は飛ぶので）。
+// 光るのはゲームの段階（追跡が始まってから終わるまで）だけ。逃げて散る間に光ると、隠れた場所が全部ばれるため。
+// 位置をサーバーに送るのは光っている間だけ。止まっている人・歩いている人の位置は、どこにも送らない。
+
+/** 光っている間、位置を送り直す間隔 */
+export const RUN_SEND_EVERY_MS = 1_000;
+
+/** 走りとみなしてから、これだけ続いたら光る（跳ねた・つまずいた一瞬では光らない） */
+export const RUN_START_MS = 600;
+
+/** 走りでなくなってから、これだけたったら消える（角を曲がる・段差の一瞬の止まりでは消えない） */
+export const RUN_STOP_MS = 2_000;
+
+/** 光っている人の位置がこれだけ届かなければ消す（電波が切れた・画面を消した） */
+export const RUN_STALE_MS = 5_000;
+
+/** 揺れを見る長さ。この間の「1歩」の数とテンポで決める */
+export const RUN_WINDOW_MS = 2_500;
+
+/** この間に、これだけの「1歩」が要る */
+export const RUN_STEPS_MIN = 4;
+
+/** 1歩のテンポ（1秒あたりの歩数）。歩きは 1.6〜2.0、走りは 2.4〜3.2 */
+export const RUN_CADENCE_MIN = 2.2;
+
+/**
+ * 1歩とみなす揺れの強さ（m/s²、重力込みの大きさ。止まっていると約 9.8）。
+ * 歩きは 11〜14、走りは 18〜30（ポケットでも手でも）。揺れがこれを超えて RUN_PEAK_RELEASE を下回るまでを1歩と数える
+ */
+export const RUN_PEAK_MIN = 16;
+export const RUN_PEAK_RELEASE = 11;
+
+/** 動きのセンサーが使えないスマホは、スマホが出す速さで決める（m/s。2.8＝時速10km）。続けて2回この速さで走り */
+export const RUN_SPEED_MIN = 2.8;
+
+/** 位置の速さを使うのは、位置の誤差がこれ以下のときだけ（m） */
+export const RUN_ACCURACY_MAX = 25;

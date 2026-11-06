@@ -69,6 +69,15 @@ html, body {
 .join .lead { margin: 0; font-size: 15px; line-height: 1.8; color: var(--quiet); }
 .join form { margin-top: 24px; display: flex; flex-direction: column; gap: 12px; }
 .join label { font-size: 14px; font-weight: 700; color: var(--quiet); }
+.join section { display: flex; flex-direction: column; gap: 12px; }
+.join section[hidden] { display: none; }
+/* 名簿にいる人の、名前のボタン（押すと今夜に入る） */
+.join .me {
+  min-height: 112px; margin-top: 12px; padding: 12px 16px; border: none; border-radius: 16px;
+  background: var(--ink); color: var(--bg); font-size: 34px; font-weight: 900; overflow-wrap: anywhere;
+}
+.join .me:disabled { background: transparent; color: var(--faint); border: 1px solid var(--line); }
+button.quiet { min-height: 44px; border: none; color: var(--quiet); font-size: 14px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
 input {
   height: 52px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line-strong);
   background: var(--field); color: var(--ink); font-size: 18px; font-family: inherit;
@@ -82,6 +91,90 @@ button:disabled { color: var(--faint); border-color: var(--line); background: tr
 button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 .error { margin: 0; color: var(--ink); font-size: 14px; }
 .note { margin: 0; font-size: 13px; line-height: 1.7; color: var(--quiet); }
+
+/* 置き方の案内。押すものを押す順に、全部を一度に並べる（勝手に進まない）。数字は URAJI */
+.install [hidden] { display: none !important; }
+.install { position: relative; padding-top: calc(50px + env(safe-area-inset-top)); gap: 10px; }
+.install[data-pointer^="bottom"] { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+.install .skip {
+  position: absolute; top: calc(8px + env(safe-area-inset-top)); left: 8px;
+  min-height: 0; width: 44px; height: 44px; padding: 10px; border: none; color: var(--faint);
+}
+.install .skip svg { width: 24px; height: 24px; display: block; }
+.install .ttl { display: flex; align-items: center; gap: 12px; }
+.install .ttl img { width: 40px; height: 40px; border-radius: 9px; display: block; }
+.install .ttl h1 { margin: 0; font-size: 22px; font-weight: 900; letter-spacing: .02em; line-height: 1.2; }
+.install .ttl .sub { display: block; margin-top: 2px; font-size: 13px; font-weight: 700; color: var(--quiet); }
+.install .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.install .st {
+  display: grid; grid-template-columns: 28px 1fr; align-items: center; column-gap: 12px;
+  min-height: 46px; padding: 4px 12px; border: 1px solid var(--line-strong); border-radius: 14px;
+}
+.install .st[data-optional] { border-style: dashed; }
+.install .st .no { color: var(--ink); }
+.install .st .no .uraji { width: 17px; height: auto; display: block; margin: 0 auto; }
+.install .st .what { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.install .st .hint { grid-column: 2; display: flex; flex-wrap: wrap; gap: 0 10px; margin: 1px 0 2px; font-size: 12px; line-height: 1.35; color: var(--quiet); }
+.install .st .hint .alt { color: var(--faint); }
+.install .ctl { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); min-width: 0; }
+.install .ctl b { font-size: 16px; font-weight: 700; white-space: nowrap; }
+.install .ctl .gl { display: block; flex: none; }
+.install .ctl.circle, .install .ctl.tool { width: 40px; height: 40px; justify-content: center; }
+.install .ctl.circle { border-radius: 20px; background: #2b2b2b; }
+.install .ctl.menu, .install .ctl.row { padding: 7px 12px; border-radius: 10px; background: #2e2e2e; }
+.install .ctl.row { gap: 20px; }
+.install .ctl.action { flex-direction: column; gap: 2px; }
+.install .ctl.action .disc { width: 34px; height: 34px; border-radius: 17px; background: #2e2e2e; display: flex; align-items: center; justify-content: center; }
+.install .ctl.action b { font-size: 11.5px; }
+.install .ctl.pill { padding: 6px 18px; border-radius: 999px; background: var(--ink); }
+.install .ctl.pill b { color: var(--bg); font-size: 16px; }
+.install .ctl.appicon img { width: 40px; height: 40px; border-radius: 9px; display: block; }
+/* 画面のどこにあるか：小さな電話の縁と、隅の点 */
+.install .where { position: relative; width: 18px; height: 32px; border: 2px solid var(--quiet); border-radius: 5px; flex: none; }
+.install .where::after { content: ""; position: absolute; width: 6px; height: 6px; border-radius: 3px; background: var(--ink); }
+.install .where[data-where="bottom-right"]::after { right: 2px; bottom: 2px; }
+.install .where[data-where="bottom-center"]::after { left: 50%; margin-left: -3px; bottom: 2px; }
+.install .where[data-where="top-right"]::after { right: 2px; top: 2px; }
+/* 入ったあと：ホーム画面のアイコンから開く手だけを明るく */
+.install.installed .st { opacity: .35; }
+.install.installed .st:last-child { opacity: 1; border-color: var(--ink); }
+/* 最初に押すボタンのある所（1枚目の場面の、バーのある帯だけ） */
+.install .bar-pic .frame { display: block; width: 100%; height: auto; color: var(--ink); }
+.install .frame .scr { fill: #1a1a1a; }
+.install .frame .faint { fill: #3a3a3a; }
+.install .frame .chip { fill: #2b2b2b; }
+.install .frame .barbg { fill: #202020; }
+.install .frame .pop { fill: #2e2e2e; }
+.install .frame .sheet { fill: #242424; }
+.install .frame .group { fill: #303030; }
+.install .frame .hirow { fill: rgba(242, 242, 242, .16); }
+.install .frame .hipill, .install .frame .tog { fill: var(--ink); }
+.install .frame .scrim { fill: #000; opacity: .5; }
+.install .frame .quiet { color: var(--quiet); }
+.install .frame .lbl { fill: var(--ink); font-size: 15px; font-weight: 700; font-family: inherit; }
+.install .frame .lbl.quiet { fill: var(--quiet); font-weight: 500; }
+.install .frame .lbl.on { fill: var(--bg); }
+.install .frame .tap { fill: none; stroke: var(--ink); stroke-width: 2.5; }
+.install .frame .ring { fill: none; stroke: var(--ink); stroke-width: 3; transform-box: fill-box; transform-origin: center; animation: install-ring 1s ease-out infinite; }
+@keyframes install-ring { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(1.45); opacity: 0; } }
+.install .one { display: flex; justify-content: center; }
+.install.prompt .one { margin: auto 0; }
+.install .one-tap {
+  display: flex; align-items: center; gap: 18px; padding: 14px 26px;
+  background: var(--ink); color: var(--bg); border: none; border-radius: 999px;
+}
+.install .one-tap img { width: 52px; height: 52px; border-radius: 12px; display: block; }
+.install .one-tap .arrow .uraji { width: 26px; height: auto; display: block; }
+/* 本物のボタンを指す矢印。ずっと出しておく（ボタン1つで入れるとき・入ったあとは消す） */
+.install .pointer { position: absolute; width: 30px; color: var(--ink); pointer-events: none; }
+.install .pointer .uraji { width: 100%; height: auto; display: block; }
+.install.prompt .pointer, .install.installed .pointer { display: none; }
+.install[data-pointer="bottom-right"] .pointer { right: 24px; bottom: calc(40px + env(safe-area-inset-bottom)); }
+.install[data-pointer="bottom-center"] .pointer { left: 50%; bottom: calc(40px + env(safe-area-inset-bottom)); transform: translateX(-50%); }
+.install[data-pointer="top-right"] .pointer { right: 22px; top: calc(6px + env(safe-area-inset-top)); transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) {
+  .install .frame .ring { animation: none; opacity: 0; }
+}
 
 /* 主催者 */
 .host { gap: 16px; padding-top: calc(32px + env(safe-area-inset-top)); }
@@ -97,11 +190,206 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .reject { margin: 0; border: 1px solid var(--line-strong); border-radius: 8px; padding: 10px 12px; font-size: 14px; line-height: 1.6; }
 .buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .buttons .wide { grid-column: span 2; }
-.durations { border-top: 1px solid var(--line); padding-top: 12px; font-size: 14px; color: var(--quiet); }
-.durations summary { cursor: pointer; }
-.durations form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
-.durations label { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
-.durations input { width: 96px; height: 44px; text-align: right; }
+.durations, .ratio { border-top: 1px solid var(--line); padding-top: 12px; font-size: 14px; color: var(--quiet); }
+.durations summary, .ratio summary { cursor: pointer; }
+.durations form, .ratio form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.durations label, .ratio label { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.durations input, .ratio input { width: 96px; height: 44px; text-align: right; }
 .dups { display: flex; flex-direction: column; gap: 8px; }
 .dup-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
 .dup-row button { min-height: 44px; padding: 0 12px; font-size: 14px; }
+.asks { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--ink); border-radius: 12px; padding: 12px; }
+.ask-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 15px; }
+.ask-row span { flex: 1 1 100%; }
+.ask-row button { min-height: 44px; padding: 0 16px; font-size: 15px; }
+
+/* hidden 属性は、display を持つ部品でも必ず隠す */
+[hidden] { display: none !important; }
+
+/* 捕獲（参加者の画面の下。親指で押す） */
+.slot { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.capture { display: flex; flex-direction: column; gap: 10px; }
+.hold {
+  position: relative; overflow: hidden; min-height: 116px; border-radius: 16px; border: 2px solid var(--ink);
+  background: transparent; color: var(--ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+}
+.hold b { position: relative; font-size: 30px; font-weight: 900; }
+.hold span { position: relative; font-size: 14px; color: var(--quiet); }
+.hold-fill { position: absolute; inset: 0; background: var(--ink); opacity: 0.2; transform: scaleX(0); transform-origin: left; }
+.is-pressing .hold-fill { transform: scaleX(1); transition: transform 0.5s linear; }
+.is-holding .hold { background: var(--ink); color: var(--bg); }
+.is-holding .hold span { color: var(--bg); }
+.is-holding .hold-fill { opacity: 0; }
+/* 鬼のマイク：オンになるまで出し続ける。白地に黒字で、画面でいちばん強いもの（押せないときは枠だけ） */
+.cap-mic {
+  min-height: 76px; border-radius: 16px; border: 2px solid var(--ink); background: var(--ink); color: var(--bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 12px 16px; text-align: center;
+}
+.cap-mic b { font-size: 22px; font-weight: 900; line-height: 1.3; }
+.cap-mic span { font-size: 12px; line-height: 1.5; opacity: 0.75; }
+.cap-mic:disabled { background: transparent; color: var(--ink); }
+@media (prefers-reduced-motion: no-preference) {
+  .cap-mic:not(:disabled) { animation: cap-mic-pulse 1.6s ease-in-out infinite; }
+}
+@keyframes cap-mic-pulse { 50% { box-shadow: 0 0 0 6px rgba(242, 242, 242, 0.25); } }
+.cap-cands, .cap-lock, .cap-prep { border: 1px solid var(--line-strong); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.cap-title { margin: 0; font-size: 16px; font-weight: 900; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.cap-title span { font-size: 12px; color: var(--quiet); font-weight: 500; }
+.cap-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.cap-cand { min-height: 76px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 12px; border: 1px solid var(--ink); }
+.cap-cand b { font-size: 20px; font-weight: 900; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-cand span { font-size: 13px; color: var(--quiet); }
+.cap-cand i { font-style: normal; font-size: 11px; border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 8px; color: var(--quiet); }
+.cap-cand.is-sent { background: var(--ink); color: var(--bg); }
+.cap-wait { margin: 0; font-size: 13px; line-height: 1.6; color: var(--quiet); }
+.cap-row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 700; }
+.cap-status { font-size: 12px; color: var(--quiet); text-align: right; }
+.cap-lock { border-color: var(--ink); }
+.cap-lock b { font-size: 20px; font-weight: 900; }
+.cap-lock span { font-size: 13px; color: var(--quiet); }
+.cap-prep { flex-direction: row; align-items: center; justify-content: space-between; font-size: 13px; line-height: 1.6; color: var(--quiet); }
+.sheet { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72); display: flex; align-items: flex-end; justify-content: center; z-index: 10; }
+.sheet-body {
+  width: 100%; max-width: 430px; max-height: 80dvh; overflow-y: auto; background: var(--bg); border-top: 1px solid var(--line-strong);
+  border-radius: 16px 16px 0 0; padding: 20px 20px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px;
+}
+.toast {
+  position: fixed; left: 0; right: 0; top: calc(16px + env(safe-area-inset-top)); margin: 0 auto; z-index: 11;
+  width: fit-content; max-width: calc(100vw - 32px); text-align: center;
+  background: var(--ink); color: var(--bg); padding: 12px 18px; border-radius: 12px; font-weight: 900; font-size: 16px;
+}
+.badge[data-role="caught"] { border: 1px dashed var(--ink); color: var(--quiet); }
+
+/* 主催者の捕獲 */
+.cap-host { border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.cap-host-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.cap-host-head b { font-size: 16px; font-weight: 900; }
+.cap-host-head span { font-size: 13px; color: var(--quiet); }
+.cap-host-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.cap-host-grid button { min-height: 40px; padding: 0 10px; font-size: 13px; border-radius: 999px; }
+.cap-host-grid button[data-state="caught"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.cap-host-grid button[data-state="open"] { border-style: dashed; border-color: var(--ink); }
+
+/* 音の試し（/lab） */
+.lab { gap: 14px; padding-top: calc(40px + env(safe-area-inset-top)); }
+.lab h1 { margin: 0; font-size: 32px; font-weight: 900; }
+.lab .lead { margin: 0; font-size: 14px; line-height: 1.8; color: var(--quiet); }
+.lab-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.lab-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 700; color: var(--quiet); }
+.lab-field select, .lab-field input[type="text"] {
+  height: 48px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--field); color: var(--ink); font-size: 16px; font-family: inherit;
+}
+.lab-field input[type="range"] { height: 32px; padding: 0; border: none; background: transparent; accent-color: var(--ink); }
+.lab-heard { border: 1px solid var(--line-strong); border-radius: 12px; padding: 12px; font-size: 16px; font-weight: 700; line-height: 1.8; font-variant-numeric: tabular-nums; }
+/* マイクの様子（聞く側）：帯ごとの針。縦の線は最近の長押しの間のいちばん強い所 */
+.lab-probe { display: grid; gap: 8px; border: 1px solid var(--line-strong); border-radius: 12px; padding: 12px; font-size: 13px; }
+.lab-kv { display: flex; justify-content: space-between; gap: 12px; color: var(--quiet); }
+.lab-kv b { color: var(--ink); text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.lab-band { display: grid; grid-template-columns: 6.5em 1fr 4em; align-items: center; gap: 8px; font-weight: 700; }
+.lab-band > span:first-child { color: var(--quiet); }
+.lab-band b { text-align: right; font-variant-numeric: tabular-nums; }
+.lab-band .bar { position: relative; height: 14px; border-radius: 7px; background: var(--field); border: 1px solid var(--line-strong); overflow: hidden; }
+.lab-band .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--ink); }
+.lab-band .max { position: absolute; top: -2px; bottom: -2px; width: 3px; margin-left: -1.5px; background: var(--ink); opacity: .55; }
+.lab-warn { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--ink); color: var(--bg); font-weight: 700; line-height: 1.6; }
+.lab-hint { margin: 0; color: var(--quiet); line-height: 1.7; }
+
+/* 夜の最後（SEE YOU AGAIN）：役の札・段階バー・人数・接続の表示を隠し、言葉だけを画面の真ん中に */
+.phone.is-ended { justify-content: center; }
+.phone.is-ended .top,
+.phone.is-ended .offline,
+.phone.is-ended .badge-row,
+.phone.is-ended .label,
+.phone.is-ended .message,
+.phone.is-ended .spacer,
+.phone.is-ended .stage,
+.phone.is-ended .slot,
+.phone.is-ended .steps,
+.phone.is-ended .foot { display: none; }
+.phone.is-ended .big { margin-top: 0; text-align: center; letter-spacing: 2px; }
+/* 走ると光る（参加者の画面の真ん中。時計と長押しの間の、空いている高さを全部使う） */
+.stage { flex: 1 1 auto; min-height: 24px; display: flex; flex-direction: column; justify-content: flex-end; gap: 10px; margin-bottom: 12px; }
+.label-inline, .lit-chip { display: none; }
+.phone.is-glow { height: 100dvh; min-height: 0; }
+.phone.is-glow .badge-row { margin-top: 12px; min-height: 30px; gap: 12px; }
+.phone.is-glow .badge { padding: 2px 14px; font-size: 16px; }
+.phone.is-glow .label-inline { display: block; font-size: 16px; font-weight: 700; color: var(--quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.phone.is-glow .label { display: none; }
+.phone.is-glow .big { margin-top: 4px; }
+.phone.is-glow .message { margin-top: 2px; font-size: 16px; line-height: 1.5; }
+.phone.is-glow .stage { flex: 1 1 0; min-height: 0; margin: 8px 0 10px; overflow: hidden; gap: 8px; }
+.phone.is-glow .hold { min-height: 84px; }
+/* 光っている間：役の札の横に「光っている」。時計の下の一言は隠す（走っている間は読まない） */
+.phone.is-lit .label-inline { display: none; }
+.phone.is-lit .lit-chip {
+  display: inline-flex; align-items: center; border-radius: 999px; background: var(--ink); color: var(--bg);
+  padding: 2px 14px; font-size: 18px; font-weight: 900; letter-spacing: 1px; white-space: nowrap;
+}
+.phone.is-lit .message { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .phone.is-lit .lit-chip { animation: glow-me-pulse 1.2s ease-in-out infinite; }
+}
+.phone.is-glow .foot { margin-top: 10px; padding-top: 8px; }
+.glow { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.glow[data-glow="live"] { flex: 1 1 0; }
+.glow-ask {
+  min-height: 76px; border-radius: 16px; border: 2px solid var(--ink); background: transparent; color: var(--ink);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 12px 16px; text-align: center;
+}
+.glow-ask b { font-size: 20px; font-weight: 900; line-height: 1.3; }
+.glow-ask span { font-size: 16px; line-height: 1.5; color: var(--quiet); font-weight: 500; }
+.glow[data-glow="live"] .glow-ask { min-height: 52px; padding: 8px 12px; }
+.glow[data-glow="live"] .glow-ask b { font-size: 17px; }
+.glow[data-glow="live"] .glow-ask span { display: none; }
+.glow-note { margin: 0; font-size: 16px; line-height: 1.6; color: var(--quiet); }
+@keyframes glow-me-pulse { 50% { box-shadow: 0 0 0 3px rgba(242, 242, 242, 0.25), 0 0 14px 0 rgba(242, 242, 242, 0.35); } }
+.glow-board { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.glow-radar { position: relative; flex: 1 1 0; min-height: 0; display: flex; justify-content: center; container-type: size; }
+.radar { width: 100%; height: 100%; max-height: 360px; overflow: visible; }
+@container (max-height: 88px) { .radar { display: none; } }
+.glow-radar-msg {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(78%, 280px);
+  margin: 0; text-align: center; font-size: 16px; line-height: 1.5; color: var(--quiet);
+}
+.radar-bg { fill: #111; stroke: var(--line-strong); stroke-width: 1; }
+.radar-rings circle { fill: none; stroke: var(--line); stroke-width: 1; }
+.radar-ring-label { display: none; fill: #7a7a7a; font-size: 12px; font-family: inherit; }
+.radar.has-ring-labels .radar-ring-label { display: inline; }
+.radar-north { fill: var(--quiet); font-size: var(--radar-font, 12px); font-weight: 900; font-family: inherit; }
+.radar.is-north-up .radar-north { fill: var(--ink); }
+.radar-me-dot { fill: var(--bg); stroke: var(--ink); stroke-width: 1.6; }
+.radar-me-arrow { fill: var(--quiet); }
+.radar-me-halo { fill: var(--ink); opacity: 0; }
+.radar.is-lit .radar-me-dot { fill: var(--ink); }
+.radar.is-lit .radar-me-halo { opacity: 0.6; }
+.radar-trail { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.radar-halo { fill: var(--ink); opacity: 0.55; }
+.radar-dot { fill: var(--ink); }
+.radar-name { fill: var(--ink); font-size: var(--radar-font, 12px); font-weight: 900; font-family: inherit; paint-order: stroke; stroke: #111; stroke-width: calc(var(--radar-font, 12px) * 0.28); }
+.radar-ping { fill: none; stroke: var(--ink); stroke-width: 1.5; transform-box: fill-box; transform-origin: center; }
+@media (prefers-reduced-motion: no-preference) {
+  .radar-ping { animation: radar-ping 0.9s ease-out infinite; }
+}
+@keyframes radar-ping { 0% { transform: scale(1); opacity: 0.9; } 100% { transform: scale(3.2); opacity: 0; } }
+.glow-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; flex: none; }
+.glow-list li { display: grid; grid-template-columns: 24px auto 1fr; align-items: center; gap: 8px; font-size: 17px; line-height: 1.4; }
+.glow-list b { font-weight: 900; max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.glow-list span { font-size: 16px; color: var(--quiet); white-space: nowrap; }
+.glow-list em { font-style: normal; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.glow-list .glow-dir { width: 24px; height: 24px; }
+.glow-list .glow-dir path { fill: var(--ink); }
+.glow-list .glow-more, .glow-list .glow-none { display: block; font-size: 16px; color: var(--quiet); }
+/* 主催者の画面の光の地図（高さの決まった枠の中ではないので、地図の高さを決めておく） */
+.glow-host .glow-board { flex: none; }
+.glow-host .glow-radar { flex: none; height: min(82vw, 340px); }
+/* 走りの試し（/lab?k=run） */
+.lab .lead a { color: var(--ink); margin-left: 6px; white-space: nowrap; }
+.lab-lamp { border: 2px solid var(--line-strong); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 4px; text-align: center; }
+.lab-lamp b { font-size: 22px; font-weight: 900; }
+.lab-lamp span { font-size: 12px; color: var(--quiet); min-height: 1.5em; }
+.lab-lamp.is-lit { background: var(--ink); color: var(--bg); border-color: var(--ink); box-shadow: 0 0 28px 6px rgba(242, 242, 242, 0.35); }
+.lab-lamp.is-lit span { color: var(--bg); }
+.lab-trace { width: 100%; height: 120px; border: 1px solid var(--line-strong); border-radius: 12px; background: #111; }
+.glow-list li.has-more { grid-template-columns: 24px auto 1fr auto; }
