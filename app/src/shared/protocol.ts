@@ -31,6 +31,8 @@ export interface GameView {
   counts: { oni: number; runner: number; total: number; caught: number };
   result: Winner | null;
   durations: number[];
+  /** 今の夜を始めた時刻（「新しい夜を始める」を押した時刻）。古いサーバーは送らない */
+  nightAt?: number;
   /** 配役の比率（鬼：逃走者）。古いサーバーからは来ない */
   ratio?: { oni: number; runner: number };
 }
@@ -38,6 +40,7 @@ export interface GameView {
 /** 本人だけに送る部分 */
 export interface MeView {
   pid: string;
+  /** 名簿に入った順。画面には出さない（記録と並び順だけに使う） */
   num: number;
   name: string;
   /** 今の配役での役。途中で来た人・外された人は null */
@@ -85,9 +88,17 @@ export interface HostSummary {
   synced: number;
   /** 今の配役の後に来た人（次の配役から入る） */
   waiting: number;
-  dupNames: { name: string; people: { pid: string; num: number }[] }[];
+  /** 同じ名前の人（名簿で名前を1人1つにする前に入った人だけ。ふつうは空） */
+  dupNames: { name: string; people: { pid: string; num: number; joinedAt: number }[] }[];
   /** 配役前は null */
   capture: HostCapture | null;
+  /**
+   * 「前の◯◯に戻りたい」と待っている人（合い鍵のないスマホで、名簿にある名前を入れて「そう」を押した）。
+   * rid＝その頼みの印、name＝戻りたい先の名前、here＝その人がいま別のスマホでつながっている
+   */
+  reclaims: { rid: string; name: string; at: number; here: boolean }[];
+  /** 名簿の人数（今夜いない人も含む） */
+  registry: number;
 }
 
 export type HostOp =
@@ -101,8 +112,10 @@ export type HostOp =
   /** 鬼：逃走者の比率を変える（配役の前だけ） */
   | 'ratio'
   | 'remove'
-  /** 部屋を空にする：参加者を全員外し、配役前に戻す（リハーサルのあと用） */
+  /** 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。名簿は残る */
   | 'clear'
+  /** 「前の◯◯に戻りたい」人をつなぐ（ok=true）か断る（ok=false）。rid＝頼みの印 */
+  | 'link'
   /** 主催者が手で「捕まった」にする（pid＝逃走者、by＝鬼。by は省略できる） */
   | 'capture'
   /** 主催者が捕獲を取り消す（pid＝逃走者） */
@@ -113,13 +126,32 @@ export type HostOp =
   | 'end';
 
 export type ClientMsg =
+  /** 新しく名簿に入って、今夜に入る（名前が名簿にあれば taken が返る） */
   | { t: 'join'; name: string }
+  /** スマホに残っている合い鍵で戻る。今夜に入っていれば状態が、名簿にだけいれば known が返る */
   | { t: 'resume'; pid: string; key: string }
+  /** 名簿にいる人が、今夜に入る（known を受け取ったあと、名前のボタンを押した） */
+  | { t: 'enter' }
+  /** 合い鍵のないスマホで「前の◯◯に戻る」。主催者がつなぐまで待つ */
+  | { t: 'reclaim'; name: string }
+  /** 「前の◯◯に戻る」をやめる */
+  | { t: 'reclaim-stop' }
   | { t: 'host'; token: string }
   | { t: 'ping'; id: number; a: number }
   | { t: 'ack'; assignId: number }
   | { t: 'sync'; err: number }
-  | { t: 'cmd'; op: HostOp; cv: number; winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string }
+  | {
+      t: 'cmd';
+      op: HostOp;
+      cv: number;
+      winner?: Winner;
+      durations?: number[];
+      ratio?: { oni: number; runner: number };
+      pid?: string;
+      by?: string;
+      rid?: string;
+      ok?: boolean;
+    }
   /**
    * 長押し。on=true は押し始め（HOLD_MIN_MS 押し続けたら送る）、false は離した。
    * at はその瞬間のサーバー時刻の見積もり（押し始めは、指を置いた瞬間）。
@@ -154,6 +186,12 @@ export interface RosterEntry {
 
 export type ServerMsg =
   | { t: 'welcome'; pid: string; key: string; num: number; name: string }
+  /** この合い鍵の人は名簿にいるが、今夜にはまだ入っていない（名前のボタンを出す） */
+  | { t: 'known'; name: string }
+  /** その名前は名簿のほかの人のもの（「前の◯◯？」と聞く） */
+  | { t: 'taken'; name: string }
+  /** 「前の◯◯に戻る」の行方。waiting＝主催者がつなぐのを待っている、denied＝主催者が断った */
+  | { t: 'reclaim'; status: 'waiting' | 'denied'; name: string }
   | { t: 'unknown' }
   | { t: 'denied' }
   | { t: 'snap'; now: number; game: GameView; me?: MeView; host?: HostSummary }

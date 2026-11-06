@@ -202,3 +202,10 @@
 .join button[type="submit"] { background: var(--tsuki); color: var(--yami); font-size: max(var(--min), 18px); min-height: 60px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2; }
 .join label .ja, .join label .en { display: inline; }
 .join label .en { margin-left: 8px; }
+/* 名簿：名前のボタン・前の自分に戻る・待つ（2つの言葉を縦に積む） */
+.join section button { min-height: 60px; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2; font-size: max(var(--min), 18px); }
+.join section button:not(.me):not(.primary):not([type="submit"]) { background: transparent; color: var(--tsuki); border: 1px solid #2b2e38; }
+.join .primary { background: var(--tsuki); color: var(--yami); border: none; }
+.join .me { background: var(--tsuki); color: var(--yami); min-height: 112px; font-size: 34px; }
+.join .me:disabled { background: transparent; color: var(--tsuki-muted); border: 1px solid #2b2e38; }
+.join button.quiet { color: var(--tsuki-muted); font-size: max(var(--min), 14px); display: flex; flex-direction: column; align-items: center; gap: 2px; }

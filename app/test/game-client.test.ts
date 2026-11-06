@@ -74,10 +74,12 @@ function memoryStore(): KeyValueStore {
 
 let sockets: FakeSocket[];
 let client: GameClient;
+let store: KeyValueStore;
 
 beforeEach(() => {
   vi.useFakeTimers();
   sockets = [];
+  store = memoryStore();
   client = new GameClient(
     {
       url: 'ws://test/api/game/t/ws',
@@ -88,13 +90,168 @@ beforeEach(() => {
         return s;
       },
       now: () => Date.now(),
-      storage: memoryStore(),
+      storage: store,
       random: () => 0,
     },
     { kind: 'player' },
   );
   client.start();
   sockets[0].open();
+});
+
+/** 送ったメッセージ（時計合わせは除く） */
+function sentOf(s: FakeSocket): { t: string; [k: string]: unknown }[] {
+  return s.sent.map((raw) => JSON.parse(raw) as { t: string }).filter((m) => m.t !== 'ping' && m.t !== 'sync' && m.t !== 'hold');
+}
+
+/** スマホが落ちて、新しい接続を張り直すまで進める */
+function reconnect(): FakeSocket {
+  const before = sockets.length;
+  sockets[sockets.length - 1].close();
+  sockets[sockets.length - 1].onclose?.({});
+  vi.advanceTimersByTime(1_000);
+  const s = sockets[sockets.length - 1];
+  expect(sockets.length).toBe(before + 1);
+  s.open();
+  return s;
+}
+
+describe('名簿（一度登録したら次も使える）', () => {
+  it('入ったら合い鍵を覚え、新しい夜（known）でも忘れない。名前のボタンで今夜に入る', () => {
+    const s = sockets[0];
+    expect(client.state.phase).toBe('need-name');
+    client.join('ゆう');
+    s.receive({ t: 'welcome', pid: 'p1', key: 'k1', num: 1, name: 'ゆう' });
+    s.receive(snap('lobby'));
+    expect(client.state.phase).toBe('ready');
+    expect(store.get('urafess:t:me')).toContain('"k1"');
+
+    // 主催者が新しい夜を始めた
+    s.receive({ t: 'known', name: 'ゆう' });
+    expect(client.state.phase).toBe('known');
+    expect(client.state.identity?.pid).toBe('p1');
+    expect(store.get('urafess:t:me')).toContain('"k1"');
+
+    client.enter();
+    expect(client.state.phase).toBe('joining');
+    expect(sentOf(s).at(-1)).toEqual({ t: 'enter' });
+    s.receive({ t: 'welcome', pid: 'p1', key: 'k1', num: 1, name: 'ゆう' });
+    s.receive(snap('lobby'));
+    expect(client.state.phase).toBe('ready');
+  });
+
+  it('開き直したら合い鍵で戻り、名簿にだけいれば known になる（自動では入らない）', () => {
+    store.set('urafess:t:me', JSON.stringify({ pid: 'p1', key: 'k1', num: 1, name: 'ゆう' }));
+    client.stop();
+    client = new GameClient(
+      { url: 'ws://t', gameId: 't', createSocket: () => { const x = new FakeSocket(); sockets.push(x); return x; }, now: () => Date.now(), storage: store, random: () => 0 },
+      { kind: 'player' },
+    );
+    client.start();
+    const s = sockets[sockets.length - 1];
+    s.open();
+    expect(sentOf(s)[0]).toEqual({ t: 'resume', pid: 'p1', key: 'k1' });
+    s.receive({ t: 'known', name: 'ゆう' });
+    s.receive({ t: 'snap', now: Date.now(), game: game('lobby') });
+    expect(client.state.phase).toBe('known');
+    expect(sentOf(s).some((m) => m.t === 'enter')).toBe(false);
+  });
+
+  it('名前のボタンを押した瞬間に切れても、つなぎ直したら resume の次に enter を送り直す', () => {
+    const s = sockets[0];
+    client.join('ゆう');
+    s.receive({ t: 'welcome', pid: 'p1', key: 'k1', num: 1, name: 'ゆう' });
+    s.receive({ t: 'known', name: 'ゆう' });
+    s.close();
+    s.onclose?.({});
+    client.enter();
+    expect(client.state.phase).toBe('joining');
+    vi.advanceTimersByTime(1_000);
+    const s2 = sockets[sockets.length - 1];
+    s2.open();
+    const msgs = sentOf(s2);
+    expect(msgs[0]).toEqual({ t: 'resume', pid: 'p1', key: 'k1' });
+    expect(msgs[1]).toEqual({ t: 'enter' });
+    // サーバーの known が先に届いても、押したあとなら「入っている」のまま待つ
+    s2.receive({ t: 'known', name: 'ゆう' });
+    expect(client.state.phase).toBe('joining');
+    s2.receive({ t: 'welcome', pid: 'p1', key: 'k1', num: 1, name: 'ゆう' });
+    s2.receive(snap('lobby'));
+    expect(client.state.phase).toBe('ready');
+  });
+
+  it('名前が名簿のほかの人のもの（taken）→ 前の自分に戻るを頼む。切れたら頼み直し、断られたら名前の入力へ', () => {
+    const s = sockets[0];
+    client.join('ユウ');
+    s.receive({ t: 'taken', name: 'ゆう' });
+    expect(client.state.phase).toBe('taken');
+    expect(client.state.takenName).toBe('ゆう');
+
+    client.reclaim();
+    expect(client.state.phase).toBe('reclaiming');
+    expect(sentOf(s).at(-1)).toEqual({ t: 'reclaim', name: 'ゆう' });
+    s.receive({ t: 'reclaim', status: 'waiting', name: 'ゆう' });
+    expect(client.state.phase).toBe('reclaiming');
+
+    const s2 = reconnect();
+    expect(sentOf(s2)[0]).toEqual({ t: 'reclaim', name: 'ゆう' });
+
+    s2.receive({ t: 'reclaim', status: 'denied', name: 'ゆう' });
+    expect(client.state.phase).toBe('need-name');
+    expect(client.state.joinError).toContain('ゆう');
+    expect(client.state.identity).toBeNull();
+  });
+
+  it('主催者がつないだら、前の自分の合い鍵を受け取って覚える', () => {
+    const s = sockets[0];
+    client.join('ゆう');
+    s.receive({ t: 'taken', name: 'ゆう' });
+    client.reclaim();
+    s.receive({ t: 'welcome', pid: 'old', key: 'oldkey', num: 7, name: 'ゆう' });
+    s.receive(snap('lobby'));
+    expect(client.state.phase).toBe('ready');
+    expect(client.state.identity?.pid).toBe('old');
+    expect(store.get('urafess:t:me')).toContain('"oldkey"');
+  });
+
+  it('待つのをやめると reclaim-stop を送って名前の入力へ戻る。taken のまま切れても taken のまま', () => {
+    const s = sockets[0];
+    client.join('ゆう');
+    s.receive({ t: 'taken', name: 'ゆう' });
+    const s2 = reconnect();
+    expect(client.state.phase).toBe('taken');
+    expect(sentOf(s2).some((m) => m.t === 'join' || m.t === 'reclaim')).toBe(false);
+    client.reclaim();
+    client.backToName(null);
+    expect(sentOf(s2).at(-1)).toEqual({ t: 'reclaim-stop' });
+    expect(client.state.phase).toBe('need-name');
+  });
+
+  it('別の人として入る：このスマホが覚えている人を忘れる', () => {
+    const s = sockets[0];
+    client.join('ゆう');
+    s.receive({ t: 'welcome', pid: 'p1', key: 'k1', num: 1, name: 'ゆう' });
+    s.receive({ t: 'known', name: 'ゆう' });
+    client.forget();
+    expect(client.state.phase).toBe('need-name');
+    expect(client.state.identity).toBeNull();
+    expect(store.get('urafess:t:me')).toBeNull();
+  });
+
+  it('名簿にいる人（known）は、古い段階が残っていても試合中の合図を見張らない', () => {
+    const s = sockets[0];
+    client.join('ゆう');
+    s.receive({ t: 'welcome', pid: 'p1', key: 'k1', num: 1, name: 'ゆう' });
+    s.receive(snap('assigned'));
+    s.receive({ t: 'hb', s: Date.now() });
+    s.receive({ t: 'known', name: 'ゆう' });
+    vi.advanceTimersByTime(1_500);
+    s.answerPings();
+    vi.advanceTimersByTime(6_000);
+    s.answerPings();
+    vi.advanceTimersByTime(4_500);
+    expect(s.closed).toBe(false);
+  });
 });
 
 afterEach(() => {

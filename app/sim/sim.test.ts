@@ -346,22 +346,23 @@ describe(`機械テスト（仮想参加者 ${N}人）`, () => {
     B.start();
     await waitFor('主催者2人がつながる', () => A.state.phase === 'ready' && B.state.phase === 'ready');
 
-    // --- 入室：N人と、同じ名前の1人 ---
+    // --- 入室：N人 ---
     for (let i = 0; i < N; i++) bots.push(makeBot(`bot${i}`));
-    const dup = makeBot('bot0');
-    const everyone = [...bots, dup];
-    for (const [k, b] of everyone.entries()) {
+    for (const [k, b] of bots.entries()) {
       b.client.join(b.name);
       b.client.start();
       if (k % 25 === 24) await sleep(100);
     }
-    await waitFor('全員が入室', () => everyone.every((b) => b.client.state.identity) && A.state.host?.total === N + 1, 90_000);
-    expect(A.state.host!.dupNames).toHaveLength(1);
-    reports.push(`入室：${N + 1}人（同じ名前の1組を主催者画面が検出）`);
+    await waitFor('全員が入室', () => bots.every((b) => b.client.state.identity) && A.state.host?.total === N, 90_000);
 
-    // --- 同じ名前の片方を外す ---
-    A.command('remove', { pid: dup.client.state.identity!.pid });
-    await waitFor('同じ名前の片方を外す', () => A.state.host?.total === N && dup.client.state.me?.removed === true);
+    // --- 名簿にある名前（大文字で打った BOT0）は入れず、「前の bot0？」と聞く ---
+    const dup = makeBot('BOT0');
+    dup.client.join(dup.name);
+    dup.client.start();
+    await waitFor('同じ名前は taken', () => dup.client.state.phase === 'taken' && dup.client.state.takenName === 'bot0');
+    expect(A.state.host!.total).toBe(N);
+    expect(A.state.host!.dupNames).toHaveLength(0);
+    reports.push(`入室：${N}人（名簿にある名前を別のスマホが打つと「前の bot0？」と聞かれ、入らない）`);
     dup.client.stop();
 
     // --- 時間をテスト用に短くする ---
