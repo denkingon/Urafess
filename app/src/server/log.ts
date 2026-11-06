@@ -33,6 +33,8 @@ const KIND_NAME: Record<string, string> = {
   result: '結果',
   end: '夜を終える',
   durations: '時間の設定',
+  ratio: '割合の設定',
+  mic: '鬼のマイクの聞き方',
   remove: '外す',
   clear: '部屋を空にする',
   hold: '長押し',

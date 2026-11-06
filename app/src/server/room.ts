@@ -19,6 +19,7 @@ import {
   CLAIM_OPEN_MS,
   CLAIM_PAIR_WINDOW_MS,
   DEFAULT_DURATIONS_MS,
+  DEFAULT_MIC_MODE,
   DEFAULT_RATIO,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
@@ -27,10 +28,12 @@ import {
   HOLD_MAX_MS,
   HEARD_SLACK_MS,
   HOLD_UNKNOWN_END_MS,
+  isMicMode,
   isValidRatio,
   PHASES,
   ROLES,
   SYNC_OK_MS,
+  type MicMode,
   type Ratio,
   type RoleId,
 } from '../shared/rules';
@@ -59,6 +62,8 @@ interface GameState {
   durations: number[];
   /** 配役の比率の重み。古い保存データには無いので load で補う */
   ratio: Ratio;
+  /** 鬼のマイクの聞き方（主催者が切り替える）。古い保存データには無いので load で補う */
+  micMode: MicMode;
   /** 次に名簿に入る人の番号（名簿に入った順。画面には出さない。部屋を空にしても戻さない） */
   nextNum: number;
   counts: { oni: number; runner: number };
@@ -328,6 +333,7 @@ export class GameRoom extends DurableObject<Env> {
           result: null,
           durations: [...DEFAULT_DURATIONS_MS],
           ratio: { ...DEFAULT_RATIO },
+          micMode: DEFAULT_MIC_MODE,
           nextNum: 1,
           counts: { oni: 0, runner: 0 },
           night: 1,
@@ -337,6 +343,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!Number.isInteger(this.game.night) || this.game.night < 1) this.game.night = 1;
     if (!Number.isFinite(this.game.nightAt)) this.game.nightAt = Date.now();
     if (!isValidRatio(this.game.ratio)) this.game.ratio = { ...DEFAULT_RATIO };
+    if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -1114,7 +1121,7 @@ export class GameRoom extends DurableObject<Env> {
    * 切断で先に閉じてしまった長押しの「離した」が、つなぎ直したあとに届いた。
    * 早く離していたなら縮める（延ばしはしない：長い切断を「ずっと押していた」にしない）。逃走者なら、選ばなくていいかをもう一度見る
    */
-  private lateRelease(pid: string, list: Hold[], at: number, start: number): void {
+  private lateRelease(pid: string, list: HoldRec[], at: number, start: number): void {
     const h = list.find((x) => x.end !== null && x.assignId === this.game.assignId && Math.abs(x.start - start) <= HOLD_SAME_MS);
     if (!h) return;
     const end = Math.max(h.start, at);
@@ -1145,7 +1152,7 @@ export class GameRoom extends DurableObject<Env> {
     ev.heardAt = now;
     this.saveEvidence(target.pid, p.pid, ev);
     const open = this.liveClaim(target.pid, now) !== null;
-    this.log('heard', { p, other: target, at: now, data: { code: rawCode, open } });
+    this.log('heard', { p, other: target, at: now, data: { code: rawCode, open, mic: this.game.micMode } });
     if (open) this.sendSnapTo([target.pid]);
     this.notify(p.pid, 'heard', target);
     // 逃走者が離した直後に届いた知らせ（回線の遅れ）：その長押しの音として、決まれば記録する
@@ -1277,7 +1284,8 @@ export class GameRoom extends DurableObject<Env> {
       );
       this.sql.exec(`DELETE FROM claims WHERE pid = ?`, runner.pid);
       this.sql.exec(`DELETE FROM evidence WHERE runner = ?`, runner.pid);
-      this.log('capture', { p: oni, other: runner, via, at, data });
+      // どちらの聞き方のときの記録か（あとで比べるため）
+      this.log('capture', { p: oni, other: runner, via, at, data: { ...data, mic: this.game.micMode } });
     });
     runner.caughtAssign = assignId;
     runner.caughtBy = oni?.pid ?? null;
@@ -1549,6 +1557,14 @@ export class GameRoom extends DurableObject<Env> {
         this.log('ratio', { at: now, data: { ratio: r } });
         break;
       }
+      case 'mic': {
+        // いつでも切り替えられる（どちらがいいか試すため）。試合中に変えても、そのときから全員のスマホに効く
+        if (!isMicMode(msg.mic)) return this.reject(ws, att, op, 'bad-input');
+        if (msg.mic === g.micMode) break;
+        this.commit({ micMode: msg.mic });
+        this.log('mic', { at: now, data: { mic: msg.mic } });
+        break;
+      }
       case 'clear': {
         // 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。
         // 名簿・時間の設定・名簿の番号は残す。試合中はできない
@@ -1634,6 +1650,7 @@ export class GameRoom extends DurableObject<Env> {
       durations: g.durations,
       nightAt: g.nightAt,
       ratio: g.ratio,
+      micMode: g.micMode,
     };
   }
 

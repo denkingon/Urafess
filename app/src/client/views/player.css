@@ -115,11 +115,15 @@
 .player .is-holding .hold span { color: inherit; }
 .player .hold .waves { display: none; width: 42px; height: 60px; }
 .player .is-holding .hold .waves { display: block; }
+.player .capture.is-passive[data-mode="oni"]:not(.is-holding) .hold .waves { display: block; opacity: .5; }
 @media (prefers-reduced-motion: no-preference) {
   .player .capture[data-mode="runner"].is-holding .waves path { animation: p-wave-out 1.2s ease-out infinite; }
   .player .capture[data-mode="oni"].is-holding .waves path { animation: p-wave-in 1.2s ease-out infinite; }
   .player .is-holding .waves path:nth-child(2) { animation-delay: .2s; }
   .player .is-holding .waves path:nth-child(3) { animation-delay: .4s; }
+  .player .capture.is-passive[data-mode="oni"]:not(.is-holding) .waves path { animation: p-wave-in 2.4s ease-out infinite; }
+  .player .capture.is-passive[data-mode="oni"]:not(.is-holding) .waves path:nth-child(2) { animation-delay: .4s; }
+  .player .capture.is-passive[data-mode="oni"]:not(.is-holding) .waves path:nth-child(3) { animation-delay: .8s; }
 }
 @keyframes p-wave-out { 0% { opacity: 0; transform: translateX(-8px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateX(10px); } }
 @keyframes p-wave-in { 0% { opacity: 0; transform: translateX(10px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateX(-8px); } }

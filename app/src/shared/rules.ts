@@ -87,6 +87,15 @@ export const HOLD_LATCH_MS = 3_000;
 /** 逃走者の長押しが終わったあと、鬼のスマホが拾った知らせを「その長押しの間の音」として待つ長さ（回線の遅れの分） */
 export const HEARD_SLACK_MS = 2_000;
 
+/**
+ * 鬼のマイクの聞き方。主催者が切り替える（どちらがいいか、本番で比べるため。記録にも残す）
+ * - always：マイクをオンにしたら、ゲームの段階の間ずっと聞く（鬼は押さなくていい）
+ * - hold：「捕まえた」を押している間だけ聞く（前の版と同じ）
+ */
+export type MicMode = 'always' | 'hold';
+export const DEFAULT_MIC_MODE: MicMode = 'always';
+export const isMicMode = (m: unknown): m is MicMode => m === 'always' || m === 'hold';
+
 /** 長押しの長さの上限。押しっぱなしのまま「離した」が届かない長押しも、ここで離したとみなす */
 export const HOLD_MAX_MS = 30_000;
 

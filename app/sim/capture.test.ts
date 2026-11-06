@@ -288,14 +288,15 @@ describe('捕獲の記録（機械テスト）', () => {
     reports.push('同時に長押し：重なった鬼が1人だけなので、逃走者は選ばずに、離した時点で記録。鬼に「捕まえた」、全員の人数が1に');
 
     // 2. 音を拾った：鬼は押していない（ゲームの間ずっと聞いている）。逃走者の長押しの間に3桁を拾い、離した時点で記録
+    // 「ロックオン」は、逃走者が離して記録された瞬間に「捕まえた」へ置き換わるので、押している間から見ておく
     await Promise.all([
       hold(Y, 1_200),
       (async () => {
         await sleep(800);
         B.client.heard(Y.client.state.me!.code!);
       })(),
+      waitFor('B に「ロックオン」', () => B.client.state.notice?.kind === 'heard' && B.client.state.notice.other?.num === numOf(Y)),
     ]);
-    await waitFor('B に「ロックオン」', () => B.client.state.notice?.kind === 'heard' && B.client.state.notice.other?.num === numOf(Y));
     await expectCaught(Y, B, 'sound', '音（鬼は押さない・選ばない）');
     reports.push('音：鬼は押さずに聞いているだけ。逃走者の長押しの間に3桁を拾うと、鬼に「ロックオン」、逃走者が離した時点で「音」で記録');
 
@@ -423,6 +424,26 @@ describe('捕獲の記録（機械テスト）', () => {
     await waitFor('全員の人数が10', () => bots.every((b) => b.client.state.game?.counts.caught === 10));
     reports.push('主催者：取り消すと全員の人数が戻り、手で「捕まった」にすると主催者の記録になる');
 
+    // 10b. 鬼のマイクの聞き方：既定は「ずっと聞く」。主催者が試合中に「押している間だけ」に切り替えると全員に届き、記録にも残る
+    expect(bots.every((b) => (b.client.state.game?.micMode ?? 'always') === 'always')).toBe(true);
+    H.command('mic', { mic: 'hold' });
+    await waitFor('全員に「押している間だけ」', () => bots.every((b) => b.client.state.game?.micMode === 'hold'));
+    // 押している間だけ聞く鬼：鬼も押して、その間に拾う → 逃走者が離した時点で「音」で記録（残っている最後の逃走者で）
+    const P = runners.find((r) => !r.client.state.me?.caught)!;
+    expect(runners.filter((r) => !r.client.state.me?.caught)).toHaveLength(1);
+    await Promise.all([
+      hold(B, 2_500),
+      hold(P, 1_200),
+      (async () => {
+        await sleep(1_100);
+        B.client.heard(P.client.state.me!.code!);
+      })(),
+    ]);
+    await expectCaught(P, B, 'sound', '押している間だけ（音）');
+    H.command('mic', { mic: 'always' });
+    await waitFor('全員に「ずっと聞く」', () => bots.every((b) => b.client.state.game?.micMode === 'always'));
+    reports.push('鬼のマイク：既定は「ずっと聞く」。主催者が試合中に「押している間だけ」に切り替えると全員に届き、その間の捕獲も記録できた。戻すのも同じ');
+
     // 11. 役の漏れ：候補と手動の一覧に、鬼でない人は出ない。主催者の集計・他人の me は届かない
     const oniIds = new Set(oni.map(pidOf));
     for (const r of runners) {
@@ -436,9 +457,15 @@ describe('捕獲の記録（機械テスト）', () => {
     // 12. 記録の書き出し
     const res = await fetch(`${BASE}/api/game/${GAME}/log?format=json`, { headers: { 'x-host-token': TOKEN } });
     expect(res.ok).toBe(true);
-    const rows = (await res.json()) as { kind: string; via: string | null; other_name: string | null; name: string | null }[];
+    const rows = (await res.json()) as { kind: string; via: string | null; other_name: string | null; name: string | null; data: string | null }[];
     const caps = rows.filter((r) => r.kind === 'capture');
-    expect(caps.map((r) => r.via).sort()).toEqual(['host', 'manual', 'near', 'near', 'nominated', 'sound', 'together', 'together', 'together', 'together', 'together'].sort());
+    expect(caps.map((r) => r.via).sort()).toEqual(['host', 'manual', 'near', 'near', 'nominated', 'sound', 'sound', 'together', 'together', 'together', 'together', 'together'].sort());
+    // どちらの聞き方のときの捕獲・音かが残る（あとで比べるため）
+    const micOf = (r: { data: string | null }) => (JSON.parse(r.data ?? '{}') as { mic?: string }).mic;
+    expect(caps.every((r) => micOf(r) === 'always' || micOf(r) === 'hold')).toBe(true);
+    expect(caps.filter((r) => micOf(r) === 'hold')).toHaveLength(1);
+    expect(rows.filter((r) => r.kind === 'heard').every((r) => micOf(r) === 'always' || micOf(r) === 'hold')).toBe(true);
+    expect(rows.filter((r) => r.kind === 'mic').map(micOf)).toEqual(['hold', 'always']);
     expect(rows.some((r) => r.kind === 'release')).toBe(true);
     expect(rows.filter((r) => r.kind === 'hold').length).toBeGreaterThan(20);
     expect(rows.some((r) => r.kind === 'heard')).toBe(true);
@@ -449,6 +476,7 @@ describe('捕獲の記録（機械テスト）', () => {
     const csv = new TextDecoder().decode(bytes);
     expect(csv.startsWith('番号,時刻（日本）')).toBe(true);
     expect(csv).toContain(',捕獲,');
+    expect(csv).toContain(',鬼のマイクの聞き方,');
     expect(csv).toContain(',残り時間,');
     const forbidden = await fetch(`${BASE}/api/game/${GAME}/log`);
     expect(forbidden.status).toBe(403);

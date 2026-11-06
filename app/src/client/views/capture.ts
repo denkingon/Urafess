@@ -393,9 +393,10 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       role = view.role;
       code = state.me?.code ?? null;
       if (prevMode !== mode && mode === 'none') endPress(true);
-      // 鬼はゲームの段階の間ずっと聞く（マイクがもう開いているときだけ。開くのはマイクの板を押したとき）。
-      // 足すのは読み取りの計算だけ：マイクは配役のあとから開けたまま
-      const wantPassive = mode === 'oni' && listener.state === 'ready';
+      // 主催者が「ずっと聞く」にしているとき、鬼はゲームの段階の間ずっと聞く（マイクがもう開いているときだけ。開くのはマイクの板を押したとき）。
+      // 足すのは読み取りの計算だけ：マイクは配役のあとから開けたまま。「押している間だけ」なら前の版と同じ
+      const always = (state.game?.micMode ?? 'always') === 'always';
+      const wantPassive = mode === 'oni' && always && listener.state === 'ready';
       if (wantPassive && !passive) {
         passive = true;
         listener.listen(onHeardCode);
@@ -403,6 +404,8 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
         passive = false;
         if (!holding) listener.pause();
       }
+      // ずっと聞いている間は、押していなくても板に波を薄く出す（聞いているのが見えるように）
+      el.classList.toggle('is-passive', passive);
       // ゲームの段階が終わったら（広場に戻る・結果発表・配役前）、または鬼でなくなったらマイクを閉じる。ゲームの前に開けた分は残す
       const afterGame = view.step === 0 || view.step >= 5;
       if (listener.state === 'ready' && ((mode === 'none' && afterGame) || view.role !== '鬼')) listener.close();
