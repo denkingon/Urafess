@@ -1,5 +1,6 @@
 import { ClockEstimator } from '../../shared/clock';
-import type { GameView, HostOp, HostSummary, MeView, ServerMsg, Winner } from '../../shared/protocol';
+import type { CaptureVia } from '../../shared/capture';
+import type { GameView, HostOp, HostSummary, MeView, NoticeKind, RosterEntry, ServerMsg, Winner } from '../../shared/protocol';
 import { SILENCE_LIMIT_MS } from '../../shared/rules';
 
 /**
@@ -48,6 +49,15 @@ export interface Identity {
   name: string;
 }
 
+/** 本人だけに届いた短い知らせ。seq は届くたびに増える（画面は seq の変化で帯を出す） */
+export interface Notice {
+  seq: number;
+  kind: NoticeKind;
+  other: { num: number; name: string } | null;
+  via: CaptureVia | null;
+  at: number;
+}
+
 export interface ClientState {
   /** need-name: 入室前 / ready: 状態を受け取った / denied: 主催者の合言葉が違う */
   phase: 'connecting' | 'need-name' | 'joining' | 'ready' | 'denied';
@@ -58,6 +68,9 @@ export interface ClientState {
   identity: Identity | null;
   lastReject: { op: HostOp; reason: string } | null;
   joinError: string | null;
+  notice: Notice | null;
+  /** 手動で選ぶための一覧（頼んだあとに届く）。seq は届くたびに増える */
+  roster: { seq: number; people: RosterEntry[] } | null;
 }
 
 const CONNECTING = 0;
@@ -104,6 +117,10 @@ export class GameClient {
   private roughOffset: number | null = null;
   private ackedAssignId = 0;
   private pendingJoinName: string | null = null;
+  /** 押している長押し（押し始めのサーバー時刻）。つなぎ直したら送り直す */
+  private holding: { at: number | undefined } | null = null;
+  private noticeSeq = 0;
+  private rosterSeq = 0;
   private stopped = false;
   private readonly listeners = new Set<() => void>();
   private readonly storageKey: string;
@@ -122,6 +139,8 @@ export class GameClient {
       identity: mode.kind === 'player' ? this.loadIdentity() : null,
       lastReject: null,
       joinError: null,
+      notice: null,
+      roster: null,
     };
   }
 
@@ -172,7 +191,54 @@ export class GameClient {
     if (this.isOpen()) this.send({ t: 'join', name });
   }
 
-  command(op: HostOp, extra: { winner?: Winner; durations?: number[]; pid?: string } = {}): boolean {
+  // ---------- 捕獲 ----------
+
+  /** スマホの時計の時刻を、サーバー時刻の見積もりにする（まだ測れていなければ undefined＝サーバーが届いた時刻を使う） */
+  private toServer(localAt: number): number | undefined {
+    const offset = this.clock.offset() ?? this.roughOffset;
+    return offset === null ? undefined : Math.round(localAt + offset);
+  }
+
+  /** 長押しを始めた（HOLD_MIN_MS 押し続けたら呼ぶ。localAt は指を置いた瞬間のスマホの時計） */
+  holdStart(localAt: number): void {
+    const at = this.toServer(localAt);
+    this.holding = { at };
+    this.send({ t: 'hold', on: true, at });
+  }
+
+  /** 長押しを離した */
+  holdEnd(localAt: number): void {
+    if (!this.holding) return;
+    this.holding = null;
+    this.send({ t: 'hold', on: false, at: this.toServer(localAt) });
+  }
+
+  /** 鬼のスマホが3桁を拾った */
+  heard(code: string): void {
+    this.send({ t: 'heard', code });
+  }
+
+  /** 逃走者が「捕まえたのは◯◯」を選んだ。manual＝手動の一覧から選んだ */
+  answer(oniPid: string, manual = false): void {
+    this.send({ t: 'answer', pid: oniPid, manual });
+  }
+
+  /** 鬼が手動の一覧から逃走者を選んだ */
+  nominate(runnerPid: string): void {
+    this.send({ t: 'nominate', pid: runnerPid });
+  }
+
+  /** 手動で選ぶ一覧を頼む（届くと state.roster が変わる） */
+  requestRoster(): void {
+    this.send({ t: 'roster' });
+  }
+
+  /** 逃走者が「捕まった」を取り下げる */
+  cancelClaim(): void {
+    this.send({ t: 'cancel' });
+  }
+
+  command(op: HostOp, extra: { winner?: Winner; durations?: number[]; pid?: string; by?: string } = {}): boolean {
     const game = this.state.game;
     if (!this.isOpen() || !game) return false;
     this.state = { ...this.state, lastReject: null };
@@ -296,6 +362,8 @@ export class GameClient {
       this.send({ t: 'host', token: this.mode.token });
     } else if (this.state.identity) {
       this.send({ t: 'resume', pid: this.state.identity.pid, key: this.state.identity.key });
+      // 押している途中でつなぎ直したら、同じ押し始めを送り直す（サーバーは同じ長押しとして扱う）
+      if (this.holding) this.send({ t: 'hold', on: true, at: this.holding.at });
     } else if (this.pendingJoinName) {
       this.send({ t: 'join', name: this.pendingJoinName });
     } else {
@@ -431,6 +499,15 @@ export class GameClient {
       }
       case 'reject':
         this.state = { ...this.state, lastReject: { op: msg.op, reason: msg.reason } };
+        break;
+      case 'notice':
+        this.state = {
+          ...this.state,
+          notice: { seq: ++this.noticeSeq, kind: msg.kind, other: msg.other ?? null, via: msg.via ?? null, at: msg.at },
+        };
+        break;
+      case 'roster':
+        this.state = { ...this.state, roster: { seq: ++this.rosterSeq, people: msg.people } };
         break;
     }
     this.emit();

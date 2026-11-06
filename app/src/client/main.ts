@@ -2,9 +2,14 @@ import './styles.css';
 import { participantView } from '../shared/viewmodel';
 import { GameClient, type KeyValueStore } from './core/game-client';
 import { detectInstall, lineEscapeUrl, type InstallPath } from './install/detect';
+import { getCodec } from './sound/codec';
+import { SoundEmitter } from './sound/emitter';
+import { SoundListener } from './sound/listener';
+import { createCapture } from './views/capture';
 import { createHost } from './views/host';
 import { createInstall, type InstallScreen } from './views/install';
 import { createJoin } from './views/join';
+import { createLab } from './views/lab';
 import { createPhone } from './views/phone';
 import { createScreenKeeper } from './wake-lock';
 
@@ -12,7 +17,9 @@ import { createScreenKeeper } from './wake-lock';
 
 const params = new URLSearchParams(location.search);
 const gameId = (params.get('g') ?? 'main').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'main';
-const isHost = location.pathname.replace(/\/+$/, '') === '/host';
+const route = location.pathname.replace(/\/+$/, '');
+const isHost = route === '/host';
+const isLab = route === '/lab';
 const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/game/${gameId}/ws`;
 
 const storage: KeyValueStore = {
@@ -27,7 +34,9 @@ const root = document.getElementById('app')!;
 const screenKeeper = createScreenKeeper();
 const inMatch = (stage: string | undefined) => stage === 'assigned' || stage === 'timer';
 
-if (isHost) {
+if (isLab) {
+  startLab();
+} else if (isHost) {
   // 主催者用の合言葉は URL の ?token= で一度渡せば、この端末に覚えさせて URL からは消す
   const fromUrl = params.get('token');
   if (fromUrl) {
@@ -134,6 +143,34 @@ function startPlayer(): void {
   const client = makeClient({ kind: 'player' });
   const join = createJoin((name) => client.join(name));
   const phone = createPhone();
+  // 捕獲：逃走者のスマホは長押しの間3桁を鳴らし、鬼のスマホはマイクで聞く
+  const emitter = new SoundEmitter();
+  const listener = new SoundListener();
+  const capture = createCapture({ client, emitter, listener });
+  phone.slot.append(capture.el);
+  // 音は「画面に触れた直後」にしか出させてもらえない。長押しより前のタップで一度準備しておく
+  const unlock = () => {
+    emitter.unlock();
+    listener.unlock();
+  };
+  document.addEventListener('pointerup', unlock, { capture: true, passive: true });
+  document.addEventListener('click', unlock, { capture: true, passive: true });
+  let preparedCode: string | null = null;
+  // 試験用（?debug=1 のときだけ）：ヘッドレスのブラウザから音の波形を取り出して、もう一方の偽マイクに流すため
+  if (params.get('debug') === '1') {
+    (window as unknown as { __urafess?: unknown }).__urafess = {
+      client,
+      emitter,
+      listener,
+      wavBase64: async (code: string) => {
+        const url = await emitter.prepare(code);
+        const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+        let bin = '';
+        for (const b of bytes) bin += String.fromCharCode(b);
+        return btoa(bin);
+      },
+    };
+  }
   let shown: HTMLElement | null = null;
   const show = (el: HTMLElement) => {
     if (shown !== el) {
@@ -154,20 +191,58 @@ function startPlayer(): void {
       show(phone.el);
       phone.update({
         round: '—', role: 'なし', step: 0, label: s.online ? 'つないでいる' : '通信を待っている',
-        big: '…', message: '', oni: '?', runners: '?', offline: !s.online,
+        big: '…', message: '', oni: '?', runners: '?', offline: !s.online, touch: 'none', caught: false,
       });
       return;
     }
     show(phone.el);
-    phone.update(participantView(s.game, s.me, client.serverNow() ?? Date.now(), s.online));
+    const view = participantView(s.game, s.me, client.serverNow() ?? Date.now(), s.online);
+    phone.update(view);
+    capture.update(view, s);
+    // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）
+    if (s.me.code && s.me.code !== preparedCode) {
+      preparedCode = s.me.code;
+      void getCodec()
+        .then(() => emitter.prepare(s.me!.code!))
+        .catch(() => undefined);
+    }
   });
+}
+
+// ---------- 音の試し（/lab） ----------
+
+function startLab(): void {
+  const emitter = new SoundEmitter();
+  const listener = new SoundListener();
+  const unlock = () => {
+    emitter.unlock();
+    listener.unlock();
+  };
+  document.addEventListener('pointerup', unlock, { capture: true, passive: true });
+  document.addEventListener('click', unlock, { capture: true, passive: true });
+  void getCodec().catch(() => undefined);
+  root.replaceChildren(createLab(emitter, listener));
 }
 
 // ---------- 主催者 ----------
 
 function startHost(token: string): void {
   const client = makeClient({ kind: 'host', token });
-  const host = createHost({ command: (op, extra) => client.command(op, extra) });
+  const host = createHost({
+    command: (op, extra) => client.command(op, extra),
+    downloadLog: async () => {
+      const res = await fetch(`/api/game/${gameId}/log`, { headers: { 'x-host-token': token }, cache: 'no-store' });
+      if (!res.ok) throw new Error(`log ${res.status}`);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `urafess-${gameId}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.csv`;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    },
+  });
   root.replaceChildren(host.el);
   loop(() => {
     const s = client.state;

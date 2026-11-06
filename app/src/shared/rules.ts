@@ -55,3 +55,53 @@ export const DURATION_MIN_MS = 1_000;
 export const DURATION_MAX_MS = 60 * 60_000;
 
 export const NAME_MAX_LENGTH = 20;
+
+// ---------- 捕獲の記録 ----------
+//
+// 体で捕まえたあと、鬼は「捕まえた」、逃走者は「捕まった」を長押しする。
+// 逃走者のスマホは長押しの間、自分のその回の3桁を音で鳴らし、鬼のスマホは長押しの間マイクで聞く。
+// 鬼のスマホが音を拾うと「◯◯をロックオン」と出て、鬼は離して次を追える。
+// サーバーは「音を拾った鬼」「同じ時間に長押ししていた鬼」「前後に長押しした鬼」「手動で選んだ鬼」を
+// 逃走者の画面に同じ大きさで並べ、逃走者本人がどれか1人を選んだら記録する。
+
+/** 長押しとみなすまでの時間。これより短く離したら何もしない（押し間違い・ポケットの中） */
+export const HOLD_MIN_MS = 500;
+
+/** 押しっぱなしのまま「離した」が届かなかったとき（電波切れ等）、この長さで離したとみなす */
+export const HOLD_MAX_MS = 60_000;
+
+/** 重なっていなくても、前後この時間に長押しした鬼は候補に出す */
+export const CLAIM_PAIR_WINDOW_MS = 20_000;
+
+/** 逃走者の「捕まった」は、この時間選ばないままなら閉じる。ゲームが終わったあとも、この間は選べる（終了間際の捕獲のため） */
+export const CLAIM_OPEN_MS = 90_000;
+
+/** ゲームの段階が終わった直後も、この時間は長押しを受け付ける（終了間際に体で捕まえた分） */
+export const CLAIM_GRACE_MS = 10_000;
+
+/** 鬼のスマホが逃走者の音を拾った記録・鬼が手動で選んだ記録を、候補として使う時間 */
+export const EVIDENCE_VALID_MS = 60_000;
+
+/**
+ * 番号を運ぶ音の送り方。ultrasound は 15kHz より上でほとんど聞こえず、話し声と重ならないので強い。
+ * audible は 1.9〜6.4kHz でピロピロ聞こえるが、話し声と重なって読み落としやすい（test/sound.test.ts の表）。
+ * 聞こえる音は、別に重ねる3音のフレーズ（SOUND_MELODY）で出す
+ */
+export type SoundProtocol =
+  | 'ultrasound-fastest'
+  | 'ultrasound-fast'
+  | 'ultrasound-normal'
+  | 'audible-fastest'
+  | 'audible-fast'
+  | 'audible-normal';
+
+export const SOUND_PROTOCOL: SoundProtocol = 'ultrasound-fast';
+
+/** 長押しの間、番号の超音波に「その人だけの3音のフレーズ」（聞こえる音）を重ねる。0 で重ねない */
+export const SOUND_MELODY_GAIN = 0.3;
+
+/** 音の大きさ（ggwave の 1〜100） */
+export const SOUND_VOLUME = 50;
+
+/** 鳴らす合間（長押しの間、3桁を繰り返す） */
+export const SOUND_GAP_MS = 250;

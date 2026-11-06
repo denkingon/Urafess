@@ -48,7 +48,7 @@ function game(stage: Stage): GameView {
     stage,
     cv: 1,
     timer: null,
-    counts: { oni: 1, runner: 2, total: 3 },
+    counts: { oni: 1, runner: 2, total: 3, caught: 0 },
     result: null,
     durations: [1_000, 1_000, 1_000, 1_000],
   };
@@ -60,7 +60,10 @@ function snap(stage: Stage): ServerMsg {
     t: 'snap',
     now: Date.now(),
     game: game(stage),
-    me: { pid: 'p1', num: 1, name: 'テスト', role: 'runner', assignId: 1, removed: false },
+    me: {
+      pid: 'p1', num: 1, name: 'テスト', role: 'runner', assignId: 1, removed: false,
+      code: '123', caught: null, catches: 0, claim: null,
+    },
   };
 }
 
