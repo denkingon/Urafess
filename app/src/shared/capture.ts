@@ -1,4 +1,4 @@
-import { CLAIM_PAIR_WINDOW_MS, HOLD_MAX_MS, PHASES } from './rules';
+import { CLAIM_PAIR_WINDOW_MS, HEARD_SLACK_MS, HOLD_MAX_MS, PHASES } from './rules';
 import { positionAt, type Timer } from './schedule';
 
 /**
@@ -11,6 +11,10 @@ import { positionAt, type Timer } from './schedule';
  *   - 鬼が選んだ：その鬼が「手動で選ぶ」でこの逃走者を選んだ
  *   - 前後：重なってはいないが、前後 CLAIM_PAIR_WINDOW_MS 以内に長押しした
  * 候補は同じ大きさで並べ、逃走者本人がどれを選んでもよい。選んだ鬼が捕まえたとして記録に残る。
+ *
+ * 選ばなくていいとき（autoPick）：逃走者が「捕まった」を離した時点で、
+ * 「その長押しの間に音を拾った」か「同時に長押ししていた」鬼がちょうど1人なら、その鬼で記録する。
+ * 0人か2人以上なら、いままでどおり候補を並べて逃走者が選ぶ。
  */
 
 /**
@@ -109,6 +113,23 @@ export function rankCandidates(runnerHolds: readonly Hold[], oni: readonly OniSi
     return a.num - b.num;
   });
   return out.slice(0, MAX_CANDIDATES);
+}
+
+/**
+ * 逃走者が選ばなくても決められる鬼。逃走者の長押しの間（離したあと HEARD_SLACK_MS まで）に音を拾った鬼か、
+ * 長押しが重なった鬼が、ちょうど1人のときだけ返す。0人・2人以上なら null（候補を並べて選んでもらう）
+ */
+export function autoPick(runnerHolds: readonly Hold[], oni: readonly OniSignal[], now: number): OniSignal | null {
+  let found: OniSignal | null = null;
+  for (const o of oni) {
+    const together = relateHolds(runnerHolds, o.holds, now).together;
+    const heardInHold =
+      o.heardAt !== null && runnerHolds.some((h) => o.heardAt! >= h.start && o.heardAt! <= holdEnd(h, now) + HEARD_SLACK_MS);
+    if (!together && !heardInHold) continue;
+    if (found) return null;
+    found = o;
+  }
+  return found;
 }
 
 /** 選ばれた候補から、記録の手がかりを決める */

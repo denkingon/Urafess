@@ -131,6 +131,8 @@ interface Bot {
   candidatePids: Set<string>;
   /** 届いた手動の一覧の人（pid） */
   rosterPids: Set<string>;
+  /** 届いた知らせ（種類と相手の番号）。すぐ次の知らせに置き換わっても見落とさないように */
+  notices: { kind: string; num: number | null }[];
 }
 
 function makeBot(i: number): Bot {
@@ -145,6 +147,7 @@ function makeBot(i: number): Bot {
     leaks: [],
     candidatePids: new Set(),
     rosterPids: new Set(),
+    notices: [],
   };
   bot.client = new GameClient(
     {
@@ -167,6 +170,7 @@ function makeBot(i: number): Bot {
 function inspect(bot: Bot, raw: string): void {
   const msg = JSON.parse(raw) as ServerMsg;
   if (msg.t === 'roster') for (const p of msg.people) bot.rosterPids.add(p.pid);
+  if (msg.t === 'notice') bot.notices.push({ kind: msg.kind, num: msg.other?.num ?? null });
   if (msg.t !== 'snap') return;
   if (msg.host) bot.leaks.push('host');
   const mine = bot.client.state.identity?.pid;
@@ -279,28 +283,26 @@ describe('捕獲の記録（機械テスト）', () => {
       expect(row.caughtVia).toBe(via);
     };
 
-    // 1. 同時に長押し
+    // 1. 同時に長押し：重なった鬼が1人だけなら、逃走者は選ばなくても、離した時点で記録される
     await Promise.all([hold(A, 2_500), (async () => (await sleep(300), hold(X, 2_200)))()]);
-    await waitFor('同時：X の候補に A', () => candPids(X)[0] === pidOf(A));
-    expect(claimOf(X)!.cands[0]).toMatchObject({ together: true, heard: false });
-    X.client.answer(pidOf(A));
-    await expectCaught(X, A, 'together', '同時');
+    await expectCaught(X, A, 'together', '同時（選ばない）');
     await waitFor('A に「捕まえた」', () => A.client.state.notice?.kind === 'captured' && A.client.state.notice.other?.num === numOf(X));
     await waitFor('全員の「捕まった人数」が1', () => bots.every((b) => b.client.state.game?.counts.caught === 1));
     expect(A.client.state.me!.catches).toBe(1);
-    reports.push('同時に長押し：逃走者の候補の先頭に鬼が出て、選ぶと記録。鬼に「捕まえた」、全員の人数が1に');
+    reports.push('同時に長押し：重なった鬼が1人だけなので、逃走者は選ばずに、離した時点で記録。鬼に「捕まえた」、全員の人数が1に');
 
-    // 2. 音を拾った（鬼が先に長押し → 逃走者の3桁を拾う → 逃走者が長押し）
-    const bHold = hold(B, 3_000);
-    await sleep(600);
-    B.client.heard(Y.client.state.me!.code!);
-    await waitFor('B に「ロックオン」', () => B.client.state.notice?.kind === 'heard' && B.client.state.notice.other?.num === numOf(Y));
-    await hold(Y, 1_200);
-    await bHold;
-    await waitFor('音：Y の候補の先頭に B（音）', () => claimOf(Y)?.cands[0]?.pid === pidOf(B) && claimOf(Y)!.cands[0].heard);
-    Y.client.answer(pidOf(B));
-    await expectCaught(Y, B, 'sound', '音');
-    reports.push('音：鬼のスマホが逃走者の3桁を拾うと、鬼に「ロックオン」、逃走者の候補の先頭に「音」つきで出る');
+    // 2. 音を拾った：鬼は押していない（ゲームの間ずっと聞いている）。逃走者の長押しの間に3桁を拾い、離した時点で記録
+    // 「ロックオン」は、記録された瞬間に「捕まえた」へ置き換わる（回線が遅いと同時に届く）ので、届いた知らせの記録で見る
+    await Promise.all([
+      hold(Y, 1_200),
+      (async () => {
+        await sleep(800);
+        B.client.heard(Y.client.state.me!.code!);
+      })(),
+    ]);
+    await waitFor('B に「ロックオン」', () => B.notices.some((n) => n.kind === 'heard' && n.num === numOf(Y)));
+    await expectCaught(Y, B, 'sound', '音（鬼は押さない・選ばない）');
+    reports.push('音：鬼は押さずに聞いているだけ。逃走者の長押しの間に3桁を拾うと、鬼に「ロックオン」、逃走者が離した時点で「音」で記録');
 
     // 3. 2組が同時に（混線）：どちらの逃走者にも2人の鬼が並び、どれを選んでもよい
     await Promise.all([hold(C, 2_500), hold(D, 2_500), (async () => (await sleep(200), hold(Z, 2_000)))(), (async () => (await sleep(250), hold(W, 2_000)))()]);
@@ -363,8 +365,8 @@ describe('捕獲の記録（機械テスト）', () => {
     await waitFor('S がつなぎ直す', () => S.client.state.online && S.sockets.length >= 2 && S.sockets.at(-1)!.readyState === 1, 30_000);
     await aHold;
     S.client.holdEnd(S.now());
-    await waitFor('切れても：S の候補に A（同時）', () => claimOf(S)?.cands.some((c) => c.pid === pidOf(A) && c.together) === true, 30_000);
-    reports.push('長押しの途中で回線が切れても、つなぎ直した端末が押し始めを送り直し、同じ長押しとして候補が出る');
+    await expectCaught(S, A, 'together', '切れても（同時・選ばない）');
+    reports.push('長押しの途中で回線が切れても、つなぎ直した端末が押し始めを送り直し、同じ長押しとして「同時」で記録される');
 
     // 7b. 送ったはずの長押しが、回線が切れて届かなかった → つなぎ直したときに送り直され、1回だけ数えられる
     const R = runners.find((r, i) => i >= 8 && bots.indexOf(r) % 2 === 1) ?? runners[10];
@@ -376,10 +378,10 @@ describe('捕獲の記録（機械テスト）', () => {
     R.client.holdEnd(R.now());
     R.sockets.at(-1)!.kill();
     await aHold2;
-    await waitFor('届かなかった長押し：R の候補に A（同時）', () => claimOf(R)?.cands.some((c) => c.pid === pidOf(A) && c.together) === true, 30_000);
+    await expectCaught(R, A, 'together', '届かなかった長押し（同時・選ばない）');
     const rHolds = ((await debug()) as unknown as { holds: Record<string, { start: number }[]> }).holds[pidOf(R)] ?? [];
     expect(rHolds).toHaveLength(1);
-    reports.push('長押しの途中で送った知らせが回線ごと消えても、つなぎ直したときに送り直され、長押しは1回だけ数えられた');
+    reports.push('長押しの途中で送った知らせが回線ごと消えても、つなぎ直したときに送り直され、長押しは1回だけ数えられて「同時」で記録された');
 
     // 7c. 「離した」が届かないまま長く切れていた鬼の長押しは、押し始めから8秒で離したとみなす（ずっと押していたことにしない）
     const E = oni[4];
@@ -397,13 +399,18 @@ describe('捕獲の記録（機械テスト）', () => {
     expect(eLast.end! - eLast.start).toBe(8_000);
     reports.push('「離した」が届かないまま10秒切れていた鬼の長押しは、押し始めから8秒で離したとみなした（関係ない逃走者に「同時」で出ない）');
 
-    // 8. 答え待ちのままサーバーが再起動しても、候補は残る
+    // 8. 答え待ちのままサーバーが再起動しても、候補は残る（前後だけなので選ぶまで開いたまま）
+    const Q = runners.find((r, i) => i >= 8 && r !== R && r !== early)!;
+    await hold(A, 1_000);
+    await sleep(3_000);
+    await hold(Q, 1_200);
+    await waitFor('前後：Q の候補に A', () => candPids(Q).includes(pidOf(A)));
     await stopServer();
     await sleep(500);
     await startServer();
-    await waitFor('S がつなぎ直して候補を受け取る', () => S.client.state.online && claimOf(S)?.cands.some((c) => c.pid === pidOf(A)) === true, 60_000);
-    S.client.answer(pidOf(A));
-    await expectCaught(S, A, 'together', '再起動のあと');
+    await waitFor('Q がつなぎ直して候補を受け取る', () => Q.client.state.online && claimOf(Q)?.cands.some((c) => c.pid === pidOf(A)) === true, 60_000);
+    Q.client.answer(pidOf(A));
+    await expectCaught(Q, A, 'near', '再起動のあと');
     reports.push('答え待ちのままサーバーを再起動：長押し・候補は保存されていて、つなぎ直したあとに選んで記録できた');
 
     // 9. 捕まった人の長押しは「もう捕まっている」
@@ -412,14 +419,34 @@ describe('捕獲の記録（機械テスト）', () => {
     await waitFor('X に「もう捕まっている」', () => (X.client.state.notice?.seq ?? 0) > seenX && X.client.state.notice!.kind === 'already');
 
     // 10. 主催者の手直し：取り消し → 手で捕まった
-    await waitFor('主催者に捕獲の一覧', () => (H.state.host?.capture?.runners.filter((r) => r.caught).length ?? 0) === 8, 30_000);
+    await waitFor('主催者に捕獲の一覧', () => (H.state.host?.capture?.runners.filter((r) => r.caught).length ?? 0) === 10, 30_000);
     H.command('release', { pid: pidOf(X) });
     await waitFor('取り消し：X は捕まっていない', () => X.client.state.me?.caught === null && X.client.state.notice?.kind === 'released');
-    await waitFor('全員の人数が7', () => bots.every((b) => b.client.state.game?.counts.caught === 7));
+    await waitFor('全員の人数が9', () => bots.every((b) => b.client.state.game?.counts.caught === 9));
     H.command('capture', { pid: pidOf(X) });
     await expectCaught(X, null, 'host', '主催者');
-    await waitFor('全員の人数が8', () => bots.every((b) => b.client.state.game?.counts.caught === 8));
+    await waitFor('全員の人数が10', () => bots.every((b) => b.client.state.game?.counts.caught === 10));
     reports.push('主催者：取り消すと全員の人数が戻り、手で「捕まった」にすると主催者の記録になる');
+
+    // 10b. 鬼のマイクの聞き方：既定は「ずっと聞く」。主催者が試合中に「押している間だけ」に切り替えると全員に届き、記録にも残る
+    expect(bots.every((b) => (b.client.state.game?.micMode ?? 'always') === 'always')).toBe(true);
+    H.command('mic', { mic: 'hold' });
+    await waitFor('全員に「押している間だけ」', () => bots.every((b) => b.client.state.game?.micMode === 'hold'));
+    // 押している間だけ聞く鬼：鬼も押して、その間に拾う → 逃走者が離した時点で「音」で記録（残っている最後の逃走者で）
+    const P = runners.find((r) => !r.client.state.me?.caught)!;
+    expect(runners.filter((r) => !r.client.state.me?.caught)).toHaveLength(1);
+    await Promise.all([
+      hold(B, 2_500),
+      hold(P, 1_200),
+      (async () => {
+        await sleep(1_100);
+        B.client.heard(P.client.state.me!.code!);
+      })(),
+    ]);
+    await expectCaught(P, B, 'sound', '押している間だけ（音）');
+    H.command('mic', { mic: 'always' });
+    await waitFor('全員に「ずっと聞く」', () => bots.every((b) => b.client.state.game?.micMode === 'always'));
+    reports.push('鬼のマイク：既定は「ずっと聞く」。主催者が試合中に「押している間だけ」に切り替えると全員に届き、その間の捕獲も記録できた。戻すのも同じ');
 
     // 11. 役の漏れ：候補と手動の一覧に、鬼でない人は出ない。主催者の集計・他人の me は届かない
     const oniIds = new Set(oni.map(pidOf));
@@ -434,9 +461,15 @@ describe('捕獲の記録（機械テスト）', () => {
     // 12. 記録の書き出し
     const res = await fetch(`${BASE}/api/game/${GAME}/log?format=json`, { headers: { 'x-host-token': TOKEN } });
     expect(res.ok).toBe(true);
-    const rows = (await res.json()) as { kind: string; via: string | null; other_name: string | null; name: string | null }[];
+    const rows = (await res.json()) as { kind: string; via: string | null; other_name: string | null; name: string | null; data: string | null }[];
     const caps = rows.filter((r) => r.kind === 'capture');
-    expect(caps.map((r) => r.via).sort()).toEqual(['host', 'manual', 'near', 'nominated', 'sound', 'together', 'together', 'together', 'together'].sort());
+    expect(caps.map((r) => r.via).sort()).toEqual(['host', 'manual', 'near', 'near', 'nominated', 'sound', 'sound', 'together', 'together', 'together', 'together', 'together'].sort());
+    // どちらの聞き方のときの捕獲・音かが残る（あとで比べるため）
+    const micOf = (r: { data: string | null }) => (JSON.parse(r.data ?? '{}') as { mic?: string }).mic;
+    expect(caps.every((r) => micOf(r) === 'always' || micOf(r) === 'hold')).toBe(true);
+    expect(caps.filter((r) => micOf(r) === 'hold')).toHaveLength(1);
+    expect(rows.filter((r) => r.kind === 'heard').every((r) => micOf(r) === 'always' || micOf(r) === 'hold')).toBe(true);
+    expect(rows.filter((r) => r.kind === 'mic').map(micOf)).toEqual(['hold', 'always']);
     expect(rows.some((r) => r.kind === 'release')).toBe(true);
     expect(rows.filter((r) => r.kind === 'hold').length).toBeGreaterThan(20);
     expect(rows.some((r) => r.kind === 'heard')).toBe(true);
@@ -447,6 +480,7 @@ describe('捕獲の記録（機械テスト）', () => {
     const csv = new TextDecoder().decode(bytes);
     expect(csv.startsWith('番号,時刻（日本）')).toBe(true);
     expect(csv).toContain(',捕獲,');
+    expect(csv).toContain(',鬼のマイクの聞き方,');
     expect(csv).toContain(',残り時間,');
     const forbidden = await fetch(`${BASE}/api/game/${GAME}/log`);
     expect(forbidden.status).toBe(403);

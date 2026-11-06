@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { assignRoles } from '../shared/allocate';
-import { CAPTURE_PHASE_INDEX, captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
+import { autoPick, CAPTURE_PHASE_INDEX, captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
 import type {
   ClientMsg,
   GameView,
@@ -23,13 +23,16 @@ import {
   CLAIM_OPEN_MS,
   CLAIM_PAIR_WINDOW_MS,
   DEFAULT_DURATIONS_MS,
+  DEFAULT_MIC_MODE,
   DEFAULT_RATIO,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
   EVIDENCE_VALID_MS,
   HEARTBEAT_EVERY_MS,
   HOLD_MAX_MS,
+  HEARD_SLACK_MS,
   HOLD_UNKNOWN_END_MS,
+  isMicMode,
   isValidRatio,
   MATES_BROADCAST_MS,
   MATES_STALE_MS,
@@ -37,6 +40,7 @@ import {
   ROLES,
   RUN_STALE_MS,
   SYNC_OK_MS,
+  type MicMode,
   type Ratio,
   type RoleId,
 } from '../shared/rules';
@@ -66,6 +70,8 @@ interface GameState {
   durations: number[];
   /** 配役の比率の重み。古い保存データには無いので load で補う */
   ratio: Ratio;
+  /** 鬼のマイクの聞き方（主催者が切り替える）。古い保存データには無いので load で補う */
+  micMode: MicMode;
   /** 次に名簿に入る人の番号（名簿に入った順。画面には出さない。部屋を空にしても戻さない） */
   nextNum: number;
   counts: { oni: number; runner: number };
@@ -375,6 +381,7 @@ export class GameRoom extends DurableObject<Env> {
           result: null,
           durations: [...DEFAULT_DURATIONS_MS],
           ratio: { ...DEFAULT_RATIO },
+          micMode: DEFAULT_MIC_MODE,
           nextNum: 1,
           counts: { oni: 0, runner: 0 },
           night: 1,
@@ -390,6 +397,7 @@ export class GameRoom extends DurableObject<Env> {
       if (row) this.saveGame();
     }
     if (!isValidRatio(this.game.ratio)) this.game.ratio = { ...DEFAULT_RATIO };
+    if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -1033,6 +1041,12 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private candidatesFor(runner: Participant, claim: Claim, now: number): Candidate[] {
+    const { runnerHolds, oni } = this.claimInputs(runner, claim, now);
+    return rankCandidates(runnerHolds, oni, now);
+  }
+
+  /** 候補を作るのに使う、逃走者の長押しと鬼ごとの手がかり */
+  private claimInputs(runner: Participant, claim: Claim, now: number): { runnerHolds: Hold[]; oni: OniSignal[] } {
     const g = this.game;
     // 開いてから（と、その少し前から）の自分の長押し。手動で選ばれて開いただけなら、開いた瞬間を長押しとみなす
     const mine = this.holdsOf(runner.pid).filter((h) => (h.end ?? now) >= claim.at - CLAIM_PAIR_WINDOW_MS);
@@ -1045,7 +1059,36 @@ export class GameRoom extends DurableObject<Env> {
       const valid = (t: number | null | undefined) => (ev && ev.assignId === g.assignId && t != null && now - t <= EVIDENCE_VALID_MS ? t : null);
       oni.push({ pid: q.pid, num: q.num, name: q.name, holds: this.holdsOf(q.pid), heardAt: valid(ev?.heardAt), nominatedAt: valid(ev?.nominatedAt) });
     }
-    return rankCandidates(runnerHolds, oni, now);
+    return { runnerHolds, oni };
+  }
+
+  /**
+   * 逃走者が選ばなくていいなら、ここで記録する。逃走者が「捕まった」を離したとき（と、離した直後に音の知らせが届いたとき）に呼ぶ。
+   * その長押しの間に音を拾ったか、同時に長押ししていた鬼がちょうど1人なら、その鬼で記録。0人・2人以上なら候補を並べたまま
+   */
+  private tryAutoCapture(runner: Participant, now: number): void {
+    if (runner.role !== 'runner' || this.isCaught(runner)) return;
+    const c = this.liveClaim(runner.pid, now);
+    if (!c) return;
+    const { runnerHolds, oni } = this.claimInputs(runner, c, now);
+    // まだ押している（離していない）なら、離すまで待つ
+    if (runnerHolds.some((h) => h.end === null)) return;
+    const pick = autoPick(runnerHolds, oni, now);
+    const target = pick ? this.inRound(pick.pid) : null;
+    if (!pick || !target || target.role !== 'oni') return;
+    const cands = rankCandidates(runnerHolds, oni, now);
+    const cand = cands.find((x) => x.pid === pick.pid);
+    this.recordCapture(runner, target, c.at, viaOf(cand), {
+      auto: true,
+      claimAt: c.at,
+      heard: cand?.heard ?? false,
+      together: cand?.together ?? false,
+      nominated: cand?.nominated ?? false,
+      gapMs: cand?.gapMs ?? null,
+      rank: cand ? cands.indexOf(cand) : null,
+      candidates: cands.length,
+      answerMs: now - c.at,
+    });
   }
 
   /** 答え待ちの逃走者（候補が変わりうる人） */
@@ -1126,7 +1169,10 @@ export class GameRoom extends DurableObject<Env> {
     if (!list) return;
     const open = list.filter((h) => h.end === null && h.assignId === this.game.assignId);
     const h = start === undefined ? open[open.length - 1] : open.find((x) => Math.abs(x.start - start) <= HOLD_SAME_MS);
-    if (!h) return;
+    if (!h) {
+      if (start !== undefined && reason === 'release') this.lateRelease(pid, list, at, start);
+      return;
+    }
     const known = reason === 'release' || reason === 'capture';
     h.end = Math.max(h.start, Math.min(at, h.start + (known ? HOLD_MAX_MS : HOLD_UNKNOWN_END_MS)));
     this.sql.exec(`UPDATE holds SET end = ? WHERE id = ?`, h.end, h.id);
@@ -1134,6 +1180,24 @@ export class GameRoom extends DurableObject<Env> {
     this.log('hold', { p, at: h.end, data: { on: false, ms: h.end - h.start, reason } });
     const now = Date.now();
     this.sendSnapTo(p?.role === 'oni' ? [pid, ...this.openRunners(now)] : [pid]);
+    // 逃走者が離した：鬼が1人に決まっていれば、選ばなくても記録する（離した瞬間が分かるときだけ）
+    if (p && p.role === 'runner' && reason === 'release') this.tryAutoCapture(p, now);
+  }
+
+  /**
+   * 切断で先に閉じてしまった長押しの「離した」が、つなぎ直したあとに届いた。
+   * 早く離していたなら縮める（延ばしはしない：長い切断を「ずっと押していた」にしない）。逃走者なら、選ばなくていいかをもう一度見る
+   */
+  private lateRelease(pid: string, list: HoldRec[], at: number, start: number): void {
+    const h = list.find((x) => x.end !== null && x.assignId === this.game.assignId && Math.abs(x.start - start) <= HOLD_SAME_MS);
+    if (!h) return;
+    const end = Math.max(h.start, at);
+    if (end < h.end!) {
+      h.end = end;
+      this.sql.exec(`UPDATE holds SET end = ? WHERE id = ?`, h.end, h.id);
+    }
+    const p = this.people.get(pid) ?? null;
+    if (p && p.role === 'runner') this.tryAutoCapture(p, Date.now());
   }
 
   /** 鬼のスマホが、誰かの3桁を拾った */
@@ -1155,9 +1219,15 @@ export class GameRoom extends DurableObject<Env> {
     ev.heardAt = now;
     this.saveEvidence(target.pid, p.pid, ev);
     const open = this.liveClaim(target.pid, now) !== null;
-    this.log('heard', { p, other: target, at: now, data: { code: rawCode, open } });
+    this.log('heard', { p, other: target, at: now, data: { code: rawCode, open, mic: this.game.micMode } });
     if (open) this.sendSnapTo([target.pid]);
     this.notify(p.pid, 'heard', target);
+    // 逃走者が離した直後に届いた知らせ（回線の遅れ）：その長押しの音として、決まれば記録する
+    if (open) {
+      const holds = this.holdsOf(target.pid);
+      const last = holds[holds.length - 1];
+      if (last && last.end !== null && now - last.end <= HEARD_SLACK_MS) this.tryAutoCapture(target, now);
+    }
   }
 
   private evidenceOf(runner: string, oni: string): Evidence {
@@ -1281,7 +1351,8 @@ export class GameRoom extends DurableObject<Env> {
       );
       this.sql.exec(`DELETE FROM claims WHERE pid = ?`, runner.pid);
       this.sql.exec(`DELETE FROM evidence WHERE runner = ?`, runner.pid);
-      this.log('capture', { p: oni, other: runner, via, at, data });
+      // どちらの聞き方のときの記録か（あとで比べるため）
+      this.log('capture', { p: oni, other: runner, via, at, data: { ...data, mic: this.game.micMode } });
     });
     runner.caughtAssign = assignId;
     runner.caughtBy = oni?.pid ?? null;
@@ -1790,6 +1861,14 @@ export class GameRoom extends DurableObject<Env> {
         this.log('ratio', { at: now, data: { ratio: r } });
         break;
       }
+      case 'mic': {
+        // いつでも切り替えられる（どちらがいいか試すため）。試合中に変えても、そのときから全員のスマホに効く
+        if (!isMicMode(msg.mic)) return this.reject(ws, att, op, 'bad-input');
+        if (msg.mic === g.micMode) break;
+        this.commit({ micMode: msg.mic });
+        this.log('mic', { at: now, data: { mic: msg.mic } });
+        break;
+      }
       case 'clear': {
         // 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。
         // 名簿・時間の設定・名簿の番号は残す。試合中はできない
@@ -1877,6 +1956,7 @@ export class GameRoom extends DurableObject<Env> {
       durations: g.durations,
       nightAt: g.nightAt,
       ratio: g.ratio,
+      micMode: g.micMode,
     };
   }
 

@@ -1,7 +1,7 @@
 import './styles.css';
 import { RunReporter } from '../shared/run';
 import { MATES_SEND_EVERY_MS } from '../shared/rules';
-import { participantView, type PhoneView } from '../shared/viewmodel';
+import { connectingView, participantView, type PhoneView } from '../shared/viewmodel';
 import { GameClient, type KeyValueStore } from './core/game-client';
 import { detectInstall, lineEscapeUrl, type InstallPath } from './install/detect';
 import { getCodec } from './sound/codec';
@@ -248,10 +248,7 @@ function startPlayer(): void {
     }
     if (s.phase !== 'ready' || !s.game || !s.me) {
       show(phone.el);
-      const waiting: PhoneView = {
-        round: '—', role: 'なし', step: 0, label: s.online ? 'つないでいる' : '通信を待っている',
-        big: '…', message: '', oni: '?', runners: '?', offline: !s.online, touch: 'none', caught: false, glow: 'none', lightable: false,
-      };
+      const waiting: PhoneView = connectingView(s.online);
       lastView = waiting;
       phone.update(waiting);
       glow.update(waiting, s, client.serverNow());
