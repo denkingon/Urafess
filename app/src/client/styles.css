@@ -330,7 +330,7 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 @media (prefers-reduced-motion: no-preference) {
   .glow-me { animation: glow-me-pulse 1.2s ease-in-out infinite; }
 }
-@keyframes glow-me-pulse { 50% { box-shadow: 0 0 0 6px rgba(242, 242, 242, 0.22), 0 0 24px 4px rgba(242, 242, 242, 0.35); } }
+@keyframes glow-me-pulse { 50% { box-shadow: 0 0 0 3px rgba(242, 242, 242, 0.25), 0 0 14px 0 rgba(242, 242, 242, 0.35); } }
 .glow-board { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
 .glow-radar { position: relative; flex: 1 1 0; min-height: 0; display: flex; justify-content: center; container-type: size; }
 .radar { width: 100%; height: 100%; max-height: 360px; overflow: visible; }
@@ -360,11 +360,11 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 @keyframes radar-ping { 0% { transform: scale(1); opacity: 0.9; } 100% { transform: scale(3.2); opacity: 0; } }
 .radar-wait { fill: var(--quiet); font-size: 9px; font-family: inherit; }
 .glow-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; flex: none; }
-.glow-list li { display: grid; grid-template-columns: 18px auto 1fr; align-items: center; gap: 8px; font-size: 17px; line-height: 1.4; }
+.glow-list li { display: grid; grid-template-columns: 24px auto 1fr; align-items: center; gap: 8px; font-size: 17px; line-height: 1.4; }
 .glow-list b { font-weight: 900; max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .glow-list span { font-size: 16px; color: var(--quiet); white-space: nowrap; }
 .glow-list em { font-style: normal; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.glow-list .glow-dir { width: 16px; height: 16px; }
+.glow-list .glow-dir { width: 24px; height: 24px; }
 .glow-list .glow-dir path { fill: var(--ink); }
 .glow-list .glow-more, .glow-list .glow-none { display: block; font-size: 16px; color: var(--quiet); }
 /* 主催者の画面の光の地図（高さの決まった枠の中ではないので、地図の高さを決めておく） */
@@ -378,4 +378,4 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .lab-lamp.is-lit { background: var(--ink); color: var(--bg); border-color: var(--ink); box-shadow: 0 0 28px 6px rgba(242, 242, 242, 0.35); }
 .lab-lamp.is-lit span { color: var(--bg); }
 .lab-trace { width: 100%; height: 120px; border: 1px solid var(--line-strong); border-radius: 12px; background: #111; }
-.glow-list li.has-more { grid-template-columns: 18px auto 1fr auto; }
+.glow-list li.has-more { grid-template-columns: 24px auto 1fr auto; }

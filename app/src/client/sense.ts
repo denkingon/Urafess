@@ -84,6 +84,14 @@ export class Sensors {
 
   constructor(params: Partial<RunParams> = {}) {
     this.detector = new RunDetector(params);
+    // 画面に戻ったら位置の見張りを張り直す（iPhone は裏にいる間の見張りが戻らないことがあるため）
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible' || this.watchId === null) return;
+        this.stopGeo();
+        this.startGeo();
+      });
+    }
     // 前に位置を許可していれば、押さなくても使える（許可の画面は出ない）
     try {
       void navigator.permissions
