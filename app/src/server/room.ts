@@ -673,7 +673,7 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     if (m[2] === 'photo') return this.onPhotoRequest(request, url, m[3] ?? null);
-    if (m[2] === 'photos') return this.onAlbumRequest(request, url);
+    if (m[2] === 'photos') return this.onAlbumRequest(request);
     if (m[3]) return new Response('not found', { status: 404 });
 
     if (m[2] === 'debug') {
@@ -1960,10 +1960,12 @@ export class GameRoom extends DurableObject<Env> {
     if (!mission || !mission.open || mission.id !== mid) return Response.json({ error: 'closed' }, { status: 409 });
     const mine = [...this.photos.values()].filter((ph) => ph.pid === p.pid && ph.missionId === mission.id).length;
     if (mine >= PHOTO_PER_PERSON) return Response.json({ error: 'too-many' }, { status: 429 });
-    const declared = Number(request.headers.get('content-length') ?? '0');
+    // 大きさを言わない送り方（chunked）は断る。言っても、読みながら上限を超えたらそこで止める（部屋のメモリを守る）
+    const declared = Number(request.headers.get('content-length') ?? 'NaN');
+    if (!Number.isFinite(declared)) return Response.json({ error: 'no-length' }, { status: 411 });
     if (declared > PHOTO_MAX_BYTES) return Response.json({ error: 'too-big' }, { status: 413 });
-    const buf = await request.arrayBuffer();
-    if (buf.byteLength > PHOTO_MAX_BYTES) return Response.json({ error: 'too-big' }, { status: 413 });
+    const buf = await readLimited(request, PHOTO_MAX_BYTES);
+    if (!buf) return Response.json({ error: 'too-big' }, { status: 413 });
     const head = new Uint8Array(buf, 0, Math.min(3, buf.byteLength));
     if (buf.byteLength < 100 || head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) {
       return Response.json({ error: 'not-jpeg' }, { status: 415 });
@@ -1972,6 +1974,10 @@ export class GameRoom extends DurableObject<Env> {
     // 受け取っている間にミッションが締め切られた・配役が変わったら断る（await のあいだに別の操作が入りうる）
     const still = this.game.mission;
     if (!still || !still.open || still.id !== mission.id) return Response.json({ error: 'closed' }, { status: 409 });
+    // 同時に何枚も送ったとき・送っている間に外されたときも、ここで数え直す
+    if (p.removed || this.people.get(p.pid) !== p) return Response.json({ error: 'not-in' }, { status: 403 });
+    const mineNow = [...this.photos.values()].filter((ph) => ph.pid === p.pid && ph.missionId === mission.id).length;
+    if (mineNow >= PHOTO_PER_PERSON) return Response.json({ error: 'too-many' }, { status: 429 });
     const g = this.game;
     const ph: PhotoMeta = {
       id: randomKey().slice(0, 24),
@@ -2013,8 +2019,8 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   /** 主催者：全部の夜の写真の一覧（名簿と一緒にずっと残る分） */
-  private onAlbumRequest(request: Request, url: URL): Response {
-    if (!this.isHostToken(request.headers.get('x-host-token') ?? url.searchParams.get('token'))) {
+  private onAlbumRequest(request: Request): Response {
+    if (!this.isHostToken(request.headers.get('x-host-token'))) {
       return new Response('forbidden', { status: 403 });
     }
     const rows = this.sql
@@ -2301,6 +2307,31 @@ function cleanPos(lat: unknown, lon: unknown, acc: unknown): { lat: number; lon:
   if (typeof lat !== 'number' || typeof lon !== 'number') return null;
   const r5 = (v: number) => Math.round(v * 1e5) / 1e5;
   return { lat: r5(a), lon: r5(o), acc: Number.isFinite(c) && c >= 0 ? Math.min(9_999, Math.round(c)) : 9_999 };
+}
+
+/** 体を読む。上限を超えたらそこで止めて null（全部をメモリに読んでから断るのでは遅い） */
+async function readLimited(request: Request, limit: number): Promise<ArrayBuffer | null> {
+  if (!request.body) return new ArrayBuffer(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.byteLength;
+  }
+  return out.buffer;
 }
 
 function photoOf(r: PhotoRow): PhotoMeta {

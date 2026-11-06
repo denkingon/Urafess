@@ -79,7 +79,7 @@ function upload(c: GameClient, missionId: number, body: Uint8Array, key?: string
   return fetch(`${BASE}/api/game/${GAME}/photo?m=${missionId}`, {
     method: 'POST',
     headers: { 'content-type': 'image/jpeg', 'x-pid': id.pid, 'x-key': key ?? id.key },
-    body,
+    body: new Blob([body as BlobPart]),
   });
 }
 
@@ -137,6 +137,15 @@ describe('ミッション（集合写真）', () => {
     expect((await upload(a, mission.id, notJpeg)).status).toBe(415);
     expect((await upload(a, mission.id, fakeJpeg(1_600_000))).status).toBe(413);
     expect((await upload(a, mission.id + 1, fakeJpeg(2000))).status).toBe(409);
+    // 大きさを言わない送り方（chunked）は断る
+    const ida = a.state.identity!;
+    const chunked = await fetch(`${BASE}/api/game/${GAME}/photo?m=${mission.id}`, {
+      method: 'POST',
+      headers: { 'content-type': 'image/jpeg', 'x-pid': ida.pid, 'x-key': ida.key },
+      body: new ReadableStream({ start(ctl) { ctl.enqueue(fakeJpeg(2000)); ctl.close(); } }),
+      duplex: 'half',
+    } as RequestInit);
+    expect(chunked.status).toBe(411);
 
     // あおが送る → あおの画面に「主催者が見ている」、主催者に写真が届く
     const res = await upload(a, mission.id, fakeJpeg(3000, 1));
@@ -169,9 +178,10 @@ describe('ミッション（集合写真）', () => {
     expect(isDone(g0.timer!, host.serverNow()!)).toBe(false);
     expect((await getPhoto(c, photoA)).status).toBe(403);
 
-    // 1人が送れるのは5枚まで（やり直しの分も数える）
-    for (let i = 0; i < 4; i++) expect((await upload(b, mission.id, fakeJpeg(1500, 3))).status).toBe(200);
-    expect((await upload(b, mission.id, fakeJpeg(1500, 3))).status).toBe(429);
+    // 1人が送れるのは5枚まで（やり直しの分も数える）。同時に6枚送っても、通るのは残りの4枚だけ
+    const burst = await Promise.all(Array.from({ length: 6 }, () => upload(b, mission.id, fakeJpeg(1500, 3))));
+    expect(burst.filter((r) => r.status === 200).length).toBe(4);
+    expect(burst.filter((r) => r.status === 429).length).toBe(2);
 
     // 時間が0になると、成功した写真は全員が取り出せる（中身も同じ）
     await waitFor('時間が0', () => {

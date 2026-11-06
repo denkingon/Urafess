@@ -19,26 +19,51 @@ export interface PhotoLoader {
   get(id: string): Promise<string | null>;
 }
 
-/** 写真を取り出す。headers は主催者なら合言葉、参加者なら合い鍵 */
-export function createPhotoLoader(gameId: string, headers: () => Record<string, string> | null): PhotoLoader {
+/** 取れなかった写真は、3秒・6秒・12秒…と間を空けて聞き直す。これだけ失敗したらあきらめる（無料枠を守る） */
+const RETRY_BASE_MS = 3_000;
+const RETRY_MAX = 6;
+
+/**
+ * 写真を取り出す。headers は主催者なら合言葉、参加者なら合い鍵。
+ * keep＝覚えておく枚数（古いものから捨てる。捨てても表示中の写真は消えない）
+ */
+export function createPhotoLoader(gameId: string, headers: () => Record<string, string> | null, keep = 60): PhotoLoader {
   const done = new Map<string, string>();
   const busy = new Map<string, Promise<string | null>>();
+  const failed = new Map<string, { n: number; at: number }>();
   return {
     get(id) {
       const have = done.get(id);
-      if (have) return Promise.resolve(have);
+      if (have) {
+        // 最近使った順に並べ直す
+        done.delete(id);
+        done.set(id, have);
+        return Promise.resolve(have);
+      }
       const going = busy.get(id);
       if (going) return going;
+      const f = failed.get(id);
+      if (f && (f.n >= RETRY_MAX || Date.now() - f.at < RETRY_BASE_MS * 2 ** (f.n - 1))) return Promise.resolve(null);
       const h = headers();
       if (!h) return Promise.resolve(null);
       const p = fetch(`/api/game/${gameId}/photo/${id}`, { headers: h })
         .then(async (res) => {
-          if (!res.ok) return null;
+          if (!res.ok) throw new Error(String(res.status));
           const url = URL.createObjectURL(await res.blob());
+          failed.delete(id);
           done.set(id, url);
+          while (done.size > keep) {
+            const [oldId, oldUrl] = done.entries().next().value as [string, string];
+            done.delete(oldId);
+            URL.revokeObjectURL(oldUrl);
+          }
           return url;
         })
-        .catch(() => null)
+        .catch(() => {
+          const prev = failed.get(id);
+          failed.set(id, { n: (prev?.n ?? 0) + 1, at: Date.now() });
+          return null;
+        })
         .finally(() => busy.delete(id));
       busy.set(id, p);
       return p;
@@ -160,7 +185,13 @@ export function createMission(deps: MissionDeps): MissionScreen {
     const f = file.files?.[0];
     const id = deps.identity();
     const m = missionId;
-    if (!f || !id || m === null) return;
+    if (!f || !id) return;
+    if (m === null) {
+      // カメラを開いている間に締め切られた
+      error = UPLOAD_ERRORS.closed;
+      last = '';
+      return;
+    }
     sending = true;
     error = null;
     last = '';
@@ -185,9 +216,13 @@ export function createMission(deps: MissionDeps): MissionScreen {
     })();
   });
 
+  /** 並びを作るのは写真の顔ぶれが変わったときだけ。画像は loader が間を空けて取りに行く */
   function renderGallery(list: MissionOk[], title: string): void {
     const key = JSON.stringify([list.map((x) => x.id), title]);
-    if (key === lastGallery) return;
+    if (key === lastGallery) {
+      for (const img of gallery.querySelectorAll<HTMLImageElement>('img[data-id]:not([src])')) fill(img);
+      return;
+    }
     lastGallery = key;
     gallery.replaceChildren();
     if (!list.length) return;
@@ -201,17 +236,24 @@ export function createMission(deps: MissionDeps): MissionScreen {
       const img = document.createElement('img');
       img.alt = `${ph.name}が送った写真`;
       img.decoding = 'async';
+      img.dataset.id = ph.id;
       const cap = document.createElement('figcaption');
       cap.textContent = ph.name;
       fig.append(img, cap);
       strip.append(fig);
-      void loader.get(ph.id).then((url) => {
-        if (url) img.src = url;
-        // 取れなかった（電波・まだ見せてもらえない）。少し待ってから描き直す（毎フレーム聞き直さないように）
-        else setTimeout(() => (lastGallery = ''), 3_000);
-      });
+      fill(img);
     }
     gallery.append(head, strip);
+  }
+
+  /** 画像を入れる。取れなければ src は空のまま（次の update でまた頼む。loader が間を空ける） */
+  function fill(img: HTMLImageElement): void {
+    if (img.dataset.loading) return;
+    img.dataset.loading = '1';
+    void loader.get(img.dataset.id!).then((url) => {
+      delete img.dataset.loading;
+      if (url) img.src = url;
+    });
   }
 
   return {
