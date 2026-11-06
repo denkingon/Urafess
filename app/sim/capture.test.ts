@@ -131,6 +131,8 @@ interface Bot {
   candidatePids: Set<string>;
   /** 届いた手動の一覧の人（pid） */
   rosterPids: Set<string>;
+  /** 届いた知らせ（種類と相手の番号）。すぐ次の知らせに置き換わっても見落とさないように */
+  notices: { kind: string; num: number | null }[];
 }
 
 function makeBot(i: number): Bot {
@@ -145,6 +147,7 @@ function makeBot(i: number): Bot {
     leaks: [],
     candidatePids: new Set(),
     rosterPids: new Set(),
+    notices: [],
   };
   bot.client = new GameClient(
     {
@@ -167,6 +170,7 @@ function makeBot(i: number): Bot {
 function inspect(bot: Bot, raw: string): void {
   const msg = JSON.parse(raw) as ServerMsg;
   if (msg.t === 'roster') for (const p of msg.people) bot.rosterPids.add(p.pid);
+  if (msg.t === 'notice') bot.notices.push({ kind: msg.kind, num: msg.other?.num ?? null });
   if (msg.t !== 'snap') return;
   if (msg.host) bot.leaks.push('host');
   const mine = bot.client.state.identity?.pid;
@@ -288,15 +292,15 @@ describe('捕獲の記録（機械テスト）', () => {
     reports.push('同時に長押し：重なった鬼が1人だけなので、逃走者は選ばずに、離した時点で記録。鬼に「捕まえた」、全員の人数が1に');
 
     // 2. 音を拾った：鬼は押していない（ゲームの間ずっと聞いている）。逃走者の長押しの間に3桁を拾い、離した時点で記録
-    // 「ロックオン」は、逃走者が離して記録された瞬間に「捕まえた」へ置き換わるので、押している間から見ておく
+    // 「ロックオン」は、記録された瞬間に「捕まえた」へ置き換わる（回線が遅いと同時に届く）ので、届いた知らせの記録で見る
     await Promise.all([
       hold(Y, 1_200),
       (async () => {
         await sleep(800);
         B.client.heard(Y.client.state.me!.code!);
       })(),
-      waitFor('B に「ロックオン」', () => B.client.state.notice?.kind === 'heard' && B.client.state.notice.other?.num === numOf(Y)),
     ]);
+    await waitFor('B に「ロックオン」', () => B.notices.some((n) => n.kind === 'heard' && n.num === numOf(Y)));
     await expectCaught(Y, B, 'sound', '音（鬼は押さない・選ばない）');
     reports.push('音：鬼は押さずに聞いているだけ。逃走者の長押しの間に3桁を拾うと、鬼に「ロックオン」、逃走者が離した時点で「音」で記録');
 
