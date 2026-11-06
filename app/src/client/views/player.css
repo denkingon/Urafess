@@ -105,6 +105,8 @@
 .player:has(.cap-cands:not([hidden])) .p-stage { display: none; }
 .player.is-ended .p-stage { display: none; }
 /* 光っている間：時計の下に「光っている」 */
+.player .p-lit .ja, .player .p-lit .en { display: inline; }
+.player .p-lit .en { margin-left: 8px; font-size: .8em; }
 .player .p-lit { display: none; }
 .player.is-lit .p-lit {
   display: block; align-self: center; margin-top: 6px; border-radius: 999px; background: var(--tsuki); color: var(--yami);
@@ -114,7 +116,9 @@
   .player.is-lit .p-lit { animation: glow-me-pulse 1.2s ease-in-out infinite; }
 }
 .player .glow-ask { border-color: var(--tsuki); color: var(--tsuki); }
-.player .glow-ask span, .player .glow-note { color: var(--tsuki-muted); }
+.player .glow-ask > span, .player .glow-note { color: var(--tsuki-muted); }
+.player .glow-ask b span { color: inherit; font-size: inherit; opacity: 1; }
+.player .glow-ask b .en { font-size: .8em; }
 
 /* ---------- 捕獲 ---------- */
 .player .capture { gap: 12px; }
