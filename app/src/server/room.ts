@@ -366,7 +366,13 @@ export class GameRoom extends DurableObject<Env> {
         };
     // 名簿を入れる前の版で作った部屋には、夜の数が無い
     if (!Number.isInteger(this.game.night) || this.game.night < 1) this.game.night = 1;
-    if (!Number.isFinite(this.game.nightAt)) this.game.nightAt = Date.now();
+    if (!Number.isFinite(this.game.nightAt)) {
+      // 夜の始まりは、今夜いちばん早く入った人の時刻とみなして保存する。
+      // 保存しないと、サーバーが入れ替わるたびに「今」に戻り、「前の夜のまま12時間」の知らせが出なくなる
+      const first = this.sql.exec<{ t: number | null }>(`SELECT MIN(joined_at) AS t FROM participants`).toArray()[0]?.t;
+      this.game.nightAt = typeof first === 'number' && Number.isFinite(first) ? first : Date.now();
+      if (row) this.saveGame();
+    }
     if (!isValidRatio(this.game.ratio)) this.game.ratio = { ...DEFAULT_RATIO };
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
