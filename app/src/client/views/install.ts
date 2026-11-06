@@ -1,50 +1,15 @@
 /**
- * 置き方の案内（ブラウザで開いた人にだけ出す）。言葉を使わず、数字（URAJI）・押す場所・ボタンの絵だけで見せる。
- * 押す場所の点は、1つずつ順に光る（動くのは同時に1つ）。動きを減らす設定の人には、全部の点を止めて見せる。
+ * 置き方の案内（ブラウザで開いた人にだけ出す）。
+ *
+ * - 押す人の画面を大きく描いた場面を、1手ずつ順に映す（4拍＝2秒ごとに次の場面。最後まで行ったら最初から）
+ * - 下の数字（URAJI）を押すと、その場面で止まる。もう一度押すと、また流れる
+ * - 最初に押すボタンは、本物の画面の端（Safari のバーのある所など）をページの端から矢印で指す
+ * - 絵は、OS のメニューやシートが出ても隠れない側に置く（下から出るなら上、上から出るなら下）
+ * - 動きを減らす設定の人には、流さずに1手目で止めておく（数字で送る）
  */
 import type { InstallPath } from '../install/detect';
-import { OS, phone, type Spot } from '../install/glyphs';
+import { scenesFor } from '../install/scenes';
 import { urajiArrow, urajiDigit } from '../install/uraji';
-
-type Glyph = keyof typeof OS | 'icon' | 'scroll';
-interface Step { spot: Spot; glyphs: Glyph[] }
-
-const STEPS: Record<Exclude<InstallPath, 'installed' | 'desktop'>, Step[]> = {
-  'ios-safari-26': [
-    { spot: 'bottom-right', glyphs: ['more'] },
-    { spot: 'menu-low', glyphs: ['share'] },
-    { spot: 'sheet', glyphs: ['scroll', 'addHome'] },
-    { spot: 'top-right', glyphs: ['toggleOn'] },
-    { spot: 'home', glyphs: ['icon'] },
-  ],
-  'ios-safari': [
-    { spot: 'bottom-center', glyphs: ['share'] },
-    { spot: 'sheet', glyphs: ['scroll', 'addHome'] },
-    { spot: 'top-right', glyphs: ['icon'] },
-    { spot: 'home', glyphs: ['icon'] },
-  ],
-  'ios-other': [
-    { spot: 'top-right', glyphs: ['share'] },
-    { spot: 'sheet', glyphs: ['scroll', 'addHome'] },
-    { spot: 'top-right', glyphs: ['icon'] },
-    { spot: 'home', glyphs: ['icon'] },
-  ],
-  android: [
-    { spot: 'top-right', glyphs: ['kebab'] },
-    { spot: 'menu-high', glyphs: ['install'] },
-    { spot: 'dialog', glyphs: ['icon'] },
-    { spot: 'home', glyphs: ['icon'] },
-  ],
-  // アプリの中のブラウザ：右上のメニューから、ふだんのブラウザで開き直す（開き直した先で、その端末の案内が出る）
-  inapp: [
-    { spot: 'top-right', glyphs: ['dots'] },
-    { spot: 'menu-high', glyphs: ['browser'] },
-  ],
-  line: [
-    { spot: 'top-right', glyphs: ['dots'] },
-    { spot: 'menu-high', glyphs: ['browser'] },
-  ],
-};
 
 export interface InstallScreen {
   el: HTMLElement;
@@ -55,44 +20,71 @@ export interface InstallScreen {
   stop(): void;
 }
 
+const STEP_MS = 2000;
+
 export function createInstall(opts: {
   path: Exclude<InstallPath, 'installed' | 'desktop'>;
   icon: string;
   onSkip: () => void;
 }): InstallScreen {
+  const sc = scenesFor(opts.path, opts.icon, 'inst');
   const el = document.createElement('main');
   el.className = 'phone install';
-  const iconImg = (cls: string) => `<img class="${cls}" src="${opts.icon}" alt="" width="48" height="48">`;
-  const glyph = (g: Glyph) =>
-    g === 'icon' ? iconImg('app') : g === 'scroll' ? `<span class="scroll">${urajiArrow('down')}</span>` : OS[g];
-  const rows = (steps: Step[]) =>
-    steps
-      .map((s, i) => `<li class="row"><span class="num">${urajiDigit(i + 1)}</span>${phone(s.spot, opts.icon)}<span class="glyphs">${s.glyphs.map(glyph).join('')}</span></li>`)
-      .join('');
+  el.dataset.stage = sc.stage;
+  el.dataset.pointer = sc.pointer;
 
+  const nav = sc.frames
+    .map((_, i) => `<button type="button" class="step" data-i="${i}" aria-label="${i + 1}手目">${urajiDigit(i + 1)}</button>`)
+    .join('');
   el.innerHTML = `
-    <button type="button" class="skip" aria-label="このままブラウザで開く">${xMark()}</button>
-    <div class="target">${iconImg('big')}</div>
-    <ol class="steps">${rows(STEPS[opts.path])}</ol>
-    <button type="button" class="one-tap" hidden aria-label="ホーム画面に追加">${iconImg('app')}<span class="arrow">${urajiArrow('down')}</span></button>
+    <button type="button" class="skip" aria-label="このままブラウザで開く"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    <section class="movie">
+      <div class="screens">${sc.frames.join('')}</div>
+      <nav class="steps">${nav}</nav>
+    </section>
+    <section class="one">
+      <button type="button" class="one-tap" aria-label="ホーム画面に追加"><img src="${opts.icon}" alt="" width="52" height="52"><span class="arrow">${urajiArrow('down')}</span></button>
+    </section>
+    <div class="pointer" aria-hidden="true">${urajiArrow('down')}</div>
   `;
-  const list = el.querySelector('.steps') as HTMLElement;
+  const frames = Array.from(el.querySelectorAll<SVGElement>('.screens .frame'));
+  const steps = Array.from(el.querySelectorAll<HTMLButtonElement>('.steps .step'));
+  const one = el.querySelector('.one') as HTMLElement;
   const oneTap = el.querySelector('.one-tap') as HTMLButtonElement;
+  one.hidden = true;
   el.querySelector('.skip')!.addEventListener('click', opts.onSkip);
 
-  // 点を1つずつ順に光らせる（2拍＝1秒ごと）
-  const items = Array.from(el.querySelectorAll<HTMLElement>('.row'));
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let now = 0;
+  let playing = !reduce;
   let timer: number | undefined;
-  const mark = () => items.forEach((li, i) => li.classList.toggle('now', reduce || i === now));
-  mark();
-  if (!reduce && items.length > 1) {
-    timer = window.setInterval(() => {
-      now = (now + 1) % items.length;
-      mark();
-    }, 1000);
+
+  function show(i: number): void {
+    now = i;
+    frames.forEach((f, k) => f.classList.toggle('now', k === i));
+    steps.forEach((s, k) => {
+      s.classList.toggle('now', k === i);
+      s.setAttribute('aria-pressed', String(k === i && !playing));
+    });
+    // 本物のボタンを指す矢印は、1手目を映している間だけ
+    el.classList.toggle('first', i === 0);
   }
+  function play(): void {
+    window.clearInterval(timer);
+    timer = undefined;
+    if (!playing || frames.length < 2) return;
+    timer = window.setInterval(() => show((now + 1) % frames.length), STEP_MS);
+  }
+  steps.forEach((s, i) =>
+    s.addEventListener('click', () => {
+      // 映っている場面の数字を押すと流す／止めるが切り替わる。別の数字なら、そこへ飛んで止まる
+      playing = i === now ? !playing : false;
+      show(i);
+      play();
+    }),
+  );
+  show(0);
+  play();
 
   let prompt: (() => Promise<boolean>) | null = null;
   oneTap.addEventListener('click', async () => {
@@ -103,32 +95,30 @@ export function createInstall(opts: {
     if (ok) done();
   });
 
-  /** 入った。あとはホーム画面のアイコンから開くだけ */
+  /** 入った。あとはホーム画面のアイコンから開くだけ（最後の場面で止める） */
   function done(): void {
-    if (timer !== undefined) window.clearInterval(timer);
-    timer = undefined;
     prompt = null;
-    list.innerHTML = rows([{ spot: 'home', glyphs: ['icon'] }]);
-    list.querySelector('.row')?.classList.add('now');
-    list.hidden = false;
-    oneTap.hidden = true;
+    one.hidden = true;
+    el.querySelector<HTMLElement>('.movie')!.hidden = false;
+    el.classList.add('installed');
+    playing = false;
+    show(frames.length - 1);
+    play();
   }
 
   return {
     el,
     setPrompt(p) {
       prompt = p;
-      // ボタン1つで入れられるなら、手順の代わりにボタンを出す
-      oneTap.hidden = !p;
-      list.hidden = !!p;
+      // ボタン1つで入れられるなら、場面の代わりにボタンだけを出す
+      one.hidden = !p;
+      el.querySelector<HTMLElement>('.movie')!.hidden = !!p;
+      el.classList.toggle('prompt', !!p);
     },
     done,
     stop() {
-      if (timer !== undefined) window.clearInterval(timer);
+      window.clearInterval(timer);
+      timer = undefined;
     },
   };
-}
-
-function xMark(): string {
-  return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
 }
