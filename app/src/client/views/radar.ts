@@ -54,7 +54,12 @@ export function project(me: LatLon, p: LatLon, heading: number | null): { x: num
 
 let uid = 0;
 
-export function createRadar(): Radar {
+export interface RadarOptions {
+  /** 北の印の字（参加者の画面で英語も出すときは「北 N」） */
+  north?: string;
+}
+
+export function createRadar({ north: northLabel = '北' }: RadarOptions = {}): Radar {
   const id = `glow${++uid}`;
   const el = svg('svg', { viewBox: `${-R - 12} ${-R - 12} ${2 * R + 24} ${2 * R + 24}`, class: 'radar', role: 'img' });
   el.setAttribute('preserveAspectRatio', 'xMidYMid meet');
@@ -77,7 +82,7 @@ export function createRadar(): Radar {
   el.append(rings);
 
   const north = svg('text', { class: 'radar-north', 'text-anchor': 'middle', 'dominant-baseline': 'central' });
-  north.textContent = '北';
+  north.textContent = northLabel;
   el.append(north);
 
   const trails = svg('g', { class: 'radar-trails' });
