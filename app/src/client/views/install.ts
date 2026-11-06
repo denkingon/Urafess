@@ -1,14 +1,19 @@
 /**
- * 置き方の案内（ブラウザで開いた人にだけ出す）。
+ * 置き方の案内（ブラウザで開いた人にだけ出す）。押すものを、押す順に、全部を一度に並べる。
  *
- * - 押す人の画面を大きく描いた場面を、1手ずつ順に映す（4拍＝2秒ごとに次の場面。最後まで行ったら最初から）
- * - 下の数字（URAJI）を押すと、その場面で止まる。もう一度押すと、また流れる
- * - 最初に押すボタンは、本物の画面の端（Safari のバーのある所など）をページの端から矢印で指す
- * - 絵は、OS のメニューやシートが出ても隠れない側に置く（下から出るなら上、上から出るなら下）
- * - 動きを減らす設定の人には、流さずに1手目で止めておく（数字で送る）
+ * 11/6 夜の実機で「すんごいわかりにくい」。前の形（大きな絵を2秒ごとに1手ずつ映す）でつまずいた所を直した：
+ * - 勝手に進まない。本物の画面と見比べている間に絵が変わってしまっていた
+ * - 一覧はページの上に置く。OS のメニューやシートは下から出て画面の下半分を隠すが、上の一覧は操作の途中も見えたまま
+ * - iOS 26 の「その他」の1手を足した（共有シートは最初に4つだけ見せ、「ホーム画面に追加」はその先にある）
+ * - 押すものは OS の画面の字と絵で書く（共有・その他・ホーム画面に追加・追加）。自分の画面で同じ字を探せるように
+ * - 最初に押すボタンは、本物のバーと同じ並びの絵で場所を見せ、本物のボタンを矢印で指す（ずっと出しておく）
+ * - 題は OS の字（「ホーム画面に追加」など）とアイコン。自分たちの言葉は足さない。
+ *   言葉を添える案（WORDS）は、手ごとに一言（右下の ••• など）を足す
  */
 import type { InstallPath } from '../install/detect';
+import { glyphAt } from '../install/glyphs';
 import { scenesFor } from '../install/scenes';
+import { guideFor, type Step } from '../install/steps';
 import { urajiArrow, urajiDigit } from '../install/uraji';
 
 export interface InstallScreen {
@@ -20,71 +25,86 @@ export interface InstallScreen {
   stop(): void;
 }
 
-const STEP_MS = 2000;
+/** 手ごとに一言を添えるか（本人が選ぶ。添えないときも OS の字は出す） */
+export const WORDS = false;
+
+const g = (name: Parameters<typeof glyphAt>[0], size = 28) =>
+  `<svg class="gl" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true">${glyphAt(name, 0, 0, size)}</svg>`;
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c);
+
+/** 押すもの1つを、OS の画面での見た目に似せて描く */
+function control(s: Step, icon: string): string {
+  const label = s.label ? `<b>${esc(s.label)}</b>` : '';
+  switch (s.kind) {
+    case 'circle':
+      return `<span class="ctl circle">${s.glyph ? g(s.glyph, 34) : ''}</span>`;
+    case 'tool':
+      return `<span class="ctl tool">${s.glyph ? g(s.glyph, 30) : ''}</span>`;
+    case 'menu':
+      return `<span class="ctl menu">${s.glyph ? g(s.glyph, 24) : ''}${label}</span>`;
+    case 'action':
+      return `<span class="ctl action"><span class="disc">${s.glyph ? g(s.glyph, 24) : ''}</span>${label}</span>`;
+    case 'row':
+      return `<span class="ctl row">${label}${s.glyph ? g(s.glyph, 24) : ''}</span>`;
+    case 'pill':
+      return `<span class="ctl pill">${label}</span>`;
+    case 'icon':
+      return `<span class="ctl appicon"><img src="${icon}" alt="" width="44" height="44"></span>`;
+  }
+}
+
+/** 画面のどこにあるか（小さな電話の縁と、その隅の点） */
+const where = (w: Step['where']) => (w ? `<span class="where" data-where="${w}" aria-hidden="true"></span>` : '');
+
+/** 読み上げ用の一言（画面には出さない） */
+function spoken(s: Step, i: number): string {
+  const what = s.label ?? (s.kind === 'icon' ? 'ホーム画面のアイコン' : s.hint);
+  return `${i + 1}. ${what}${s.optional ? '（出たときだけ）' : ''}`;
+}
 
 export function createInstall(opts: {
   path: Exclude<InstallPath, 'installed' | 'desktop'>;
   icon: string;
   onSkip: () => void;
+  ua?: string;
 }): InstallScreen {
-  const sc = scenesFor(opts.path, opts.icon, 'inst');
+  const guide = guideFor(opts.path, opts.ua ?? (typeof navigator === 'undefined' ? '' : navigator.userAgent));
+  const top = guide.pointer === 'top-right';
+  // 最初に押すボタンのある所：1枚目の場面の、バーのある帯だけを切り出す（本物のバーと同じ並び）
+  const first = scenesFor(opts.path, opts.icon, 'inst').frames[0].replace('viewBox="0 0 320 300"', `viewBox="${top ? '0 0 320 112' : '0 188 320 112'}"`);
   const el = document.createElement('main');
   el.className = 'phone install';
-  el.dataset.stage = sc.stage;
-  el.dataset.pointer = sc.pointer;
+  el.dataset.pointer = guide.pointer;
+  el.dataset.words = WORDS ? 'on' : 'off';
 
-  const nav = sc.frames
-    .map((_, i) => `<button type="button" class="step" data-i="${i}" aria-label="${i + 1}手目">${urajiDigit(i + 1)}</button>`)
+  const rows = guide.steps
+    .map(
+      (s, i) =>
+        `<li class="st" data-kind="${s.kind}"${s.optional ? ' data-optional=""' : ''} aria-label="${esc(spoken(s, i))}">` +
+        `<span class="no" aria-hidden="true">${urajiDigit(i + 1)}</span>` +
+        `<span class="what" aria-hidden="true">${control(s, opts.icon)}${where(s.where)}</span>` +
+        (s.hint ? `<span class="hint" aria-hidden="true">${esc(s.hint)}</span>` : '') +
+        `</li>`,
+    )
     .join('');
+  const bar = `<div class="bar-pic" aria-hidden="true">${first}</div>`;
   el.innerHTML = `
-    <button type="button" class="skip" aria-label="このままブラウザで開く"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-    <section class="movie">
-      <div class="screens">${sc.frames.join('')}</div>
-      <nav class="steps">${nav}</nav>
+    <button type="button" class="skip" aria-label="置かずに、このままブラウザで開く"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    ${top ? bar : ''}
+    <header class="ttl"><img src="${opts.icon}" alt="" width="40" height="40"><h1>${esc(guide.title)}</h1></header>
+    <ol class="list">${rows}</ol>
+    <section class="one" hidden>
+      <button type="button" class="one-tap" aria-label="${esc(guide.title)}"><img src="${opts.icon}" alt="" width="52" height="52"><span class="arrow">${urajiArrow('down')}</span></button>
     </section>
-    <section class="one">
-      <button type="button" class="one-tap" aria-label="ホーム画面に追加"><img src="${opts.icon}" alt="" width="52" height="52"><span class="arrow">${urajiArrow('down')}</span></button>
-    </section>
+    <div class="spacer"></div>
+    ${top ? '' : bar}
     <div class="pointer" aria-hidden="true">${urajiArrow('down')}</div>
   `;
-  const frames = Array.from(el.querySelectorAll<SVGElement>('.screens .frame'));
-  const steps = Array.from(el.querySelectorAll<HTMLButtonElement>('.steps .step'));
+  const list = el.querySelector('.list') as HTMLElement;
   const one = el.querySelector('.one') as HTMLElement;
   const oneTap = el.querySelector('.one-tap') as HTMLButtonElement;
-  one.hidden = true;
+  const barPic = el.querySelector('.bar-pic') as HTMLElement;
   el.querySelector('.skip')!.addEventListener('click', opts.onSkip);
-
-  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let now = 0;
-  let playing = !reduce;
-  let timer: number | undefined;
-
-  function show(i: number): void {
-    now = i;
-    frames.forEach((f, k) => f.classList.toggle('now', k === i));
-    steps.forEach((s, k) => {
-      s.classList.toggle('now', k === i);
-      s.setAttribute('aria-pressed', String(k === i && !playing));
-    });
-    // 本物のボタンを指す矢印は、1手目を映している間だけ
-    el.classList.toggle('first', i === 0);
-  }
-  function play(): void {
-    window.clearInterval(timer);
-    timer = undefined;
-    if (!playing || frames.length < 2) return;
-    timer = window.setInterval(() => show((now + 1) % frames.length), STEP_MS);
-  }
-  steps.forEach((s, i) =>
-    s.addEventListener('click', () => {
-      // 映っている場面の数字を押すと流す／止めるが切り替わる。別の数字なら、そこへ飛んで止まる
-      playing = i === now ? !playing : false;
-      show(i);
-      play();
-    }),
-  );
-  show(0);
-  play();
 
   let prompt: (() => Promise<boolean>) | null = null;
   oneTap.addEventListener('click', async () => {
@@ -95,30 +115,29 @@ export function createInstall(opts: {
     if (ok) done();
   });
 
-  /** 入った。あとはホーム画面のアイコンから開くだけ（最後の場面で止める） */
+  /** 入った。あとはホーム画面のアイコンから開くだけ（最後の手だけを明るく） */
   function done(): void {
     prompt = null;
     one.hidden = true;
-    el.querySelector<HTMLElement>('.movie')!.hidden = false;
+    list.hidden = false;
+    barPic.hidden = true;
+    el.classList.remove('prompt');
     el.classList.add('installed');
-    playing = false;
-    show(frames.length - 1);
-    play();
   }
 
   return {
     el,
     setPrompt(p) {
       prompt = p;
-      // ボタン1つで入れられるなら、場面の代わりにボタンだけを出す
+      // ボタン1つで入れられるなら、手順の代わりにボタンだけを出す
       one.hidden = !p;
-      el.querySelector<HTMLElement>('.movie')!.hidden = !!p;
+      list.hidden = !!p;
+      barPic.hidden = !!p;
       el.classList.toggle('prompt', !!p);
     },
     done,
     stop() {
-      window.clearInterval(timer);
-      timer = undefined;
+      // 動いているものは無い（勝手に進む絵をやめた）
     },
   };
 }
