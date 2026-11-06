@@ -248,3 +248,15 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 }
 .lab-field input[type="range"] { height: 32px; padding: 0; border: none; background: transparent; }
 .lab-heard { border: 1px solid var(--line-strong); border-radius: 12px; padding: 12px; font-size: 16px; font-weight: 700; line-height: 1.8; font-variant-numeric: tabular-nums; }
+/* マイクの様子（聞く側）：帯ごとの針。縦の線は最近の長押しの間のいちばん強い所 */
+.lab-probe { display: grid; gap: 8px; border: 1px solid var(--line-strong); border-radius: 12px; padding: 12px; font-size: 13px; }
+.lab-kv { display: flex; justify-content: space-between; gap: 12px; color: var(--quiet); }
+.lab-kv b { color: var(--ink); text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.lab-band { display: grid; grid-template-columns: 6.5em 1fr 4em; align-items: center; gap: 8px; font-weight: 700; }
+.lab-band > span:first-child { color: var(--quiet); }
+.lab-band b { text-align: right; font-variant-numeric: tabular-nums; }
+.lab-band .bar { position: relative; height: 14px; border-radius: 7px; background: var(--field); border: 1px solid var(--line-strong); overflow: hidden; }
+.lab-band .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--ink); }
+.lab-band .max { position: absolute; top: -2px; bottom: -2px; width: 3px; margin-left: -1.5px; background: var(--ink); opacity: .55; }
+.lab-warn { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--ink); color: var(--bg); font-weight: 700; line-height: 1.6; }
+.lab-hint { margin: 0; color: var(--quiet); line-height: 1.7; }

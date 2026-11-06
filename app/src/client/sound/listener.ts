@@ -2,6 +2,30 @@ import { getCodec, parseSoundPayload, type SoundDecoder } from './codec';
 
 export type MicState = 'off' | 'starting' | 'ready' | 'denied' | 'unsupported' | 'error';
 
+/** 音の試し（/lab）で見る、マイクの様子。どちらのスマホが弱いかを切り分けるため */
+export interface MicProbe {
+  /** 音の処理の速さ（Hz）。超音波（15kHz より上）を拾うには 40000 以上が要る */
+  rate: number;
+  /** マイク側が名乗る取り込みの速さ（Hz。分からなければ null） */
+  trackRate: number | null;
+  /** マイクの名前（AirPods などに切り替わっていないか） */
+  label: string;
+  /** エコー消しが入っているか（分からなければ null） */
+  echo: boolean | null;
+  /** 聞こえる帯（1〜7kHz。3音のフレーズが入る所）のいちばん強い所（dB） */
+  audibleDb: number;
+  /** 超音波の帯（15〜20kHz。番号が入る所）のいちばん強い所（dB） */
+  ultraDb: number;
+}
+
+/** 超音波を拾えない取り込み・マイクか（拾えないなら理由の短い言葉、拾えそうなら null） */
+export function micLimit(p: Pick<MicProbe, 'rate' | 'trackRate' | 'label'>): string | null {
+  const rate = Math.min(p.rate, p.trackRate ?? p.rate);
+  if (rate < 40_000) return `取り込みが ${rate}Hz なので、超音波は拾えない`;
+  if (/airpods|bluetooth|headset|hands-?free|buds|beats|イヤホン|ヘッドセット/i.test(p.label)) return `マイクが「${p.label}」になっている`;
+  return null;
+}
+
 /**
  * 鬼のスマホが「捕まえた」を長押ししている間、マイクで相手の3桁を聞く。
  *
@@ -17,6 +41,9 @@ export class SoundListener {
   private node: ScriptProcessorNode | null = null;
   private sink: GainNode | null = null;
   private decoder: SoundDecoder | null = null;
+  /** 音の試しで帯ごとの大きさを見るときだけ作る（試合では作らない） */
+  private analyser: AnalyserNode | null = null;
+  private spectrum: Float32Array<ArrayBuffer> | null = null;
   private listening = false;
   private onCode: ((code: string) => void) | null = null;
   private opening: Promise<void> | null = null;
@@ -138,6 +165,45 @@ export class SoundListener {
     this.onCode = null;
   }
 
+  /**
+   * 音の試し（/lab）用：いまマイクに入っている音を、聞こえる帯と超音波の帯に分けて見る。
+   * 相手が鳴らしている間に聞こえる帯だけ上がって超音波の帯が上がらなければ、超音波が途中で消えている
+   */
+  probe(): MicProbe | null {
+    const ctx = this.ctx;
+    const source = this.source;
+    if (!ctx || !source || this.state !== 'ready') return null;
+    if (!this.analyser || !this.spectrum) {
+      const a = ctx.createAnalyser();
+      a.fftSize = 2048;
+      a.smoothingTimeConstant = 0.5;
+      source.connect(a);
+      this.analyser = a;
+      this.spectrum = new Float32Array(a.frequencyBinCount);
+    }
+    const spec = this.spectrum;
+    this.analyser.getFloatFrequencyData(spec);
+    const binHz = ctx.sampleRate / this.analyser.fftSize;
+    const peak = (lo: number, hi: number): number => {
+      let m = -Infinity;
+      for (let i = Math.max(0, Math.floor(lo / binHz)); i <= Math.min(spec.length - 1, Math.ceil(hi / binHz)); i++) {
+        if (spec[i] > m) m = spec[i];
+      }
+      return Number.isFinite(m) ? m : -160;
+    };
+    const track = this.stream?.getAudioTracks()[0];
+    const s: MediaTrackSettings = track?.getSettings?.() ?? {};
+    const nyquist = ctx.sampleRate / 2;
+    return {
+      rate: ctx.sampleRate,
+      trackRate: typeof s.sampleRate === 'number' && s.sampleRate > 0 ? s.sampleRate : null,
+      label: track?.label ?? '',
+      echo: typeof s.echoCancellation === 'boolean' ? s.echoCancellation : null,
+      audibleDb: peak(1000, 7000),
+      ultraDb: nyquist > 15_000 ? peak(15_000, Math.min(20_000, nyquist)) : -160,
+    };
+  }
+
   /** ゲームの段階が終わったら呼ぶ。マイクを閉じる */
   close(): void {
     this.pause();
@@ -145,9 +211,12 @@ export class SoundListener {
       this.source?.disconnect();
       this.node?.disconnect();
       this.sink?.disconnect();
+      this.analyser?.disconnect();
     } catch {
       // すでに外れている
     }
+    this.analyser = null;
+    this.spectrum = null;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.decoder?.free();
     this.stream = null;
