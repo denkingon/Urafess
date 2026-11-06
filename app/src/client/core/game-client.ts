@@ -354,7 +354,16 @@ export class GameClient {
 
   command(
     op: HostOp,
-    extra: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string; rid?: string; ok?: boolean } = {},
+    extra: {
+      winner?: Winner;
+      durations?: number[];
+      ratio?: { oni: number; runner: number };
+      mic?: 'always' | 'hold';
+      pid?: string;
+      by?: string;
+      rid?: string;
+      ok?: boolean;
+    } = {},
   ): boolean {
     const game = this.state.game;
     if (!this.isOpen() || !game) return false;
