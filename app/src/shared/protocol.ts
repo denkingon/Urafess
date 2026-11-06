@@ -1,4 +1,7 @@
 import type { Candidate, CaptureVia } from './capture';
+
+/** 牢屋からどうやって出たか。sound＝助ける人の音を拾った、together＝同時に長押し、mission＝ミッション成功、host＝主催者が手で */
+export type RescueVia = 'sound' | 'together' | 'mission' | 'host';
 import type { RoleId } from './rules';
 import type { Timer } from './schedule';
 
@@ -35,6 +38,10 @@ export interface GameView {
   nightAt?: number;
   /** 配役の比率（鬼：逃走者）。古いサーバーからは来ない */
   ratio?: { oni: number; runner: number };
+  /** 逃走者が全員同時に牢屋に入った時刻（その配役は鬼の勝ちで決まり）。まだなら null。古いサーバーは送らない */
+  allCaughtAt?: number | null;
+  /** result をアプリが決めた（true）か、主催者が押した（false）か */
+  resultAuto?: boolean;
   /** 鬼のマイクの聞き方（always＝ずっと聞く／hold＝押している間だけ）。古いサーバーからは来ない（そのときは always） */
   micMode?: 'always' | 'hold';
 }
@@ -51,8 +58,14 @@ export interface MeView {
   removed: boolean;
   /** 今の配役での自分の3桁。逃走者が「捕まった」を長押ししている間、スマホがこれを音で鳴らす */
   code: string | null;
-  /** 今の配役で捕まった（逃走者だけ） */
+  /** いま牢屋にいる（逃走者だけ）。解放されると null に戻る。また捕まれば入り直す */
   caught: { byNum: number | null; byName: string | null; at: number; via: CaptureVia } | null;
+  /** 今の配役での「助ける番号」。牢屋の人を助けるとき、スマホがこれを最大音量で鳴らす（捕まったときの code とは別） */
+  rcode?: string | null;
+  /** 解放されたあと、この時刻（サーバー時刻）までは捕まらない。無ければ null */
+  freeUntil?: number | null;
+  /** 今の配役で牢屋から出した人数（逃走者だけ） */
+  rescues?: number;
   /** 今の配役で捕まえた人数（鬼だけ） */
   catches: number;
   /** 逃走者の「捕まった」（選ぶまで開いている）。at は最初に長押しを始めたサーバー時刻。cands は並べる候補 */
@@ -72,6 +85,10 @@ export interface HostCapture {
     at: number | null;
     /** 「捕まった」を押して答え待ち */
     open: boolean;
+    /** 牢屋から出た直後で、この時刻まで捕まらない（古いサーバーは送らない） */
+    freeUntil?: number | null;
+    /** この配役で牢屋から出した人数 */
+    rescues?: number;
   }[];
   oni: { pid: string; num: number; name: string; catches: number }[];
 }
@@ -151,6 +168,8 @@ export type HostOp =
   | 'capture'
   /** 主催者が捕獲を取り消す（pid＝逃走者） */
   | 'release'
+  /** ミッション成功：牢屋の人を出す（n＝人数。省くと全員。牢屋に入ったのが古い順） */
+  | 'mission-free'
   /** 次に進む：走っているタイマーの、いまの段階を2秒後に終わらせて次の段階へ */
   | 'skip'
   /** 夜を終える：全員の画面を SEE YOU AGAIN にする。試合中（時間が0になる前）はできない */
@@ -183,6 +202,8 @@ export type ClientMsg =
       by?: string;
       rid?: string;
       ok?: boolean;
+      /** ミッション成功で出す人数（省くと全員） */
+      n?: number;
     }
   /**
    * 長押し。on=true は押し始め（HOLD_MIN_MS 押し続けたら送る）、false は離した。
@@ -202,6 +223,12 @@ export type ClientMsg =
   /** 逃走者が「捕まった」を取り下げた（押し間違い） */
   | { t: 'cancel' }
   /**
+   * 牢屋から出す長押し。牢屋の人は「助けて」、外の逃走者は「助ける」（どちらも同じ形）。
+   * on=true は押し始め（HOLD_MIN_MS 押し続けたら送る。at は指を置いた瞬間）、false は離した（start はどの長押しか）。
+   * 2人の長押しが重なった瞬間に、牢屋の人が出る。音で出るときは heard（牢屋の人のスマホが「助ける番号」を拾った）が来る
+   */
+  | { t: 'rescue'; on: boolean; at?: number; start?: number }
+  /**
    * 走ると光る。on=true は「走っている」（光っている間 RUN_SEND_EVERY_MS ごとに送り直す）、false は「止まった」。
    * 位置が取れていれば付ける（緯度・経度・誤差の半径 m）。ゲームの段階の外・捕まった人の分は、サーバーが捨てる
    */
@@ -212,9 +239,11 @@ export type ClientMsg =
 /**
  * 本人だけに出す短い知らせ（画面の帯・振動）。状態そのものは snap の me で届く。
  * captured＝鬼「◯◯を捕まえた」、caught＝逃走者「◯◯に捕まった」、heard＝鬼「◯◯をロックオン（音を拾った）」、
- * nominated＝鬼「◯◯に選んでもらう」、released＝主催者が捕獲を取り消した、closed＝今は記録できない、already＝もう捕まっている
+ * nominated＝鬼「◯◯に選んでもらう」、released＝主催者が捕獲を取り消した、closed＝今は記録できない、already＝もう捕まっている。
+ * 牢屋：freed＝牢屋の人「◯◯が助けてくれた」（other が無ければミッション・主催者）、saved＝助けた人「◯◯を牢屋から出した」、
+ * immune＝その逃走者は解放された直後で、まだ捕まらない
  */
-export type NoticeKind = 'captured' | 'caught' | 'heard' | 'nominated' | 'released' | 'closed' | 'already';
+export type NoticeKind = 'captured' | 'caught' | 'heard' | 'nominated' | 'released' | 'closed' | 'already' | 'freed' | 'saved' | 'immune';
 
 /** 手動で選ぶ一覧の1人 */
 export interface RosterEntry {
@@ -238,7 +267,7 @@ export type ServerMsg =
   | { t: 'reject'; op: HostOp; reason: string; cv: number }
   /** 試合中の合図。全員に同じ1本を送る。s はサーバーの時刻 */
   | { t: 'hb'; s: number }
-  | { t: 'notice'; kind: NoticeKind; other?: { num: number; name: string }; via?: CaptureVia; at: number }
+  | { t: 'notice'; kind: NoticeKind; other?: { num: number; name: string }; via?: CaptureVia | RescueVia; at: number }
   /** 手動で選ぶ一覧（頼んだ本人にだけ。鬼には捕まっていない逃走者、逃走者には鬼） */
   | { t: 'roster'; people: RosterEntry[] }
   /** 走ると光る：いま光っている全員（全員に同じものを送る。変わるたびに、まとめて）。s はサーバーの時刻 */

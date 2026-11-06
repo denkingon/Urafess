@@ -1,4 +1,5 @@
 import { CAPTURE_PHASE_INDEX, captureOpenAt } from './capture';
+import { decideWinner, endReason, everyoneJailed } from './jail';
 import type { GameView, MeView, Winner } from './protocol';
 import { CLAIM_GRACE_MS, PHASES, ROLE_NAME } from './rules';
 import { formatClock, positionAt } from './schedule';
@@ -50,6 +51,13 @@ export interface PhoneView {
   glow: 'none' | 'prep' | 'live';
   /** 走ると光る：いま走ったら光る（配役に入っていて、捕まっておらず、ゲームの段階が動いている） */
   lightable: boolean;
+  /**
+   * 牢屋：help＝自分が牢屋にいて、出られる時間（マイクで「助ける」の音を聞く・「助けて」を長押しできる）、
+   * save＝自分は外にいて、牢屋に仲間がいる（「助ける」を長押しできる）、none＝どちらでもない。古い呼び出し側は省略できる
+   */
+  rescue?: 'none' | 'help' | 'save';
+  /** 解放された直後で、まだ捕まらない残りの時間（ms）。0 ならふつう */
+  immuneMs?: number;
 }
 
 /** 夜の最後の画面に出す言葉 */
@@ -188,62 +196,93 @@ export function participantView(
   }
 
   if (game.stage === 'result') {
+    const winner = game.result ?? decideWinner(game);
     return {
       ...base,
       step: 6,
       label: '結果発表',
-      big: game.result ? WINNER_TEXT[game.result] : '発表待ち',
-      message: '次のラウンドは配役から。',
-      scene: game.result ? 'result' : 'gather',
-      word: !game.result ? ['発表待ち', 'WAITING'] : game.result === role ? ['勝ち', 'WIN'] : ['負け', 'LOSE'],
-      note: game.result ? WINNER_PAIR[game.result] : null,
-      outcome: !game.result ? null : game.result === role ? 'win' : 'lose',
+      big: WINNER_TEXT[winner],
+      message: `${game.resultAuto === false ? '' : endReason(game)}次のラウンドは配役から。`,
+      scene: 'result',
+      word: winner === role ? ['勝ち', 'WIN'] : ['負け', 'LOSE'],
+      note: WINNER_PAIR[winner],
+      outcome: winner === role ? 'win' : 'lose',
     };
   }
 
   // stage === 'timer'
   const timer = game.timer!;
   const pos = positionAt(timer, serverNow);
-  // 古いサーバー（捕獲の前の版）は caught を送らない。undefined も「捕まっていない」
+  // caught＝いま牢屋にいる（古いサーバー（捕獲の前の版）は送らない。undefined も「いない」）
   const caught = role === 'runner' && me.caught != null;
-  // 長押しはゲームの段階（終わった直後の少しを含む）だけ。捕まった人には出さない
+  const allCaught = game.allCaughtAt != null;
+  // 解放された直後は捕まらない（「捕まった」は出さない）
+  const immuneMs = role === 'runner' && !caught && me.freeUntil != null ? Math.max(0, me.freeUntil - serverNow) : 0;
+  // 長押しはゲームの段階（終わった直後の少しを含む）だけ。牢屋の人・捕まらない間の人には出さない
   const open = captureOpenAt(timer, serverNow) || captureOpenAt(timer, serverNow - CLAIM_GRACE_MS);
-  const touch: PhoneView['touch'] = !open ? 'none' : role === 'oni' ? 'oni' : caught ? 'none' : 'runner';
+  const touch: PhoneView['touch'] = !open ? 'none' : role === 'oni' ? 'oni' : caught || immuneMs > 0 ? 'none' : 'runner';
+  // 牢屋から出られるのは、ゲームの段階が動いている間だけ（全員が入ったら、もう出られない）
+  const rescueOpen = captureOpenAt(timer, serverNow) && !allCaught;
+  const rescue: PhoneView['rescue'] =
+    role !== 'runner' || !rescueOpen ? 'none' : caught ? 'help' : (game.counts.caught ?? 0) > 0 ? 'save' : 'none';
   if (pos.kind === 'done') {
+    // 時間が0になった：結果はアプリが決める（サーバーの確定を待たずに、同じ決め方で出す）
+    const winner = decideWinner(game);
     return {
-      ...base, step: 6, label: '結果発表', big: '発表待ち', message: '主催者の発表を待つ。', touch, caught,
-      scene: 'gather', word: ['発表待ち', 'WAITING'],
+      ...base, step: 6, label: '結果発表', big: WINNER_TEXT[winner], message: endReason(game), touch, caught,
+      scene: 'result', word: winner === role ? ['勝ち', 'WIN'] : ['負け', 'LOSE'], note: WINNER_PAIR[winner],
+      outcome: winner === role ? 'win' : 'lose',
     };
   }
   // 光るのは、ゲームの段階が動いている間だけ（止めている間・始まる前の2秒は光らない）。捕まった人は光らない
   const lightable = !caught && captureOpenAt(timer, serverNow);
   const paused = timer.status === 'paused';
+  const afterGame = pos.index > CAPTURE_PHASE_INDEX;
   const message = paused
     ? '主催者の合図を待つ。'
-    : caught
-      ? `${me.caught?.byName ? `${me.caught.byName}に` : ''}捕まった。その場の決まりに従う。`
-      : MESSAGES[role][pos.index + 1];
+    : afterGame && (allCaught || everyoneJailed(game.counts))
+      ? '全員が牢屋に入った。ゲーム終了。広場に戻る。'
+      : caught && pos.index === CAPTURE_PHASE_INDEX
+        ? allCaught
+          ? '全員が牢屋に入った。ゲーム終了。'
+          : '牢屋で待つ。仲間に触れてもらうか、ミッションで出られる。'
+        : immuneMs > 0
+          ? `牢屋から出た。あと${Math.ceil(immuneMs / 1000)}秒は捕まらない。牢屋から離れる。`
+          : MESSAGES[role][pos.index + 1];
+  const phaseLabel = PHASES[pos.index].label;
   return {
     ...base,
     step: pos.index + 2,
-    label: paused ? `一時停止中（${PHASES[pos.index].label}）` : caught ? `${PHASES[pos.index].label}・捕まった` : PHASES[pos.index].label,
+    label: paused ? `一時停止中（${phaseLabel}）` : caught ? `${phaseLabel}・牢屋` : immuneMs > 0 ? `${phaseLabel}・捕まらない` : phaseLabel,
     big: formatClock(pos.remainingMs),
     message,
     touch,
     caught,
     scene: caught ? 'jail' : SCENES[role][pos.index + 1].scene,
-    word: paused ? ['一時停止', 'PAUSED'] : caught ? ['捕まった', 'CAUGHT'] : SCENES[role][pos.index + 1].word,
+    word: paused
+      ? ['一時停止', 'PAUSED']
+      : caught && !afterGame
+        ? allCaught
+          ? ['ゲーム終了', 'GAME OVER']
+          : ['牢屋', 'JAIL']
+        : immuneMs > 0
+          ? ['捕まらない', 'SAFE']
+          : SCENES[role][pos.index + 1].word,
     note: paused
       ? ['主催者の合図を待つ', 'Wait for the host']
-      : caught
-        ? me.caught?.byName
-          ? [`${me.caught.byName}に捕まった`, `Caught by ${me.caught.byName}`]
-          : ['その場の決まりに従う', 'Follow the rules on site']
-        : null,
+      : allCaught || (afterGame && everyoneJailed(game.counts))
+        ? ['全員が牢屋に入った', 'Every runner is in jail']
+        : caught && !afterGame
+          ? ['仲間に触れてもらうか、ミッションで出られる', 'A teammate’s touch or a mission gets you out']
+          : immuneMs > 0
+            ? [`あと${Math.ceil(immuneMs / 1000)}秒は捕まらない。牢屋から離れる`, `Safe for ${Math.ceil(immuneMs / 1000)}s. Get away from the jail`]
+            : null,
     time: formatClock(pos.remainingMs),
     paused,
     glow,
     lightable,
+    rescue,
+    immuneMs,
   };
 }
 
@@ -293,20 +332,21 @@ export function hostStatus(game: GameView, serverNow: number): { title: string; 
       return { title: '夜は終わった', big: FAREWELL, next: '次：配役で再開／新しい夜を始める' };
     case 'result':
       return {
-        title: '6 結果発表',
-        big: game.result ? WINNER_TEXT[game.result] : '発表待ち',
-        next: '次：配役で次のラウンド',
+        title: `6 結果発表（${game.resultAuto === false ? '主催者が決めた' : 'アプリが決めた'}）`,
+        big: WINNER_TEXT[game.result ?? decideWinner(game)],
+        next: `${game.resultAuto === false ? '' : endReason(game)}次：配役で次のラウンド`,
       };
     case 'timer': {
       const timer = game.timer!;
       const pos = positionAt(timer, serverNow);
-      if (pos.kind === 'done') return { title: '6 結果発表', big: '発表待ち', next: '勝ったほうを押す' };
+      if (pos.kind === 'done') return { title: '6 結果発表', big: WINNER_TEXT[decideWinner(game)], next: `${endReason(game)}アプリが結果を出す` };
       const nextLabel = pos.index + 1 < PHASES.length ? PHASES[pos.index + 1].label : '結果発表';
       const paused = timer.status === 'paused';
+      const allIn = game.allCaughtAt != null ? '全員が牢屋に入った（鬼の勝ちで決まり）　' : '';
       return {
         title: `${pos.index + 2} ${PHASES[pos.index].label}${paused ? '（一時停止中）' : ''}`,
         big: formatClock(pos.remainingMs),
-        next: `次：${nextLabel}`,
+        next: `${allIn}次：${nextLabel}`,
       };
     }
   }
