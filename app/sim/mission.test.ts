@@ -205,7 +205,8 @@ describe('ミッション（集合写真）', () => {
 
     // 結果を押して次のラウンド（配役）→ ミッションと成功の一覧は消える。写真は名簿と一緒に残る
     host.command('result', { winner: 'runner' });
-    await waitFor('結果', () => host.state.game?.stage === 'result');
+    // 時間が0になるとアプリが先に結果を決めるので、主催者の手直しが届いた（resultAuto が外れた）のを待つ
+    await waitFor('結果', () => host.state.game?.stage === 'result' && host.state.game?.resultAuto === false);
     host.command('assign');
     await waitFor('次の配役', () => host.state.game?.round === 2 && players.every((p) => p.state.game?.mission === null));
     expect(players.every((p) => (p.state.game?.missionOk ?? []).length === 0)).toBe(true);

@@ -215,6 +215,12 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 /* 捕獲（参加者の画面の下。親指で押す） */
 .slot { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
 .capture { display: flex; flex-direction: column; gap: 10px; }
+/* 牢屋：「助ける」は点線の枠（「捕まった」と見分ける）、牢屋の「助けて」は二重の枠 */
+.jail { display: flex; flex-direction: column; gap: 10px; }
+.jail[data-mode="save"] .hold { border-style: dashed; min-height: 88px; }
+.jail[data-mode="save"] .hold b { font-size: 24px; }
+.jail[data-mode="help"] .hold { border-style: double; border-width: 6px; }
+.jail .cap-status { margin: 0; text-align: center; }
 .hold {
   position: relative; overflow: hidden; min-height: 116px; border-radius: 16px; border: 2px solid var(--ink);
   background: transparent; color: var(--ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
@@ -277,6 +283,12 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .cap-host-grid button { min-height: 40px; padding: 0 10px; font-size: 13px; border-radius: 999px; }
 .cap-host-grid button[data-state="caught"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .cap-host-grid button[data-state="open"] { border-style: dashed; border-color: var(--ink); }
+.cap-host-grid button[data-state="immune"] { border-style: double; border-width: 3px; border-color: var(--ink); }
+.mission { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.mission > b { width: 100%; font-size: 14px; }
+.mission button { min-height: 40px; padding: 0 12px; font-size: 13px; }
+.mission label { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+.mission input { width: 56px; min-height: 40px; }
 
 /* 音の試し（/lab） */
 .lab { gap: 14px; padding-top: calc(40px + env(safe-area-inset-top)); }

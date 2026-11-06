@@ -10,6 +10,7 @@ import { Sensors } from './sense';
 import { createCapture } from './views/capture';
 import { createGlow } from './views/glow';
 import { createHost } from './views/host';
+import { createJail } from './views/jail';
 import { createInstall, type InstallScreen } from './views/install';
 import { createJoin, type EntryMode } from './views/join';
 import { createLab } from './views/lab';
@@ -162,7 +163,9 @@ function startPlayer(): void {
   const emitter = new SoundEmitter();
   const listener = new SoundListener();
   const capture = createCapture({ client, emitter, listener });
-  phone.slot.append(capture.el);
+  // 牢屋：牢屋の人はマイクで聞き、外の逃走者は「助ける」で鳴らす
+  const jail = createJail({ client, emitter, listener });
+  phone.slot.append(jail.el, capture.el);
   // ミッション（集合写真）：題と「写真を撮る」は長押しの上に、成功した写真は結果発表の間だけ真ん中に
   const mission = createMission({
     gameId,
@@ -258,6 +261,7 @@ function startPlayer(): void {
     phone.update(view);
     capture.update(view, s);
     mission.update(s.game, s.me);
+    jail.update(view, s);
     glow.update(view, s, client.serverNow());
     // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）
     if (s.me.code && s.me.code !== preparedCode) {
