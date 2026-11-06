@@ -34,7 +34,7 @@ export interface Radar {
 const NS = 'http://www.w3.org/2000/svg';
 const R = 100;
 /** 名前を出すのは近い順にこの人数まで（重なって読めなくなるので） */
-const LABEL_MAX = 4;
+const LABEL_MAX = 3;
 
 function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number> = {}): SVGElementTagNameMap[K] {
   const e = document.createElementNS(NS, tag);

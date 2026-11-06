@@ -153,13 +153,12 @@ export function createLightsBoard(listMax = 1): LightsBoard {
             path.setAttribute('transform', `rotate(${Math.round(b - (heading ?? 0))})`);
             arrow.append(path);
           }
+          // 番号は出さない（人は名前で見分ける）
           const name = document.createElement('b');
           name.textContent = r.name;
-          const num = document.createElement('span');
-          num.textContent = `${r.num}番`;
           const where = document.createElement('em');
           where.textContent = d === null || b === null ? '場所は出ていない' : heading === null ? `${compassName(b)} ${distanceText(d)}` : distanceText(d);
-          li.append(arrow, name, num, where);
+          li.append(arrow, name, where);
           return li;
         });
         if (rows.length > listMax) {

@@ -316,17 +316,17 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 12px 16px; text-align: center;
 }
 .glow-ask b { font-size: 20px; font-weight: 900; line-height: 1.3; }
-.glow-ask span { font-size: 12px; line-height: 1.5; color: var(--quiet); font-weight: 500; }
+.glow-ask span { font-size: 16px; line-height: 1.5; color: var(--quiet); font-weight: 500; }
 .glow[data-glow="live"] .glow-ask { min-height: 52px; padding: 8px 12px; }
 .glow[data-glow="live"] .glow-ask b { font-size: 17px; }
 .glow[data-glow="live"] .glow-ask span { display: none; }
-.glow-note { margin: 0; font-size: 13px; line-height: 1.6; color: var(--quiet); }
+.glow-note { margin: 0; font-size: 16px; line-height: 1.6; color: var(--quiet); }
 .glow-me {
   border-radius: 12px; background: var(--ink); color: var(--bg); padding: 7px 14px;
   display: flex; align-items: baseline; justify-content: center; gap: 12px; flex: none;
 }
 .glow-me b { font-size: 22px; font-weight: 900; letter-spacing: 2px; line-height: 1.2; }
-.glow-me span { font-size: 12px; line-height: 1.4; font-weight: 700; }
+.glow-me span { font-size: 16px; line-height: 1.4; font-weight: 700; }
 @media (prefers-reduced-motion: no-preference) {
   .glow-me { animation: glow-me-pulse 1.2s ease-in-out infinite; }
 }
@@ -337,12 +337,12 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 @container (max-height: 88px) { .radar { display: none; } }
 .glow-radar-msg {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(78%, 280px);
-  margin: 0; text-align: center; font-size: 12px; line-height: 1.6; color: var(--quiet);
+  margin: 0; text-align: center; font-size: 16px; line-height: 1.5; color: var(--quiet);
 }
 .radar-bg { fill: #111; stroke: var(--line-strong); stroke-width: 1; }
 .radar-rings circle { fill: none; stroke: var(--line); stroke-width: 1; }
 .radar-ring-label { fill: #6a6a6a; font-size: 6.5px; font-family: inherit; }
-.radar-north { fill: var(--quiet); font-size: 9px; font-weight: 900; font-family: inherit; }
+.radar-north { fill: var(--quiet); font-size: 11px; font-weight: 900; font-family: inherit; }
 .radar.is-north-up .radar-north { fill: var(--ink); }
 .radar-me-dot { fill: var(--bg); stroke: var(--ink); stroke-width: 1.6; }
 .radar-me-arrow { fill: var(--quiet); }
@@ -352,7 +352,7 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .radar-trail { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; }
 .radar-halo { fill: var(--ink); opacity: 0.55; }
 .radar-dot { fill: var(--ink); }
-.radar-name { fill: var(--ink); font-size: 9px; font-weight: 900; font-family: inherit; paint-order: stroke; stroke: #111; stroke-width: 3px; }
+.radar-name { fill: var(--ink); font-size: 12px; font-weight: 900; font-family: inherit; paint-order: stroke; stroke: #111; stroke-width: 3px; }
 .radar-ping { fill: none; stroke: var(--ink); stroke-width: 1.5; transform-box: fill-box; transform-origin: center; }
 @media (prefers-reduced-motion: no-preference) {
   .radar-ping { animation: radar-ping 0.9s ease-out infinite; }
@@ -360,13 +360,13 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 @keyframes radar-ping { 0% { transform: scale(1); opacity: 0.9; } 100% { transform: scale(3.2); opacity: 0; } }
 .radar-wait { fill: var(--quiet); font-size: 9px; font-family: inherit; }
 .glow-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; flex: none; }
-.glow-list li { display: grid; grid-template-columns: 18px auto auto 1fr; align-items: center; gap: 8px; font-size: 15px; line-height: 1.4; }
-.glow-list b { font-weight: 900; max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.glow-list span { font-size: 12px; color: var(--quiet); white-space: nowrap; }
+.glow-list li { display: grid; grid-template-columns: 18px auto 1fr; align-items: center; gap: 8px; font-size: 17px; line-height: 1.4; }
+.glow-list b { font-weight: 900; max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.glow-list span { font-size: 16px; color: var(--quiet); white-space: nowrap; }
 .glow-list em { font-style: normal; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .glow-list .glow-dir { width: 16px; height: 16px; }
 .glow-list .glow-dir path { fill: var(--ink); }
-.glow-list .glow-more, .glow-list .glow-none { display: block; font-size: 13px; color: var(--quiet); }
+.glow-list .glow-more, .glow-list .glow-none { display: block; font-size: 16px; color: var(--quiet); }
 /* 主催者の画面の光の地図（高さの決まった枠の中ではないので、地図の高さを決めておく） */
 .glow-host .glow-board { flex: none; }
 .glow-host .glow-radar { flex: none; height: min(82vw, 340px); }
@@ -378,4 +378,4 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .lab-lamp.is-lit { background: var(--ink); color: var(--bg); border-color: var(--ink); box-shadow: 0 0 28px 6px rgba(242, 242, 242, 0.35); }
 .lab-lamp.is-lit span { color: var(--bg); }
 .lab-trace { width: 100%; height: 120px; border: 1px solid var(--line-strong); border-radius: 12px; background: #111; }
-.glow-list li.has-more { grid-template-columns: 18px auto auto 1fr auto; }
+.glow-list li.has-more { grid-template-columns: 18px auto 1fr auto; }
