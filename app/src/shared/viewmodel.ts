@@ -174,7 +174,7 @@ export function hostStatus(game: GameView, serverNow: number): { title: string; 
     case 'assigned':
       return { title: '1 配役済み', big: `${game.counts.oni}/${game.counts.runner}`, next: '次：開始で「逃走開始まで」' };
     case 'ended':
-      return { title: '夜は終わった', big: FAREWELL, next: '次：配役で再開／部屋を空にする' };
+      return { title: '夜は終わった', big: FAREWELL, next: '次：配役で再開／新しい夜を始める' };
     case 'result':
       return {
         title: '6 結果発表',
