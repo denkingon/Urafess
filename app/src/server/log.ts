@@ -43,6 +43,11 @@ const KIND_NAME: Record<string, string> = {
   release: '捕獲の取り消し',
   run: '光った（走り出した）',
   'run-end': '消えた',
+  mission: 'ミッションを出した',
+  'mission-close': 'ミッションを締め切った',
+  photo: '写真を送った',
+  'photo-ok': '写真：成功',
+  'photo-no': '写真：やり直し',
 };
 
 /** 走ると光る：消えた理由 */

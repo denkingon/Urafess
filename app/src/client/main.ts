@@ -13,6 +13,7 @@ import { createHost } from './views/host';
 import { createInstall, type InstallScreen } from './views/install';
 import { createJoin, type EntryMode } from './views/join';
 import { createLab } from './views/lab';
+import { createMission, createPhotoLoader } from './views/mission';
 import { createRunLab } from './views/lab-run';
 import { createPhone } from './views/phone';
 import { createScreenKeeper } from './wake-lock';
@@ -162,6 +163,14 @@ function startPlayer(): void {
   const listener = new SoundListener();
   const capture = createCapture({ client, emitter, listener });
   phone.slot.append(capture.el);
+  // ミッション（集合写真）：題と「写真を撮る」は長押しの上に、成功した写真は結果発表の間だけ真ん中に
+  const mission = createMission({
+    gameId,
+    identity: () => client.state.identity,
+    serverNow: () => client.serverNow() ?? Date.now(),
+  });
+  phone.slot.prepend(mission.card);
+  phone.stage.prepend(mission.gallery);
   // 走ると光る：走っているかはこのスマホが決め、光っている間だけ位置を送る
   const sensors = new Sensors();
   const glow = createGlow({ sensors, root: phone.el });
@@ -242,6 +251,7 @@ function startPlayer(): void {
       };
       lastView = waiting;
       phone.update(waiting);
+      mission.update(null, null);
       glow.update(waiting, s, client.serverNow());
       return;
     }
@@ -250,6 +260,7 @@ function startPlayer(): void {
     lastView = view;
     phone.update(view);
     capture.update(view, s);
+    mission.update(s.game, s.me);
     glow.update(view, s, client.serverNow());
     // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）
     if (s.me.code && s.me.code !== preparedCode) {
@@ -302,6 +313,7 @@ function startLab(): void {
 function startHost(token: string): void {
   const client = makeClient({ kind: 'host', token });
   startUpdateChecks(() => !inMatch(client.state.game?.stage));
+  const photos = createPhotoLoader(gameId, () => ({ 'x-host-token': token }));
   // 走ると光る：主催者の画面の地図の真ん中（位置）と向き。主催者は光らない
   const sensors = new Sensors();
   const host = createHost({
@@ -317,6 +329,12 @@ function startHost(token: string): void {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    },
+    photo: (id) => photos.get(id),
+    album: async () => {
+      const res = await fetch(`/api/game/${gameId}/photos`, { headers: { 'x-host-token': token }, cache: 'no-store' });
+      if (!res.ok) throw new Error(`photos ${res.status}`);
+      return res.json();
     },
   }, sensors);
   root.replaceChildren(host.el);

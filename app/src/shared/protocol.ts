@@ -1,4 +1,5 @@
 import type { Candidate, CaptureVia } from './capture';
+import type { PhotoStatus } from './mission';
 import type { RoleId } from './rules';
 import type { Timer } from './schedule';
 
@@ -35,6 +36,41 @@ export interface GameView {
   nightAt?: number;
   /** 配役の比率（鬼：逃走者）。古いサーバーからは来ない */
   ratio?: { oni: number; runner: number };
+  /**
+   * ミッション：いちばん新しいミッション（配役・新しい夜を始めるで消える）。open＝写真を受け付けている。
+   * 古いサーバーからは来ない
+   */
+  mission?: MissionView | null;
+  /** ミッション：このラウンド（配役のあと）に成功した写真。成功したかどうかは全員に見せる。写真そのものは結果発表で */
+  missionOk?: MissionOk[];
+}
+
+export interface MissionView {
+  id: number;
+  title: string;
+  /** 出したサーバー時刻 */
+  at: number;
+  open: boolean;
+}
+
+export interface MissionOk {
+  /** 写真の印（/api/game/<ID>/photo/<印> で取り出す） */
+  id: string;
+  missionId: number;
+  /** 送った人の名前 */
+  name: string;
+  /** 送ったサーバー時刻 */
+  at: number;
+}
+
+/** 主催者が見る写真1枚 */
+export interface HostPhoto {
+  id: string;
+  missionId: number;
+  name: string;
+  at: number;
+  status: PhotoStatus;
+  bytes: number;
 }
 
 /** 本人だけに送る部分 */
@@ -55,6 +91,8 @@ export interface MeView {
   catches: number;
   /** 逃走者の「捕まった」（選ぶまで開いている）。at は最初に長押しを始めたサーバー時刻。cands は並べる候補 */
   claim: { at: number; cands: Candidate[] } | null;
+  /** ミッション：このラウンドに自分が送った写真（古い順）。古いサーバーからは来ない */
+  sent?: { id: string; missionId: number; status: PhotoStatus; at: number }[];
 }
 
 /** 主催者が見る、今の配役の捕獲 */
@@ -104,6 +142,9 @@ export interface HostSummary {
    * 古いサーバーは送らない
    */
   glow?: { total: number; motion: number; geo: number; lit: number };
+  /** ミッション：このラウンドに届いた写真（古い順）と、写真の保存の使った量（バイト）。古いサーバーは送らない */
+  photos?: HostPhoto[];
+  photoBytes?: number;
 }
 
 /**
@@ -150,7 +191,13 @@ export type HostOp =
   /** 次に進む：走っているタイマーの、いまの段階を2秒後に終わらせて次の段階へ */
   | 'skip'
   /** 夜を終える：全員の画面を SEE YOU AGAIN にする。試合中（時間が0になる前）はできない */
-  | 'end';
+  | 'end'
+  /** ミッションを出す（title＝題。空なら既定の題）。前のミッションが開いていれば締め切ってから出す */
+  | 'mission'
+  /** ミッションを締め切る（写真をもう受け付けない。成功した写真はそのまま） */
+  | 'mission-close'
+  /** 写真を見て決める（photo＝写真の印、ok=true で成功・false でやり直し）。決め直してもいい */
+  | 'judge';
 
 export type ClientMsg =
   /** 新しく名簿に入って、今夜に入る（名前が名簿にあれば taken が返る） */
@@ -178,6 +225,8 @@ export type ClientMsg =
       by?: string;
       rid?: string;
       ok?: boolean;
+      title?: string;
+      photo?: string;
     }
   /**
    * 長押し。on=true は押し始め（HOLD_MIN_MS 押し続けたら送る）、false は離した。

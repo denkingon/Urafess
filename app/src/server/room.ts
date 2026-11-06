@@ -1,14 +1,25 @@
 import { DurableObject } from 'cloudflare:workers';
 import { assignRoles } from '../shared/allocate';
 import { CAPTURE_PHASE_INDEX, captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
+import {
+  cleanMissionTitle,
+  isPhotoId,
+  photosRevealed,
+  PHOTO_MAX_BYTES,
+  PHOTO_PER_PERSON,
+  PHOTO_STORE_MAX_BYTES,
+  type PhotoStatus,
+} from '../shared/mission';
 import type {
   ClientMsg,
   GameView,
   GlowEntry,
   HostCapture,
+  HostPhoto,
   HostOp,
   HostSummary,
   MeView,
+  MissionView,
   NoticeKind,
   RosterEntry,
   SenseState,
@@ -69,7 +80,44 @@ interface GameState {
   night: number;
   /** 今の夜を始めた時刻 */
   nightAt: number;
+  /** ミッション：いちばん新しいミッション（配役・新しい夜を始めるで null）。古い保存データには無い */
+  mission?: MissionView | null;
+  /** ミッション：最後に出したミッションの番号（全部の夜を通した通し番号） */
+  missionSeq?: number;
+  /** ミッション：このラウンドのミッションは、この番号から（配役・新しい夜を始めるで missionSeq + 1 になる） */
+  missionFrom?: number;
 }
+
+/** ミッションの写真1枚（中身の画像は SQLite にだけ置き、ここには持たない） */
+interface PhotoMeta {
+  id: string;
+  missionId: number;
+  night: number;
+  round: number;
+  assignId: number;
+  pid: string;
+  num: number;
+  name: string;
+  at: number;
+  status: PhotoStatus;
+  judgedAt: number | null;
+  bytes: number;
+}
+
+type PhotoRow = {
+  id: string;
+  mission_id: number;
+  night: number;
+  round: number;
+  assign_id: number;
+  pid: string;
+  num: number;
+  name: string;
+  at: number;
+  status: string;
+  judged_at: number | null;
+  bytes: number;
+};
 
 /**
  * 名簿の1人。「新しい夜を始める（部屋を空にする）」でも消えない（一生もの）。
@@ -203,6 +251,12 @@ type ParticipantRow = {
   ua: string | null;
 };
 
+/**
+ * /api/game/<ゲームID>/(ws|debug|log|photo|photos)。photo は後ろに写真の印が付くこともある（取り出す）。
+ * worker.ts も同じ形で部屋へ渡す
+ */
+export const GAME_PATH = /^\/api\/game\/([A-Za-z0-9_-]{1,40})\/(ws|debug|log|photo|photos)(?:\/([A-Za-z0-9_-]{1,40}))?$/;
+
 const LOBBY_BROADCAST_MS = 300;
 const HOST_UPDATE_MS = 500;
 /** 押した時刻として受け付けるのは、届いた時刻からこれだけ前まで（電波の詰まり・つなぎ直しの送り直しで遅れて届く分） */
@@ -241,6 +295,10 @@ export class GameRoom extends DurableObject<Env> {
   /** 走ると光る：いま光っている人 */
   private readonly runs = new Map<string, RunRec>();
   private glowTimer: ReturnType<typeof setTimeout> | null = null;
+  /** ミッション：このラウンドの写真（missionFrom 以降のミッションの分） */
+  private readonly photos = new Map<string, PhotoMeta>();
+  /** ミッション：保存している写真の合計（バイト、全部の夜） */
+  private photoBytes = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -323,6 +381,36 @@ export class GameRoom extends DurableObject<Env> {
       )`,
     );
     this.sql.exec(`CREATE INDEX IF NOT EXISTS members_name_key ON members (name_key)`);
+    // ミッションと写真。新しい夜を始めても消さない（名簿と一緒にずっと残す）
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS missions (
+        id INTEGER PRIMARY KEY,
+        night INTEGER NOT NULL,
+        round INTEGER NOT NULL,
+        assign_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        closed_at INTEGER
+      )`,
+    );
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS photos (
+        id TEXT PRIMARY KEY,
+        mission_id INTEGER NOT NULL,
+        night INTEGER NOT NULL,
+        round INTEGER NOT NULL,
+        assign_id INTEGER NOT NULL,
+        pid TEXT NOT NULL,
+        num INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        judged_at INTEGER,
+        bytes INTEGER NOT NULL,
+        data BLOB NOT NULL
+      )`,
+    );
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS photos_mission ON photos (mission_id)`);
     // 1イベント＝1行。部屋を空にしても消さない（あとで人数比や流れを統計で見るため）
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS events (
@@ -374,6 +462,14 @@ export class GameRoom extends DurableObject<Env> {
       if (row) this.saveGame();
     }
     if (!isValidRatio(this.game.ratio)) this.game.ratio = { ...DEFAULT_RATIO };
+    // ミッションを入れる前の版で作った部屋には、ミッションの番号が無い
+    if (!Number.isInteger(this.game.missionSeq)) {
+      const last = this.sql.exec<{ n: number | null }>(`SELECT MAX(id) AS n FROM missions`).toArray()[0]?.n;
+      this.game.missionSeq = typeof last === 'number' ? last : 0;
+    }
+    if (!Number.isInteger(this.game.missionFrom)) this.game.missionFrom = (this.game.missionSeq ?? 0) + 1;
+    if (this.game.mission === undefined) this.game.mission = null;
+    this.loadPhotos();
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -479,6 +575,18 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
+  /** このラウンドの写真の一覧（画像そのものは読まない）と、保存している合計 */
+  private loadPhotos(): void {
+    this.photos.clear();
+    for (const r of this.sql.exec<PhotoRow>(
+      `SELECT id, mission_id, night, round, assign_id, pid, num, name, at, status, judged_at, bytes FROM photos WHERE mission_id >= ? ORDER BY at`,
+      this.game.missionFrom ?? 1,
+    )) {
+      this.photos.set(r.id, photoOf(r));
+    }
+    this.photoBytes = this.sql.exec<{ b: number | null }>(`SELECT SUM(bytes) AS b FROM photos`).toArray()[0]?.b ?? 0;
+  }
+
   private saveGame(): void {
     this.sql.exec(
       `INSERT INTO meta (k, v) VALUES ('game', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`,
@@ -557,12 +665,16 @@ export class GameRoom extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const m = url.pathname.match(/^\/api\/game\/([A-Za-z0-9_-]{1,40})\/(ws|debug|log)$/);
+    const m = url.pathname.match(GAME_PATH);
     if (!m) return new Response('not found', { status: 404 });
     if (!this.game.gameId) {
       this.game.gameId = m[1];
       this.saveGame();
     }
+
+    if (m[2] === 'photo') return this.onPhotoRequest(request, url, m[3] ?? null);
+    if (m[2] === 'photos') return this.onAlbumRequest(request, url);
+    if (m[3]) return new Response('not found', { status: 404 });
 
     if (m[2] === 'debug') {
       // 主催者の合言葉があるときだけ、全員の役を含む中身を返す（テストと確認用）
@@ -575,6 +687,8 @@ export class GameRoom extends DurableObject<Env> {
         claims: [...this.claims.values()],
         holds: Object.fromEntries(this.holds),
         evidence: [...this.evidence.entries()].map(([runner, m2]) => ({ runner, oni: [...m2.entries()].map(([oni, e]) => ({ oni, ...e })) })),
+        photos: [...this.photos.values()],
+        photoBytes: this.photoBytes,
       });
     }
 
@@ -1511,6 +1625,12 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    // ミッション：出す・締め切る・写真を決める。ほかの操作とぶつからないので版番号を見ない
+    if (op === 'mission' || op === 'mission-close' || op === 'judge') {
+      this.onMissionCmd(ws, att, msg, now);
+      return;
+    }
+
     // 古い画面からの操作（同時押し・二度押し）は断って、今の状態を送り直す
     if (msg.cv !== this.game.cv) return this.reject(ws, att, op, 'stale');
 
@@ -1545,6 +1665,7 @@ export class GameRoom extends DurableObject<Env> {
           timer: null,
           result: null,
           counts: { oni, runner },
+          ...this.missionReset(now, 'assign'),
         };
         this.ctx.storage.transactionSync(() => {
           for (const [pid, role] of roles) {
@@ -1568,6 +1689,7 @@ export class GameRoom extends DurableObject<Env> {
           }
           this.log('assign', { at: now, data: { oni, runner, reroll: isReroll } });
         });
+        this.photos.clear();
         for (const [pid, role] of roles) {
           const p = this.people.get(pid)!;
           p.role = role;
@@ -1636,7 +1758,7 @@ export class GameRoom extends DurableObject<Env> {
           this.log('end', { at: now, data: { round: g.round } });
           this.dropClaims();
         });
-        this.commit({ stage: 'ended', timer: null });
+        this.commit({ stage: 'ended', timer: null, mission: this.closedMission(now, 'end') });
         break;
       }
       case 'result': {
@@ -1685,6 +1807,7 @@ export class GameRoom extends DurableObject<Env> {
           counts: { oni: 0, runner: 0 },
           night: g.night + 1,
           nightAt: now,
+          ...this.missionReset(now, 'clear'),
         };
         this.ctx.storage.transactionSync(() => {
           this.log('clear', { at: now, data: { people: this.people.size, night: next.night } });
@@ -1696,6 +1819,7 @@ export class GameRoom extends DurableObject<Env> {
           );
         });
         this.people.clear();
+        this.photos.clear();
         this.game = next;
         // つながっている参加者には、名前のボタンを出してもらう（名簿にいない人だけ入室画面へ）
         for (const sock of this.ctx.getWebSockets()) {
@@ -1719,6 +1843,190 @@ export class GameRoom extends DurableObject<Env> {
     // 一時停止・やり直し・配役・部屋を空にする・次に進む → 光っている人は消す（ゲームの段階が動いている間だけ光る）
     this.sweepRuns(now);
     this.broadcastNow();
+  }
+
+  // ---------- ミッション（集合写真） ----------
+
+  /** 開いているミッションを締め切った形（記録に残す）。開いていなければそのまま */
+  private closedMission(now: number, reason: string): MissionView | null {
+    const cur = this.game.mission ?? null;
+    if (!cur || !cur.open) return cur;
+    this.sql.exec(`UPDATE missions SET closed_at = ? WHERE id = ?`, now, cur.id);
+    this.log('mission-close', { at: now, data: { mission: cur.id, title: cur.title, reason } });
+    return { ...cur, open: false };
+  }
+
+  /** 配役・新しい夜を始めるで、ミッションを消してラウンドの区切りを進める（GameState に混ぜる形で返す） */
+  private missionReset(now: number, reason: string): Pick<GameState, 'mission' | 'missionFrom'> {
+    this.closedMission(now, reason);
+    return { mission: null, missionFrom: (this.game.missionSeq ?? 0) + 1 };
+  }
+
+  private onMissionCmd(ws: WebSocket, att: Attachment, msg: Extract<ClientMsg, { t: 'cmd' }>, now: number): void {
+    const g = this.game;
+    const op = msg.op;
+    if (op === 'mission') {
+      // 夜の最後（SEE YOU AGAIN）の間は出せない。配役の前（待合室）・試合中・結果発表は出せる
+      if (g.stage === 'ended') return this.reject(ws, att, op, 'not-allowed');
+      const title = cleanMissionTitle(msg.title);
+      const id = (g.missionSeq ?? 0) + 1;
+      this.ctx.storage.transactionSync(() => {
+        // 前のミッションが開いていれば締め切る（記録に残る）。ミッションは1つずつ
+        this.closedMission(now, 'next');
+        this.sql.exec(
+          `INSERT INTO missions (id, night, round, assign_id, title, at) VALUES (?, ?, ?, ?, ?, ?)`,
+          id,
+          g.night,
+          g.round,
+          g.assignId,
+          title,
+          now,
+        );
+        this.game = { ...this.game, missionSeq: id, mission: { id, title, at: now, open: true } };
+        this.saveGame();
+        this.log('mission', { at: now, data: { mission: id, title } });
+      });
+      this.broadcastNow();
+      return;
+    }
+    if (op === 'mission-close') {
+      if (!g.mission?.open) return this.reject(ws, att, op, 'not-allowed');
+      this.ctx.storage.transactionSync(() => {
+        this.game = { ...this.game, mission: this.closedMission(now, 'host') };
+        this.saveGame();
+      });
+      this.broadcastNow();
+      return;
+    }
+    // judge
+    const ph = isPhotoId(msg.photo) ? this.photos.get(msg.photo) : undefined;
+    if (!ph) return this.reject(ws, att, op, 'not-found');
+    if (typeof msg.ok !== 'boolean') return this.reject(ws, att, op, 'bad-input');
+    const status: PhotoStatus = msg.ok ? 'ok' : 'no';
+    if (ph.status === status) {
+      this.sendSnap(ws, att);
+      return;
+    }
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`UPDATE photos SET status = ?, judged_at = ? WHERE id = ?`, status, now, ph.id);
+      this.log(msg.ok ? 'photo-ok' : 'photo-no', {
+        p: { pid: ph.pid, num: ph.num, name: ph.name },
+        at: now,
+        data: { mission: ph.missionId, photo: ph.id, before: ph.status },
+      });
+    });
+    ph.status = status;
+    ph.judgedAt = now;
+    // 成功したかどうかは全員に見せる
+    this.broadcastNow();
+  }
+
+  /** 写真を受け取る（POST）・取り出す（GET /photo/<印>） */
+  private async onPhotoRequest(request: Request, url: URL, photoId: string | null): Promise<Response> {
+    const host = this.isHostToken(request.headers.get('x-host-token'));
+    const pid = request.headers.get('x-pid') ?? '';
+    const key = request.headers.get('x-key') ?? '';
+    const member = this.members.get(pid);
+    const who = member && member.key === key ? member : null;
+
+    if (request.method === 'GET' && photoId) {
+      if (!host && !who) return new Response('forbidden', { status: 403 });
+      if (!isPhotoId(photoId)) return new Response('not found', { status: 404 });
+      const row = this.sql
+        .exec<{ pid: string; status: string; mission_id: number; data: ArrayBuffer }>(
+          `SELECT pid, status, mission_id, data FROM photos WHERE id = ?`,
+          photoId,
+        )
+        .toArray()[0];
+      if (!row) return new Response('not found', { status: 404 });
+      // 参加者が見られるのは、自分の写真と、成功した写真（このラウンドの分は試合が動いていない間だけ）
+      if (!host && row.pid !== who!.pid) {
+        const thisRound = row.mission_id >= (this.game.missionFrom ?? 1);
+        if (row.status !== 'ok' || (thisRound && !photosRevealed(this.game, Date.now()))) {
+          return new Response('not yet', { status: 403 });
+        }
+      }
+      return new Response(row.data, {
+        headers: { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' },
+      });
+    }
+
+    if (request.method !== 'POST' || photoId) return new Response('method not allowed', { status: 405 });
+    const now = Date.now();
+    const p = who ? this.people.get(who.pid) : undefined;
+    if (!who || !p || p.removed) return Response.json({ error: 'not-in' }, { status: 403 });
+    const mission = this.game.mission;
+    const mid = Number(url.searchParams.get('m'));
+    if (!mission || !mission.open || mission.id !== mid) return Response.json({ error: 'closed' }, { status: 409 });
+    const mine = [...this.photos.values()].filter((ph) => ph.pid === p.pid && ph.missionId === mission.id).length;
+    if (mine >= PHOTO_PER_PERSON) return Response.json({ error: 'too-many' }, { status: 429 });
+    const declared = Number(request.headers.get('content-length') ?? '0');
+    if (declared > PHOTO_MAX_BYTES) return Response.json({ error: 'too-big' }, { status: 413 });
+    const buf = await request.arrayBuffer();
+    if (buf.byteLength > PHOTO_MAX_BYTES) return Response.json({ error: 'too-big' }, { status: 413 });
+    const head = new Uint8Array(buf, 0, Math.min(3, buf.byteLength));
+    if (buf.byteLength < 100 || head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) {
+      return Response.json({ error: 'not-jpeg' }, { status: 415 });
+    }
+    if (this.photoBytes + buf.byteLength > PHOTO_STORE_MAX_BYTES) return Response.json({ error: 'full' }, { status: 507 });
+    // 受け取っている間にミッションが締め切られた・配役が変わったら断る（await のあいだに別の操作が入りうる）
+    const still = this.game.mission;
+    if (!still || !still.open || still.id !== mission.id) return Response.json({ error: 'closed' }, { status: 409 });
+    const g = this.game;
+    const ph: PhotoMeta = {
+      id: randomKey().slice(0, 24),
+      missionId: mission.id,
+      night: g.night,
+      round: g.round,
+      assignId: g.assignId,
+      pid: p.pid,
+      num: p.num,
+      name: p.name,
+      at: now,
+      status: 'pending',
+      judgedAt: null,
+      bytes: buf.byteLength,
+    };
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO photos (id, mission_id, night, round, assign_id, pid, num, name, at, status, bytes, data)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+        ph.id,
+        ph.missionId,
+        ph.night,
+        ph.round,
+        ph.assignId,
+        ph.pid,
+        ph.num,
+        ph.name,
+        ph.at,
+        ph.bytes,
+        buf,
+      );
+      this.log('photo', { p, at: now, data: { mission: mission.id, photo: ph.id, bytes: ph.bytes } });
+    });
+    this.photos.set(ph.id, ph);
+    this.photoBytes += ph.bytes;
+    // 自分の画面に「主催者が見ている」を出し、主催者には写真が届いたことを知らせる
+    this.sendSnapTo([p.pid]);
+    return Response.json({ id: ph.id });
+  }
+
+  /** 主催者：全部の夜の写真の一覧（名簿と一緒にずっと残る分） */
+  private onAlbumRequest(request: Request, url: URL): Response {
+    if (!this.isHostToken(request.headers.get('x-host-token') ?? url.searchParams.get('token'))) {
+      return new Response('forbidden', { status: 403 });
+    }
+    const rows = this.sql
+      .exec<PhotoRow & { title: string | null }>(
+        `SELECT p.id, p.mission_id, p.night, p.round, p.assign_id, p.pid, p.num, p.name, p.at, p.status, p.judged_at, p.bytes, m.title
+         FROM photos p LEFT JOIN missions m ON m.id = p.mission_id ORDER BY p.at`,
+      )
+      .toArray();
+    return Response.json({
+      bytes: this.photoBytes,
+      photos: rows.map((r) => ({ ...photoOf(r), title: r.title ?? '' })),
+    });
   }
 
   /** 状態を変えて保存する（版番号を1つ進める） */
@@ -1757,6 +2065,10 @@ export class GameRoom extends DurableObject<Env> {
       durations: g.durations,
       nightAt: g.nightAt,
       ratio: g.ratio,
+      mission: g.mission ?? null,
+      missionOk: [...this.photos.values()]
+        .filter((ph) => ph.status === 'ok')
+        .map((ph) => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at })),
     };
   }
 
@@ -1790,6 +2102,9 @@ export class GameRoom extends DurableObject<Env> {
           : null,
       catches,
       claim,
+      sent: [...this.photos.values()]
+        .filter((ph) => ph.pid === p.pid)
+        .map((ph) => ({ id: ph.id, missionId: ph.missionId, status: ph.status, at: ph.at })),
     };
   }
 
@@ -1879,6 +2194,10 @@ export class GameRoom extends DurableObject<Env> {
       reclaims,
       registry: this.members.size,
       glow: { total: glowIn.size, motion: motionOk.size, geo: geoOk.size, lit: this.runs.size },
+      photos: [...this.photos.values()].map(
+        (ph): HostPhoto => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, status: ph.status, bytes: ph.bytes }),
+      ),
+      photoBytes: this.photoBytes,
     };
   }
 
@@ -1982,6 +2301,23 @@ function cleanPos(lat: unknown, lon: unknown, acc: unknown): { lat: number; lon:
   if (typeof lat !== 'number' || typeof lon !== 'number') return null;
   const r5 = (v: number) => Math.round(v * 1e5) / 1e5;
   return { lat: r5(a), lon: r5(o), acc: Number.isFinite(c) && c >= 0 ? Math.min(9_999, Math.round(c)) : 9_999 };
+}
+
+function photoOf(r: PhotoRow): PhotoMeta {
+  return {
+    id: r.id,
+    missionId: r.mission_id,
+    night: r.night,
+    round: r.round,
+    assignId: r.assign_id,
+    pid: r.pid,
+    num: r.num,
+    name: r.name,
+    at: r.at,
+    status: r.status === 'ok' || r.status === 'no' ? r.status : 'pending',
+    judgedAt: r.judged_at ?? null,
+    bytes: r.bytes,
+  };
 }
 
 function randomKey(): string {

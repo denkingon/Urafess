@@ -393,3 +393,47 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .lab-lamp.is-lit span { color: var(--bg); }
 .lab-trace { width: 100%; height: 120px; border: 1px solid var(--line-strong); border-radius: 12px; background: #111; }
 .glow-list li.has-more { grid-template-columns: 24px auto 1fr auto; }
+
+/* ミッション（集合写真）：参加者の札（長押しの上）と、結果発表の写真の並び */
+.mission { border: 1px solid var(--ink); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.mission-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.mission-tag { font-size: 13px; font-weight: 900; letter-spacing: 1px; padding: 2px 10px; border-radius: 999px; background: var(--ink); color: var(--bg); }
+.mission-state { font-size: 13px; color: var(--quiet); }
+.mission-title { font-size: 20px; font-weight: 900; line-height: 1.4; overflow-wrap: anywhere; }
+.mission-shoot { min-height: 56px; font-size: 18px; }
+.mission-mine, .mission-ok { margin: 0; font-size: 16px; line-height: 1.6; }
+.mission-mine:empty, .mission-ok:empty { display: none; }
+.mission-mine[data-state="ok"] { font-weight: 900; }
+.mission-mine[data-state="error"], .mission-mine[data-state="no"] { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.mission-ok { color: var(--quiet); }
+.phone.is-glow .mission { padding: 8px 12px; gap: 6px; }
+.phone.is-glow .mission-title { font-size: 16px; }
+.phone.is-glow .mission-shoot { min-height: 48px; font-size: 16px; }
+.mission-gallery { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.mission-gallery-head { font-size: 16px; font-weight: 900; }
+.mission-strip:has(figure:only-child) figure { flex-basis: 100%; }
+.mission-strip { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; }
+.mission-strip figure { margin: 0; flex: 0 0 86%; scroll-snap-align: start; display: flex; flex-direction: column; gap: 4px; }
+.mission-strip img { width: 100%; height: min(46dvh, 420px); object-fit: contain; border-radius: 10px; background: var(--field); border: 1px solid var(--line); }
+.mission-strip figcaption { font-size: 16px; color: var(--quiet); }
+
+/* 主催者：ミッション */
+.mission-host .cap-host-head { flex-wrap: wrap; }
+.mission-host .cap-host-head b { white-space: nowrap; }
+.mission-host form { display: flex; gap: 8px; }
+.mission-host input[type="text"] { flex: 1 1 auto; min-width: 0; min-height: 48px; padding: 0 12px; font-size: 16px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--field); color: var(--ink); }
+.mission-host form button { min-height: 48px; padding: 0 14px; font-size: 15px; white-space: nowrap; }
+.photo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.photo-grid figure { margin: 0; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); border-radius: 10px; padding: 6px; }
+.photo-grid figure[data-status="pending"] { border-color: var(--ink); border-style: dashed; }
+.photo-grid figure[data-status="ok"] { border-color: var(--ink); }
+.photo-grid figure[data-status="no"] { opacity: 0.55; }
+.photo-grid figure.is-big { grid-column: 1 / -1; }
+.photo-grid img { width: 100%; aspect-ratio: 1 / 1; object-fit: contain; border-radius: 6px; background: var(--field); cursor: zoom-in; }
+.photo-grid figure.is-big img { aspect-ratio: auto; object-fit: contain; cursor: zoom-out; }
+.photo-grid figcaption { font-size: 13px; color: var(--quiet); }
+.photo-judge { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.photo-judge button { min-height: 44px; font-size: 14px; }
+.album summary { font-size: 14px; font-weight: 700; cursor: pointer; min-height: 44px; display: flex; align-items: center; }
+.album-group { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.album-head { font-size: 13px; font-weight: 700; }
