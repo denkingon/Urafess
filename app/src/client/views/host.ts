@@ -43,7 +43,7 @@ export interface HostInput {
 export interface HostActions {
   command(
     op: HostOp,
-    extra?: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string; rid?: string; ok?: boolean },
+    extra?: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string; rid?: string; ok?: boolean; n?: number },
   ): void;
   /** 1イベント＝1行の記録を CSV で保存する */
   downloadLog(): Promise<void>;
@@ -58,6 +58,7 @@ const REASONS: Record<string, string> = {
   stale: '別の主催者画面が先に操作した。今の状態に更新したので、もう一度確かめて押す。',
   'not-allowed': '今の段階ではできない操作。',
   'no-participants': 'まだ誰も入室していない。',
+  'nobody-jailed': '牢屋に誰もいない。',
   'bad-input': '入力が正しくない。',
   'not-found': 'その人は見つからない（もう待っていない・つながっていない）。',
 };
@@ -112,9 +113,17 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       </form>
     </details>
     <section class="cap-host" data-k="cap" hidden>
-      <div class="cap-host-head"><b>捕獲</b><span data-k="capCount"></span></div>
-      <p class="note">逃走者を押すと、手で「捕まった」にする・取り消す。黒＝捕まった、点線＝本人が選んでいる途中。</p>
+      <div class="cap-host-head"><b>捕獲と牢屋</b><span data-k="capCount"></span></div>
+      <p class="note">逃走者を押すと、手で「捕まった」にする・取り消す。黒＝牢屋、点線＝本人が選んでいる途中、二重線＝牢屋から出た直後（捕まらない）。</p>
       <div class="cap-host-grid" data-k="capRunners"></div>
+      <div class="mission" data-k="mission">
+        <b>ミッション成功</b>
+        <button type="button" data-mission="all">牢屋の全員を出す</button>
+        <button type="button" data-mission="1">1人出す</button>
+        <label><input type="number" min="1" max="999" step="1" value="2" inputmode="numeric" data-k="missionN">人出す</label>
+        <button type="button" data-mission="n">出す</button>
+        <p class="note">牢屋に入ったのが古い順に出る。押した瞬間に全員の画面が切り替わる。ゲームの段階の間だけ。</p>
+      </div>
       <p class="note" data-k="capOni"></p>
     </section>
     <section class="cap-host glow-host" data-k="glow" hidden>
@@ -178,6 +187,15 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     } else if (confirm(`${label} を、手で「捕まった」にする（鬼は空欄）。よいか？`)) {
       actions.command('capture', { pid: t.dataset.pid });
     }
+  });
+  // ミッション成功：全員／1人／人数を決めて（ミッションの版ごとに使い分ける）
+  q('mission').addEventListener('click', (e) => {
+    const t = (e.target as HTMLElement).closest('button[data-mission]') as HTMLButtonElement | null;
+    if (!t) return;
+    const kind = t.dataset.mission;
+    const n = kind === 'all' ? undefined : kind === '1' ? 1 : Math.round(Number((q('missionN') as HTMLInputElement).value));
+    if (n !== undefined && !(Number.isInteger(n) && n >= 1)) return;
+    actions.command('mission', n === undefined ? {} : { n });
   });
   btn('assign').addEventListener('click', () => actions.command('assign'));
   btn('start').addEventListener('click', () => actions.command('start'));
@@ -351,7 +369,11 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       q('cap').hidden = !cap || !(game.stage === 'timer' || game.stage === 'result');
       if (cap) {
         const caught = cap.runners.filter((r) => r.caught).length;
-        q('capCount').textContent = `捕まった ${caught}/${cap.runners.length}人`;
+        q('capCount').textContent = `牢屋 ${caught}/${cap.runners.length}人${game.allCaughtAt != null ? '（全員が入った）' : ''}`;
+        // ミッション成功は、ゲームの段階の間で、牢屋に誰かいて、まだ全員は入っていないときだけ押せる
+        const tm = game.stage === 'timer' && game.timer ? positionAt(game.timer, serverNow) : null;
+        const missionOk = !!tm && tm.kind === 'phase' && tm.index === GAME_PHASE && caught > 0 && game.allCaughtAt == null;
+        for (const b of q('mission').querySelectorAll('button')) (b as HTMLButtonElement).disabled = !missionOk;
         const capKey = JSON.stringify(cap);
         if (capKey !== lastCapKey) {
           lastCapKey = capKey;
@@ -360,9 +382,10 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
               const b = document.createElement('button');
               b.type = 'button';
               b.dataset.pid = r.pid;
-              b.dataset.state = r.caught ? 'caught' : r.open ? 'open' : 'free';
+              b.dataset.state = r.caught ? 'caught' : r.open ? 'open' : r.freeUntil ? 'immune' : 'free';
               b.dataset.label = r.name;
-              b.textContent = r.caught ? `${r.name} ← ${r.byName ?? '手'}・${r.via ? VIA_NAME[r.via] : ''}` : r.name;
+              const saved = r.rescues ? `（${r.rescues}人出した）` : '';
+              b.textContent = r.caught ? `${r.name} ← ${r.byName ?? '手'}・${r.via ? VIA_NAME[r.via] : ''}` : `${r.name}${saved}`;
               return b;
             }),
           );

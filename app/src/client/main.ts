@@ -10,6 +10,7 @@ import { Sensors } from './sense';
 import { createCapture } from './views/capture';
 import { createGlow } from './views/glow';
 import { createHost } from './views/host';
+import { createJail } from './views/jail';
 import { createInstall, type InstallScreen } from './views/install';
 import { createJoin, type EntryMode } from './views/join';
 import { createLab } from './views/lab';
@@ -161,7 +162,9 @@ function startPlayer(): void {
   const emitter = new SoundEmitter();
   const listener = new SoundListener();
   const capture = createCapture({ client, emitter, listener });
-  phone.slot.append(capture.el);
+  // 牢屋：牢屋の人はマイクで聞き、外の逃走者は「助ける」で鳴らす
+  const jail = createJail({ client, emitter, listener });
+  phone.slot.append(jail.el, capture.el);
   // 走ると光る：走っているかはこのスマホが決め、光っている間だけ位置を送る
   const sensors = new Sensors();
   const glow = createGlow({ sensors, root: phone.el });
@@ -250,6 +253,7 @@ function startPlayer(): void {
     lastView = view;
     phone.update(view);
     capture.update(view, s);
+    jail.update(view, s);
     glow.update(view, s, client.serverNow());
     // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）
     if (s.me.code && s.me.code !== preparedCode) {

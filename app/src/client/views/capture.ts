@@ -341,7 +341,8 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       if (prevMode !== mode && mode === 'none') endPress();
       // ゲームの段階が終わったら（広場に戻る・結果発表・配役前）、または鬼でなくなったらマイクを閉じる。ゲームの前に開けた分は残す
       const afterGame = view.step === 0 || view.step >= 5;
-      if (listener.state === 'ready' && ((mode === 'none' && afterGame) || view.role !== '鬼')) listener.close();
+      // 牢屋にいる逃走者は、助けに来た仲間の音を聞くのでマイクを閉じない（牢屋の画面 jail.ts が使う）
+      if (listener.state === 'ready' && view.rescue !== 'help' && ((mode === 'none' && afterGame) || view.role !== '鬼')) listener.close();
 
       onNotice(state);
 

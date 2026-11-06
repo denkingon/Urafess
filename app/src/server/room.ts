@@ -12,10 +12,12 @@ import type {
   NoticeKind,
   RosterEntry,
   SenseState,
+  RescueVia,
   ServerMsg,
   Stage,
   Winner,
 } from '../shared/protocol';
+import { decideWinner, everyoneJailed } from '../shared/jail';
 import {
   CLAIM_GRACE_MS,
   CLAIM_OPEN_MS,
@@ -30,6 +32,9 @@ import {
   HOLD_UNKNOWN_END_MS,
   isValidRatio,
   PHASES,
+  RESCUE_GAP_MS,
+  RESCUE_HOLD_KEEP_MS,
+  RESCUE_IMMUNE_MS,
   ROLES,
   RUN_STALE_MS,
   SYNC_OK_MS,
@@ -38,7 +43,7 @@ import {
 } from '../shared/rules';
 import { nameKey, normalizeName } from '../shared/names';
 import { distanceM } from '../shared/run';
-import { boundaryTimes, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
+import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
 import type { ProbeHub } from './probe';
 
@@ -69,6 +74,10 @@ interface GameState {
   night: number;
   /** 今の夜を始めた時刻 */
   nightAt: number;
+  /** 逃走者が全員同時に牢屋に入った時刻（その配役は鬼の勝ちで決まり）。古い保存データには無い */
+  allCaughtAt?: number | null;
+  /** result をアプリが決めた */
+  resultAuto?: boolean;
 }
 
 /**
@@ -124,6 +133,10 @@ interface Participant {
   caughtBy: string | null;
   caughtAt: number | null;
   caughtVia: CaptureVia | null;
+  /** その回の「助ける番号」。牢屋の人を助けるとき、スマホが最大音量で鳴らす（code とは別。鬼のマイクが拾っても捕獲にならない） */
+  rcode: string | null;
+  /** 牢屋から出たあと、この時刻までは捕まらない */
+  freeUntil: number | null;
   /** 最後に入室・復帰したときの端末（ブラウザの User-Agent）。機種ごとの失敗を後から見るため */
   ua: string | null;
 }
@@ -201,7 +214,15 @@ type ParticipantRow = {
   caught_at: number | null;
   caught_via: string | null;
   ua: string | null;
+  rcode: string | null;
+  free_until: number | null;
 };
+
+/** 「助けて」「助ける」の長押し（保存しない。押している間の数秒だけのもの） */
+interface RescueHold {
+  start: number;
+  end: number | null;
+}
 
 const LOBBY_BROADCAST_MS = 300;
 const HOST_UPDATE_MS = 500;
@@ -240,6 +261,14 @@ export class GameRoom extends DurableObject<Env> {
   private hostTimer: ReturnType<typeof setTimeout> | null = null;
   /** 走ると光る：いま光っている人 */
   private readonly runs = new Map<string, RunRec>();
+  /** 今の配役で、鬼 → 捕まえた回数（解放されても減らない。主催者の取り消しでだけ減る） */
+  private readonly catches = new Map<string, number>();
+  /** 今の配役で、逃走者 → 牢屋から出した人数 */
+  private readonly rescues = new Map<string, number>();
+  /** 「助けて」「助ける」の長押し（人 → 最近の分） */
+  private readonly rescueHolds = new Map<string, RescueHold[]>();
+  /** 助ける人が最後に1人を出した時刻（1回の長押しで1人） */
+  private readonly lastRescueAt = new Map<string, number>();
   private glowTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -277,6 +306,8 @@ export class GameRoom extends DurableObject<Env> {
       ['caught_at', 'caught_at INTEGER'],
       ['caught_via', 'caught_via TEXT'],
       ['ua', 'ua TEXT'],
+      ['rcode', 'rcode TEXT'],
+      ['free_until', 'free_until INTEGER'],
     ];
     for (const [name, ddl] of columns) {
       if (!have.has(name)) this.sql.exec(`ALTER TABLE participants ADD COLUMN ${ddl}`);
@@ -392,20 +423,22 @@ export class GameRoom extends DurableObject<Env> {
         caughtAt: r.caught_at ?? null,
         caughtVia: (r.caught_via as CaptureVia | null) ?? null,
         ua: r.ua ?? null,
+        rcode: r.rcode ?? null,
+        freeUntil: r.free_until ?? null,
       });
     }
-    // 捕獲を入れる前の版で配役した部屋（公開の瞬間に試合中だった等）は、3桁が無い。ここで配る
+    // 捕獲・牢屋を入れる前の版で配役した部屋（公開の瞬間に試合中だった等）は、3桁が無い。ここで配る
     if (this.game.assignId > 0) {
-      const missing = [...this.people.values()].filter((p) => !p.removed && p.assignId === this.game.assignId && p.role && !p.code);
-      if (missing.length) {
-        const used = new Set([...this.people.values()].map((p) => p.code));
-        const pool = pickCodes(900).filter((c) => !used.has(c));
-        missing.forEach((p, i) => {
-          p.code = pool[i] ?? null;
-          this.sql.exec(`UPDATE participants SET code = ? WHERE pid = ?`, p.code, p.pid);
-        });
+      const current = [...this.people.values()].filter((p) => !p.removed && p.assignId === this.game.assignId && p.role);
+      const used = new Set(current.flatMap((p) => [p.code, p.rcode]));
+      const pool = pickCodes(900).filter((c) => !used.has(c));
+      for (const p of current) {
+        if (!p.code) p.code = pool.shift() ?? null;
+        if (!p.rcode) p.rcode = pool.shift() ?? null;
+        this.sql.exec(`UPDATE participants SET code = ?, rcode = ? WHERE pid = ?`, p.code, p.rcode, p.pid);
       }
     }
+    this.loadTallies();
     this.loadMembers();
     this.claims.clear();
     for (const r of this.sql.exec<{ pid: string; assign_id: number; at: number }>(`SELECT * FROM claims`)) {
@@ -477,6 +510,36 @@ export class GameRoom extends DurableObject<Env> {
       this.members.set(m.pid, m);
       if (!this.memberByName.has(m.nameKey)) this.memberByName.set(m.nameKey, m);
     }
+  }
+
+  /**
+   * 今の配役の「捕まえた回数」「出した人数」を記録から数え直す（サーバーが入れ替わったとき）。
+   * 同じ配役の番号は、やり直し（reset）と新しい夜（clear）のあとにも使われるので、最後の配役・やり直し・新しい夜より後の記録だけ数える
+   */
+  private loadTallies(): void {
+    this.catches.clear();
+    this.rescues.clear();
+    if (this.game.assignId === 0) return;
+    const base =
+      this.sql.exec<{ id: number | null }>(`SELECT MAX(id) AS id FROM events WHERE kind IN ('assign', 'reset', 'clear')`).toArray()[0]?.id ?? 0;
+    for (const r of this.sql.exec<{ kind: string; pid: string | null }>(
+      `SELECT kind, pid FROM events WHERE id > ? AND assign_id = ? AND kind IN ('capture', 'release', 'rescue') AND pid IS NOT NULL`,
+      base,
+      this.game.assignId,
+    )) {
+      const pid = r.pid!;
+      if (r.kind === 'capture') this.catches.set(pid, (this.catches.get(pid) ?? 0) + 1);
+      else if (r.kind === 'release') this.catches.set(pid, Math.max(0, (this.catches.get(pid) ?? 0) - 1));
+      else this.rescues.set(pid, (this.rescues.get(pid) ?? 0) + 1);
+    }
+  }
+
+  /** 配役が変わる・やり直す・新しい夜：牢屋まわりの数と長押しを空にする */
+  private dropJail(): void {
+    this.catches.clear();
+    this.rescues.clear();
+    this.rescueHolds.clear();
+    this.lastRescueAt.clear();
   }
 
   private saveGame(): void {
@@ -623,6 +686,8 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    // 時間が0になっていたら、結果をアプリが決める（合図のついで。合図が止まる前に見る）
+    this.finalizeIfDone(Date.now());
     // 光っている人の位置が届かなくなった・ゲームの段階が終わった分を消す（合図のついで）
     this.sweepRuns(Date.now());
     if (!this.heartbeatActive()) return;
@@ -650,6 +715,8 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
     const att = (ws.deserializeAttachment() as Attachment | null) ?? {};
+    // 時間が0になったのに結果がまだなら、先に決める（合図が来ない間に届いた操作でも、結果のあとの状態で受ける）
+    if (msg.t !== 'ping' && msg.t !== 'sync') this.finalizeIfDone(now);
     switch (msg.t) {
       case 'ping':
         // 時計合わせ：受け取った瞬間のサーバー時刻を返す
@@ -708,6 +775,9 @@ export class GameRoom extends DurableObject<Env> {
       case 'cancel':
         this.onCancel(att, now);
         return;
+      case 'rescue':
+        this.onRescue(att, msg, now);
+        return;
       case 'run':
         this.onRun(att, msg, now);
         return;
@@ -722,7 +792,10 @@ export class GameRoom extends DurableObject<Env> {
     const att = ws.deserializeAttachment() as Attachment | null;
     if (att?.pid) {
       const stillOpen = this.ctx.getWebSockets().some((o) => o !== ws && (o.deserializeAttachment() as Attachment | null)?.pid === att.pid);
-      if (!stillOpen) this.endHold(att.pid, Date.now(), 'disconnect');
+      if (!stillOpen) {
+        this.endHold(att.pid, Date.now(), 'disconnect');
+        this.endRescueHold(att.pid, Date.now());
+      }
     }
     this.scheduleHostUpdate();
     try {
@@ -908,6 +981,8 @@ export class GameRoom extends DurableObject<Env> {
       caughtAt: null,
       caughtVia: null,
       ua,
+      rcode: null,
+      freeUntil: null,
     };
   }
 
@@ -1081,6 +1156,12 @@ export class GameRoom extends DurableObject<Env> {
       this.sendSnapTo([p.pid]);
       return;
     }
+    // 牢屋から出た直後は捕まらない（「捕まった」は記録しない）
+    if (p.role === 'runner' && this.isImmune(p, at)) {
+      if (!msg.replay) this.notify(p.pid, 'immune');
+      this.sendSnapTo([p.pid]);
+      return;
+    }
     if (!this.pressOpen(at)) {
       if (!msg.replay) this.notify(p.pid, 'closed');
       return;
@@ -1120,7 +1201,10 @@ export class GameRoom extends DurableObject<Env> {
   /** 鬼のスマホが、誰かの3桁を拾った */
   private onHeard(att: Attachment, rawCode: unknown, now: number): void {
     const p = this.inRound(att.pid);
-    if (!p || p.role !== 'oni' || typeof rawCode !== 'string' || !/^\d{3}$/.test(rawCode)) return;
+    if (!p || typeof rawCode !== 'string' || !/^\d{3}$/.test(rawCode)) return;
+    // 牢屋の人のスマホが、助けに来た人の「助ける番号」を拾った
+    if (p.role === 'runner') return this.onJailHeard(p, rawCode, now);
+    if (p.role !== 'oni') return;
     const g = this.game;
     if (g.stage !== 'timer' && g.stage !== 'result') return;
     let target: Participant | null = null;
@@ -1130,7 +1214,8 @@ export class GameRoom extends DurableObject<Env> {
         break;
       }
     }
-    if (!target || target.role !== 'runner' || this.isCaught(target)) return;
+    // 牢屋の人・解放された直後で捕まらない人の音は、捕獲の手がかりにしない
+    if (!target || target.role !== 'runner' || this.isCaught(target) || this.isImmune(target, now)) return;
     const ev = this.evidenceOf(target.pid, p.pid);
     if (ev.heardAt !== null && now - ev.heardAt < HEARD_DEDUPE_MS) return;
     ev.heardAt = now;
@@ -1183,6 +1268,10 @@ export class GameRoom extends DurableObject<Env> {
       this.notify(p.pid, 'already', runner);
       return;
     }
+    if (this.isImmune(runner, now)) {
+      this.notify(p.pid, 'immune', runner);
+      return;
+    }
     if (!this.liveClaim(runner.pid, now) && !this.pressOpen(now)) {
       this.notify(p.pid, 'closed');
       return;
@@ -1220,6 +1309,15 @@ export class GameRoom extends DurableObject<Env> {
       }
       c = this.openClaim(p, now);
     }
+    // 触られたのが、牢屋から出た直後で捕まらない間だった：記録しない
+    if (this.isImmune(p, c.at)) {
+      this.claims.delete(p.pid);
+      this.sql.exec(`DELETE FROM claims WHERE pid = ?`, p.pid);
+      this.log('immune', { p, other: oni, at: now, data: { claimAt: c.at, freeUntil: p.freeUntil } });
+      this.notify(p.pid, 'immune');
+      this.sendSnapTo([p.pid]);
+      return;
+    }
     const cands = this.candidatesFor(p, c, now);
     const cand = cands.find((x) => x.pid === oni.pid);
     // 手動の一覧から選んだら「手動」。そのとき候補の手がかりがあったかは、詳細に残す
@@ -1253,7 +1351,7 @@ export class GameRoom extends DurableObject<Env> {
     const assignId = this.game.assignId;
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
-        `UPDATE participants SET caught_assign = ?, caught_by = ?, caught_at = ?, caught_via = ? WHERE pid = ?`,
+        `UPDATE participants SET caught_assign = ?, caught_by = ?, caught_at = ?, caught_via = ?, free_until = NULL WHERE pid = ?`,
         assignId,
         oni?.pid ?? null,
         at,
@@ -1268,14 +1366,196 @@ export class GameRoom extends DurableObject<Env> {
     runner.caughtBy = oni?.pid ?? null;
     runner.caughtAt = at;
     runner.caughtVia = via;
+    runner.freeUntil = null;
+    if (oni) this.catches.set(oni.pid, (this.catches.get(oni.pid) ?? 0) + 1);
     this.claims.delete(runner.pid);
     this.evidence.delete(runner.pid);
+    this.rescueHolds.delete(runner.pid);
     // 捕まった人が押したまま記録されたら、その長押しはここで終わり
     this.endHold(runner.pid, Date.now(), 'capture');
     // 捕まった人は光らない
     this.endRun(runner.pid, Date.now(), 'caught');
     this.notify(runner.pid, 'caught', oni ?? undefined, via);
     if (oni) this.notify(oni.pid, 'captured', runner, via);
+    // 最後の1人が牢屋に入ったら、ゲームを終わらせる（その中で配り直す）
+    if (!this.checkAllCaught(Date.now(), at)) this.broadcastNow();
+    this.refreshAutoResult();
+  }
+
+  // ---------- 牢屋と解放 ----------
+
+  /** 牢屋から出た直後で、まだ捕まらない */
+  private isImmune(p: Participant, at: number): boolean {
+    return p.role === 'runner' && !this.isCaught(p) && p.freeUntil !== null && at < p.freeUntil;
+  }
+
+  /** 牢屋から出られる時間か：ゲームの段階が動いていて、まだ全員は入っていない */
+  private rescueOpen(at: number): boolean {
+    const g = this.game;
+    return g.stage === 'timer' && captureOpenAt(g.timer, at) && g.allCaughtAt == null;
+  }
+
+  /** 牢屋の人のスマホが、助けに来た人の「助ける番号」を拾った → その瞬間に解放 */
+  private onJailHeard(jailed: Participant, code: string, now: number): void {
+    if (!this.isCaught(jailed) || !this.rescueOpen(now)) return;
+    const g = this.game;
+    let rescuer: Participant | null = null;
+    for (const q of this.people.values()) {
+      if (q.rcode === code && !q.removed && q.assignId === g.assignId) {
+        rescuer = q;
+        break;
+      }
+    }
+    if (!rescuer || rescuer.role !== 'runner' || this.isCaught(rescuer)) return;
+    if (!this.canRescue(rescuer, now)) return;
+    this.freeFromJail(jailed, rescuer, 'sound', now, { code });
+  }
+
+  /** 1回の長押しで1人：最後に出してから RESCUE_GAP_MS たっていれば、また出せる */
+  private canRescue(rescuer: Participant, now: number): boolean {
+    const last = this.lastRescueAt.get(rescuer.pid);
+    return last === undefined || now - last >= RESCUE_GAP_MS;
+  }
+
+  private rescueHoldsOf(pid: string, now: number): RescueHold[] {
+    return (this.rescueHolds.get(pid) ?? []).filter((h) => h.end === null || now - h.end <= RESCUE_HOLD_KEEP_MS);
+  }
+
+  /** 「助けて」（牢屋の人）・「助ける」（外の逃走者）の長押し。2人の長押しが重なった瞬間に、牢屋の人が出る */
+  private onRescue(att: Attachment, msg: Extract<ClientMsg, { t: 'rescue' }>, now: number): void {
+    const p = this.inRound(att.pid);
+    if (!p || p.role !== 'runner') return;
+    const at = this.pressAt(msg.at, now);
+    if (msg.on !== true) {
+      this.endRescueHold(p.pid, at, Number.isFinite(Number(msg.start)) ? Number(msg.start) : undefined);
+      return;
+    }
+    const list = this.rescueHoldsOf(p.pid, now);
+    const same = list.find((h) => Math.abs(h.start - at) <= HOLD_SAME_MS);
+    if (!same) {
+      if (!this.rescueOpen(at)) {
+        this.notify(p.pid, 'closed');
+        return;
+      }
+      for (const h of list) if (h.end === null) h.end = at;
+      list.push({ start: at, end: null });
+      this.rescueHolds.set(p.pid, list.slice(-4));
+      this.log('rescue-hold', { p, at, data: { on: true, jailed: this.isCaught(p), lagMs: now - at } });
+    }
+    this.matchRescue(p, at, now);
+  }
+
+  private endRescueHold(pid: string, at: number, start?: number): void {
+    const list = this.rescueHolds.get(pid);
+    if (!list) return;
+    const h = list.find((x) => x.end === null && (start === undefined || Math.abs(x.start - start) <= HOLD_SAME_MS));
+    if (!h) return;
+    h.end = Math.max(h.start, at);
+    this.log('rescue-hold', { p: this.people.get(pid) ?? null, at: h.end, data: { on: false, ms: h.end - h.start } });
+  }
+
+  /** 押した人の長押しと、相手側（牢屋の人なら外の逃走者、外なら牢屋の人）の長押しが重なっていれば、牢屋の人を1人出す */
+  private matchRescue(p: Participant, at: number, now: number): void {
+    if (!this.rescueOpen(now)) return;
+    const mine = this.rescueHoldsOf(p.pid, now).find((h) => Math.abs(h.start - at) <= HOLD_SAME_MS);
+    if (!mine) return;
+    // 押している途中の長押しは、まだ終わっていない（押し始めの時刻がサーバーの今に寄せられて同じ値になっても、重なりとみなす）
+    const overlaps = (h: RescueHold) => h.start <= (mine.end ?? Infinity) && (h.end ?? Infinity) >= mine.start;
+    const g = this.game;
+    const iAmJailed = this.isCaught(p);
+    if (!iAmJailed && !this.canRescue(p, now)) return;
+    const others = [...this.people.values()]
+      .filter((q) => q.pid !== p.pid && !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isCaught(q) !== iAmJailed)
+      .map((q) => ({ q, h: this.rescueHoldsOf(q.pid, now).filter(overlaps).sort((a, b) => a.start - b.start)[0] }))
+      .filter((x) => x.h && (iAmJailed ? this.canRescue(x.q, now) : true))
+      .sort((a, b) => a.h!.start - b.h!.start);
+    const hit = others[0];
+    if (!hit) return;
+    const [jailed, rescuer] = iAmJailed ? [p, hit.q] : [hit.q, p];
+    this.freeFromJail(jailed, rescuer, 'together', now, {});
+  }
+
+  /** 牢屋から出す。保存してから、本人と助けた人に知らせ、全員の人数を配り直す */
+  private freeFromJail(jailed: Participant, rescuer: Participant | null, via: RescueVia, now: number, data: Record<string, unknown>): void {
+    if (!this.isCaught(jailed)) return;
+    const freeUntil = now + RESCUE_IMMUNE_MS;
+    const prev = { by: jailed.caughtBy, at: jailed.caughtAt, jailMs: jailed.caughtAt !== null ? now - jailed.caughtAt : null };
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE participants SET caught_assign = 0, caught_by = NULL, caught_at = NULL, caught_via = NULL, free_until = ? WHERE pid = ?`,
+        freeUntil,
+        jailed.pid,
+      );
+      this.sql.exec(`DELETE FROM claims WHERE pid = ?`, jailed.pid);
+      this.log('rescue', { p: rescuer, other: jailed, via, at: now, data: { ...prev, ...data, freeUntil } });
+    });
+    jailed.caughtAssign = 0;
+    jailed.caughtBy = null;
+    jailed.caughtAt = null;
+    jailed.caughtVia = null;
+    jailed.freeUntil = freeUntil;
+    this.claims.delete(jailed.pid);
+    this.rescueHolds.delete(jailed.pid);
+    if (rescuer) {
+      this.lastRescueAt.set(rescuer.pid, now);
+      this.rescues.set(rescuer.pid, (this.rescues.get(rescuer.pid) ?? 0) + 1);
+      // 1回の長押しで1人：助ける人の長押しはここで終わり（押し続けても、次の人は出ない）
+      const open = this.rescueHolds.get(rescuer.pid)?.find((h) => h.end === null);
+      if (open) open.end = now;
+    }
+    this.notify(jailed.pid, 'freed', rescuer ?? undefined, via);
+    if (rescuer) this.notify(rescuer.pid, 'saved', jailed, via);
+    this.broadcastNow();
+  }
+
+  /**
+   * 逃走者が全員同時に牢屋に入ったか。入ったら記録して、ゲームの段階を2秒後に終わらせる（全員の画面が同じ瞬間に切り替わる）。
+   * ゲームの段階が終わったあと（終わり際の捕獲が遅れて記録された）なら、時間はそのままで鬼の勝ちだけ決まる。
+   * 配り直したら true
+   */
+  private checkAllCaught(now: number, at: number): boolean {
+    const g = this.game;
+    if (g.stage !== 'timer' && g.stage !== 'result') return false;
+    if (g.allCaughtAt != null || !everyoneJailed(this.gameView().counts)) return false;
+    let timer = g.timer;
+    let ended = false;
+    if (g.stage === 'timer' && timer) {
+      const pos = positionAt(timer, now);
+      if (pos.kind === 'phase' && pos.index === CAPTURE_PHASE_INDEX) {
+        if (timer.status === 'running') {
+          timer = skipPhase(timer, now);
+        } else {
+          // 止めている間に全員が入った：再開したら「広場に戻るまで」から
+          timer = { ...timer, pausedElapsed: cumulative(timer.durations)[CAPTURE_PHASE_INDEX + 1] };
+        }
+        ended = true;
+      }
+    }
+    this.commit({ allCaughtAt: Math.min(at, now), timer });
+    this.log('all-caught', { at: now, data: { runner: g.counts.runner, endsGame: ended } });
+    this.sweepRuns(now);
+    this.broadcastNow();
+    return true;
+  }
+
+  /** 時間が0になったら、結果をアプリが決める（主催者が押す前に） */
+  private finalizeIfDone(now: number): void {
+    const g = this.game;
+    if (g.stage !== 'timer' || !g.timer || !isDone(g.timer, now)) return;
+    const winner = decideWinner(this.gameView());
+    this.log('result', { at: now, data: { winner, auto: true, caught: this.caughtCount(), allCaughtAt: g.allCaughtAt ?? null } });
+    this.commit({ stage: 'result', result: winner, resultAuto: true });
+    this.broadcastNow();
+  }
+
+  /** アプリが決めた結果のあとに、終わり際の捕獲が遅れて記録されたら、決め直す */
+  private refreshAutoResult(): void {
+    const g = this.game;
+    if (g.stage !== 'result' || g.resultAuto !== true) return;
+    const winner = decideWinner(this.gameView());
+    if (winner === g.result) return;
+    this.log('result', { at: Date.now(), data: { winner, auto: true, changed: true } });
+    this.commit({ result: winner });
     this.broadcastNow();
   }
 
@@ -1452,7 +1732,9 @@ export class GameRoom extends DurableObject<Env> {
       this.sql.exec(`UPDATE participants SET removed = 1 WHERE pid = ?`, p.pid);
       this.log('remove', { p, at: now });
       this.endRun(p.pid, now, 'out');
-      this.broadcastNow();
+      // 外にいた最後の逃走者が外されたら、全員が牢屋にいることになる
+      if (!this.checkAllCaught(now, now)) this.broadcastNow();
+      this.refreshAutoResult();
       return;
     }
 
@@ -1505,14 +1787,18 @@ export class GameRoom extends DurableObject<Env> {
       runner.caughtBy = null;
       runner.caughtAt = null;
       runner.caughtVia = null;
+      if (by) this.catches.set(by.pid, Math.max(0, (this.catches.get(by.pid) ?? 0) - 1));
+      this.rescueHolds.delete(runner.pid);
       this.notify(runner.pid, 'released', by ?? undefined);
       if (by) this.notify(by.pid, 'released', runner);
       this.broadcastNow();
+      this.refreshAutoResult();
       return;
     }
 
-    // 古い画面からの操作（同時押し・二度押し）は断って、今の状態を送り直す
-    if (msg.cv !== this.game.cv) return this.reject(ws, att, op, 'stale');
+    // 古い画面からの操作（同時押し・二度押し）は断って、今の状態を送り直す。
+    // 勝ちの手直しだけは見ない：時間が0になった瞬間にアプリが結果を決めて版番号が進むので、同じ瞬間に押した手直しが断られないように（あとから押したほうが残る）
+    if (msg.cv !== this.game.cv && op !== 'result') return this.reject(ws, att, op, 'stale');
 
     const g = this.game;
     const timerDone = g.stage === 'timer' && g.timer !== null && isDone(g.timer, now);
@@ -1528,8 +1814,10 @@ export class GameRoom extends DurableObject<Env> {
           active.map((p) => p.pid),
           ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] })),
         );
-        const codes = pickCodes(active.length);
+        // 1人に2つ：捕まったとき鳴らす番号（code）と、牢屋の人を助けるとき鳴らす番号（rcode）。部屋の中で重ならない
+        const codes = pickCodes(active.length * 2);
         const codeOf = new Map(active.map((p, i) => [p.pid, codes[i]] as const));
+        const rcodeOf = new Map(active.map((p, i) => [p.pid, codes[active.length + i]] as const));
         const isReroll = g.stage === 'assigned';
         const nextRound = isReroll ? Math.max(g.round, 1) : g.round + 1;
         const nextAssignId = g.assignId + 1;
@@ -1544,15 +1832,18 @@ export class GameRoom extends DurableObject<Env> {
           cv: g.cv + 1,
           timer: null,
           result: null,
+          resultAuto: false,
+          allCaughtAt: null,
           counts: { oni, runner },
         };
         this.ctx.storage.transactionSync(() => {
           for (const [pid, role] of roles) {
             this.sql.exec(
-              `UPDATE participants SET role = ?, assign_id = ?, ack_id = 0, code = ? WHERE pid = ?`,
+              `UPDATE participants SET role = ?, assign_id = ?, ack_id = 0, code = ?, rcode = ?, free_until = NULL WHERE pid = ?`,
               role,
               nextAssignId,
               codeOf.get(pid) ?? null,
+              rcodeOf.get(pid) ?? null,
               pid,
             );
           }
@@ -1561,10 +1852,11 @@ export class GameRoom extends DurableObject<Env> {
             JSON.stringify(next),
           );
           this.dropClaims();
+          this.dropJail();
           this.game = next;
           for (const [pid, role] of roles) {
             const p = this.people.get(pid)!;
-            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid) } });
+            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid) } });
           }
           this.log('assign', { at: now, data: { oni, runner, reroll: isReroll } });
         });
@@ -1574,6 +1866,8 @@ export class GameRoom extends DurableObject<Env> {
           p.assignId = nextAssignId;
           p.ackId = 0;
           p.code = codeOf.get(pid) ?? null;
+          p.rcode = rcodeOf.get(pid) ?? null;
+          p.freeUntil = null;
         }
         break;
       }
@@ -1615,9 +1909,12 @@ export class GameRoom extends DurableObject<Env> {
             `UPDATE participants SET caught_assign = 0, caught_by = NULL, caught_at = NULL, caught_via = NULL WHERE caught_assign = ?`,
             g.assignId,
           );
+          this.sql.exec(`UPDATE participants SET free_until = NULL`);
           this.dropClaims();
         });
+        this.dropJail();
         for (const p of this.people.values()) {
+          p.freeUntil = null;
           if (p.caughtAssign === g.assignId) {
             p.caughtAssign = 0;
             p.caughtBy = null;
@@ -1625,7 +1922,7 @@ export class GameRoom extends DurableObject<Env> {
             p.caughtVia = null;
           }
         }
-        this.commit({ stage: 'assigned', timer: null });
+        this.commit({ stage: 'assigned', timer: null, allCaughtAt: null, resultAuto: false });
         break;
       }
       case 'end': {
@@ -1639,11 +1936,30 @@ export class GameRoom extends DurableObject<Env> {
         this.commit({ stage: 'ended', timer: null });
         break;
       }
+      case 'mission': {
+        // ミッション成功：牢屋の人を出す。ゲームの段階の間だけ（止めている間も押せる）。全員が入ったあとは出せない
+        const n = msg.n === undefined || msg.n === null ? null : Number(msg.n);
+        if (n !== null && !(Number.isInteger(n) && n >= 1 && n <= 999)) return this.reject(ws, att, op, 'bad-input');
+        const pos = g.stage === 'timer' && g.timer ? positionAt(g.timer, now) : null;
+        if (!pos || pos.kind !== 'phase' || pos.index !== CAPTURE_PHASE_INDEX || g.allCaughtAt != null) {
+          return this.reject(ws, att, op, 'not-allowed');
+        }
+        const jailed = [...this.people.values()]
+          .filter((q) => !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isCaught(q))
+          .sort((a, b) => (a.caughtAt ?? 0) - (b.caughtAt ?? 0) || a.num - b.num);
+        if (jailed.length === 0) return this.reject(ws, att, op, 'nobody-jailed');
+        const out = n === null ? jailed : jailed.slice(0, n);
+        // 二度押し（ほかの主催者画面の同時押し）で2回出さないよう、版番号を進める
+        this.commit({});
+        this.log('mission', { at: now, data: { n, released: out.length, jailed: jailed.length } });
+        for (const q of out) this.freeFromJail(q, null, 'mission', now, { mission: n ?? 'all' });
+        break;
+      }
       case 'result': {
         if (msg.winner !== 'oni' && msg.winner !== 'runner') return this.reject(ws, att, op, 'bad-input');
         if (!(g.stage === 'result' || timerDone)) return this.reject(ws, att, op, 'not-allowed');
-        this.log('result', { at: now, data: { winner: msg.winner, caught: this.caughtCount() } });
-        this.commit({ stage: 'result', result: msg.winner });
+        this.log('result', { at: now, data: { winner: msg.winner, caught: this.caughtCount(), auto: false } });
+        this.commit({ stage: 'result', result: msg.winner, resultAuto: false });
         break;
       }
       case 'durations': {
@@ -1682,10 +1998,13 @@ export class GameRoom extends DurableObject<Env> {
           cv: g.cv + 1,
           timer: null,
           result: null,
+          resultAuto: false,
+          allCaughtAt: null,
           counts: { oni: 0, runner: 0 },
           night: g.night + 1,
           nightAt: now,
         };
+        this.dropJail();
         this.ctx.storage.transactionSync(() => {
           this.log('clear', { at: now, data: { people: this.people.size, night: next.night } });
           this.sql.exec(`DELETE FROM participants`);
@@ -1757,6 +2076,8 @@ export class GameRoom extends DurableObject<Env> {
       durations: g.durations,
       nightAt: g.nightAt,
       ratio: g.ratio,
+      allCaughtAt: g.allCaughtAt ?? null,
+      resultAuto: g.resultAuto === true,
     };
   }
 
@@ -1767,10 +2088,7 @@ export class GameRoom extends DurableObject<Env> {
     const inCurrent = p.assignId === g.assignId && g.assignId > 0;
     const live = inCurrent && !p.removed;
     const by = p.caughtBy ? this.people.get(p.caughtBy) : undefined;
-    let catches = 0;
-    if (live && p.role === 'oni') {
-      for (const q of this.people.values()) if (q.caughtAssign === g.assignId && q.caughtBy === p.pid) catches++;
-    }
+    const catches = live && p.role === 'oni' ? (this.catches.get(p.pid) ?? 0) : 0;
     let claim: MeView['claim'] = null;
     const c = live ? this.liveClaim(p.pid, now) : null;
     if (c && p.role === 'runner' && !this.isCaught(p)) {
@@ -1790,6 +2108,9 @@ export class GameRoom extends DurableObject<Env> {
           : null,
       catches,
       claim,
+      rcode: live && p.role === 'runner' ? p.rcode : null,
+      freeUntil: live && p.role === 'runner' && !this.isCaught(p) && p.freeUntil !== null && p.freeUntil > now ? p.freeUntil : null,
+      rescues: live && p.role === 'runner' ? (this.rescues.get(p.pid) ?? 0) : 0,
     };
   }
 
@@ -1798,10 +2119,7 @@ export class GameRoom extends DurableObject<Env> {
     if (g.assignId === 0) return null;
     const now = Date.now();
     const inRound = [...this.people.values()].filter((p) => !p.removed && p.assignId === g.assignId && p.role);
-    const catches = new Map<string, number>();
-    for (const p of inRound) {
-      if (p.caughtAssign === g.assignId && p.caughtBy) catches.set(p.caughtBy, (catches.get(p.caughtBy) ?? 0) + 1);
-    }
+    const catches = this.catches;
     return {
       runners: inRound
         .filter((p) => p.role === 'runner')
@@ -1819,6 +2137,8 @@ export class GameRoom extends DurableObject<Env> {
             via: caught ? p.caughtVia : null,
             at: caught ? p.caughtAt : null,
             open: !caught && this.liveClaim(p.pid, now) !== null,
+            freeUntil: !caught && p.freeUntil !== null && p.freeUntil > now ? p.freeUntil : null,
+            rescues: this.rescues.get(p.pid) ?? 0,
           };
         }),
       oni: inRound
@@ -1908,7 +2228,7 @@ export class GameRoom extends DurableObject<Env> {
     this.scheduleHostUpdate();
   }
 
-  private notify(pid: string, kind: NoticeKind, other?: Participant, via?: CaptureVia): void {
+  private notify(pid: string, kind: NoticeKind, other?: Participant, via?: CaptureVia | RescueVia): void {
     const msg: ServerMsg = {
       t: 'notice',
       kind,
