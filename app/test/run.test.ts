@@ -7,8 +7,10 @@ import {
   RunReporter,
   bearingDeg,
   compassName,
+  compassNameEn,
   distanceM,
   distanceText,
+  distanceTextEn,
   offsetM,
   radarRadius,
 } from '../src/shared/run';
@@ -286,6 +288,12 @@ describe('走ると光る：位置の計算', () => {
     expect(distanceText(8)).toBe('すぐ近く');
     expect(distanceText(84)).toBe('80m');
     expect(distanceText(1234)).toBe('1.2km');
+    // 英語：8方位の略と、近いときの言葉（数字は同じ）
+    expect(compassNameEn(0)).toBe('N');
+    expect(compassNameEn(44)).toBe('NE');
+    expect(compassNameEn(-90)).toBe('W');
+    expect(distanceTextEn(8)).toBe('CLOSE');
+    expect(distanceTextEn(84)).toBe('80m');
   });
 
   it('地図の縮尺：近いほど広い。0m は真ん中、400m より遠い人は縁', () => {

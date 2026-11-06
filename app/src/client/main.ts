@@ -248,7 +248,7 @@ function startPlayer(): void {
     }
     if (s.phase !== 'ready' || !s.game || !s.me) {
       show(phone.el);
-      const waiting: PhoneView = connectingView(s.online);
+      const waiting = connectingView(s.online);
       lastView = waiting;
       phone.update(waiting);
       glow.update(waiting, s, client.serverNow());

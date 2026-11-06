@@ -95,30 +95,6 @@
 /* もとの styles.css の、中の span を小さく灰色にする決まりを打ち消す（字は最低ラインより小さくしない） */
 .player .hold span, .player .cap-mic span, .player .cap-title span, .player .cap-cand span, .player .cap-prep span { font-size: inherit; color: inherit; opacity: 1; font-weight: inherit; }
 .player .slot { margin: 12px 0 0; }
-/* 走ると光る：配役〜追跡開始までは「オンにする」の板（ひとことの下）。ゲームの段階は、絵の代わりに光の地図 */
-.player .p-stage { flex: 0 0 auto; display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
-.player .p-stage:has(> .glow[hidden]) { display: none; }
-.player.is-glow .p-pic { display: none; }
-.player.is-glow .p-stage { flex: 1 1 0; min-height: 0; overflow: hidden; }
-.player.is-glow .p-time { margin-top: 8px; font-size: clamp(calc(var(--min) * 1.2), 8dvh, 64px); }
-.player.is-glow .p-note { display: none; }
-.player:has(.cap-cands:not([hidden])) .p-stage { display: none; }
-.player.is-ended .p-stage { display: none; }
-/* 光っている間：時計の下に「光っている」 */
-.player .p-lit .ja, .player .p-lit .en { display: inline; }
-.player .p-lit .en { margin-left: 8px; font-size: .8em; }
-.player .p-lit { display: none; }
-.player.is-lit .p-lit {
-  display: block; align-self: center; margin-top: 6px; border-radius: 999px; background: var(--tsuki); color: var(--yami);
-  padding: 2px 16px; font-size: max(var(--min), 18px); letter-spacing: .04em; white-space: nowrap;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .player.is-lit .p-lit { animation: glow-me-pulse 1.2s ease-in-out infinite; }
-}
-.player .glow-ask { border-color: var(--tsuki); color: var(--tsuki); }
-.player .glow-ask > span, .player .glow-note { color: var(--tsuki-muted); }
-.player .glow-ask b span { color: inherit; font-size: inherit; opacity: 1; }
-.player .glow-ask b .en { font-size: .8em; }
 
 /* ---------- 捕獲 ---------- */
 .player .capture { gap: 12px; }
@@ -237,3 +213,114 @@
 .join .me { background: var(--tsuki); color: var(--yami); min-height: 112px; font-size: 34px; }
 .join .me:disabled { background: transparent; color: var(--tsuki-muted); border: 1px solid #2b2e38; }
 .join button.quiet { color: var(--tsuki-muted); font-size: max(var(--min), 14px); display: flex; flex-direction: column; align-items: center; gap: 2px; }
+
+/* ---------- 走ると光る ---------- */
+/*
+ * 置き場所：配役〜追跡開始までは長押しの上（「オンにする」）、ゲームの段階は真ん中の絵の場所（光の地図）。
+ * 光っている人の点・道すじは蓄光（--chikko）。自分の印は役の色（--rc）、自分が光ると蓄光になる。
+ * もとの styles.css の白黒の決まり（.phone.is-glow …）より強くするため、.phone.player から書く
+ */
+.phone.player .stage { order: 1; flex: 0 0 auto; min-height: 0; margin: 0; gap: 0; justify-content: flex-start; }
+.phone.player .slot { order: 2; }
+.phone.player .glow { margin-top: 12px; gap: 8px; }
+.phone.player .glow[hidden] { display: none; }
+.phone.player.is-glow { height: 100dvh; min-height: 0; }
+.phone.player.is-glow .p-pic { display: none; }
+.phone.player.is-glow .stage { order: 0; flex: 1 1 0; min-height: 0; margin: 0; overflow: hidden; }
+.phone.player.is-glow .glow { flex: 1 1 0; margin-top: 10px; }
+.phone.player.is-glow .p-time { margin-top: 8px; font-size: clamp(calc(var(--min) * 1.2), 8dvh, 64px); }
+.phone.player.is-glow .hold { min-height: clamp(120px, 19dvh, 156px); }
+/* ゲームの段階は、鬼の「手動」を横並びの小さい形にして、地図に高さを譲る（押す場所の大きさは 44px） */
+.phone.player.is-glow .cap-foot button.rb { flex-direction: row; gap: 10px; }
+.phone.player.is-glow .cap-foot button.rb i { width: 44px; height: 44px; border-radius: 22px; }
+.phone.player.is-glow .cap-foot button.rb .gl { width: 22px; height: 22px; }
+.phone.player.is-glow .cap-foot button.rb .ja, .phone.player.is-glow .cap-foot button.rb .en { text-align: left; }
+/* 「捕まえたのは？」が出ている間は、地図をしまって候補に場所を譲る */
+.phone.player.is-glow:has(.cap-cands:not([hidden])) .stage { display: none; }
+
+/* オンにする：蓄光の点線の板（鬼のマイクと同じ形、色で分ける） */
+.player .glow-ask { min-height: 76px; border-radius: 18px; border: 3px dashed var(--chikko); background: transparent; color: var(--chikko); padding: 12px 16px; gap: 6px; }
+.player .glow-ask b { font-size: max(var(--min), 22px); line-height: 1.2; font-weight: 900; }
+/* もとの styles.css の、板の中の span を小さく灰色にする決まりを打ち消す */
+.player .glow-ask b span { font-size: inherit; color: inherit; font-weight: inherit; line-height: inherit; }
+.player .glow-ask b .en { font-size: max(calc(var(--min) * 1.2), .8em); }
+.player .glow-ask span[data-k="askSub"] { font-size: max(var(--min), 15px); line-height: 1.45; color: var(--tsuki); font-weight: 500; opacity: 1; }
+.player .glow-ask span[data-k="askSub"] span { font-size: inherit; color: inherit; }
+.player .glow[data-glow="live"] .glow-ask { min-height: 56px; padding: 8px 12px; }
+.player .glow[data-glow="live"] .glow-ask b { font-size: max(var(--min), 18px); }
+.player .glow[data-glow="live"] .glow-ask span[data-k="askSub"] { display: none; }
+.player .glow-note { margin: 0; text-align: center; font-size: max(var(--min), 16px); line-height: 1.4; font-weight: 700; color: var(--chikko); }
+.player .glow-note .en.u { font-size: max(calc(var(--min) * 1.2), 1em); }
+.player .glow-note.is-problem { text-align: left; font-weight: 500; color: var(--tsuki); border: 1px solid var(--tsuki-muted); border-radius: 12px; padding: 10px 12px; line-height: 1.5; }
+
+/* 光の地図 */
+.player .glow-board { gap: 8px; }
+.player .radar { max-height: 336px; }
+.player .radar-bg { fill: var(--raised); stroke: var(--sen); stroke-width: 1; }
+.player .radar-rings circle { stroke: var(--sen); }
+.player .radar-ring-label { fill: var(--tsuki-muted); }
+.player .radar-north { fill: var(--tsuki-muted); paint-order: stroke; stroke: var(--raised); stroke-width: calc(var(--radar-font, 12px) * 0.28); }
+.player .radar.is-north-up .radar-north { fill: var(--tsuki); }
+.player .radar-me-dot { fill: var(--ground); stroke: var(--rc); stroke-width: 2.2; }
+.player .radar-me-arrow { fill: var(--rc); }
+.player .radar-me-halo { fill: var(--chikko); }
+.player .radar.is-lit .radar-me-dot { fill: var(--chikko); stroke: var(--chikko); }
+.player .radar-trail { stroke: var(--chikko); opacity: .7; }
+.player .radar-halo { fill: var(--chikko); }
+.player .radar-dot { fill: var(--chikko); }
+.player .radar-name { fill: var(--tsuki); stroke: var(--raised); }
+.player .radar-ping { stroke: var(--chikko); }
+.player .glow-radar-msg { font-size: max(var(--min), 16px); line-height: 1.45; color: var(--tsuki); font-weight: 700; }
+
+/* いちばん近い人の行：向きの矢印・名前・距離（英語は1行に並べる） */
+.player .glow-list li { grid-template-columns: 28px auto 1fr; gap: 10px; font-size: max(var(--min), 18px); }
+.player .glow-list li.has-more { grid-template-columns: 28px auto 1fr auto; }
+.player .glow-list .glow-dir { width: 28px; height: 28px; }
+.player .glow-list .glow-dir path { fill: var(--chikko); }
+.player .glow-list b { color: var(--tsuki); font-size: max(var(--min), 20px); }
+.player .glow-list em { color: var(--tsuki); }
+.player .glow-list .ja, .player .glow-list .en { display: inline; }
+.player .glow-list em span, .player .glow-list .glow-others span { font-size: inherit; color: inherit; }
+.player .glow-list em .en, .player .glow-list .glow-others .en { color: var(--tsuki-muted); }
+.player .glow-list .glow-others { font-size: max(var(--min), 16px); color: var(--tsuki-muted); }
+.player .glow-list .glow-none { font-size: max(var(--min), 16px); color: var(--tsuki-muted); text-align: center; }
+.player .glow-list .glow-none .ja, .player .glow-list .glow-none .en { display: block; }
+
+/* 自分が光っている間：ひとことの場所に「光っている」、画面の縁が蓄光に光る */
+.player .p-lit { display: none; flex: 0 0 auto; margin-top: 10px; text-align: center; color: var(--chikko); font-size: max(var(--min), 28px); line-height: 1.2; font-weight: 900; }
+.player.is-lit .p-lit { display: block; }
+.player.is-lit .p-word { display: none; }
+.player.is-lit { box-shadow: inset 0 0 0 3px var(--chikko); }
+@media (prefers-reduced-motion: no-preference) {
+  .player.is-lit .p-lit { animation: p-lit-pulse 1.2s ease-in-out infinite; }
+  .player.is-lit { animation: p-lit-edge 1.2s ease-in-out infinite; }
+}
+@keyframes p-lit-pulse { 0%, 100% { text-shadow: 0 0 0 rgba(184, 255, 90, 0); } 50% { text-shadow: 0 0 18px rgba(184, 255, 90, .8); } }
+@keyframes p-lit-edge { 0%, 100% { box-shadow: inset 0 0 0 3px var(--chikko); } 50% { box-shadow: inset 0 0 0 3px var(--chikko), inset 0 0 28px 0 rgba(184, 255, 90, .35); } }
+.player.is-ended .stage, .player.is-ended .p-lit { display: none; }
+
+/* 全体の地図（北が上の SFC）と、光の地図（近く）の切りかえ。参加者の画面では裏フェスの色で描く */
+.player .glow-tabs { gap: 8px; }
+.player .glow-tabs button { min-height: 44px; border-radius: 999px; border: 1.5px solid var(--sen); background: transparent; color: var(--tsuki-muted); font-size: max(var(--min), 16px); }
+.player .glow-tabs button b { font-size: max(var(--min), 17px); font-weight: 900; color: inherit; }
+.player .glow-tabs button span { font-family: "URAJI", "Hiragino Sans", system-ui, sans-serif; font-weight: 900; font-size: max(calc(var(--min) * 1.2), 1em); color: inherit; letter-spacing: .06em; opacity: 1; }
+.player .glow-tabs button[aria-selected="true"] { border-color: var(--tsuki); color: var(--tsuki); background: var(--raised); }
+.player .ov { background: var(--raised); border-color: var(--sen); }
+.player .ov-pt .ov-dot { stroke: var(--raised); }
+.player .ov-pt.is-runner .ov-dot { fill: var(--tsuki); }
+.player .ov-pt.is-oni .ov-dot, .player .ov-pt.is-oni .ov-horn { fill: var(--shu); }
+.player .ov-pt.is-oni .ov-horn { stroke: var(--raised); }
+.player .ov-pt.is-unknown .ov-dot { fill: var(--chikko); }
+.player .ov-halo { fill: var(--chikko); }
+.player .ov-ping { stroke: var(--chikko); }
+.player .ov-name { font-size: max(var(--min), 16px); fill: var(--tsuki); stroke: var(--raised); }
+.player .ov-name.is-oni { fill: var(--shu); }
+/* 自分の印は役の色の輪（光の地図と同じ）。自分が光ると蓄光 */
+.player .ov-acc-me { fill: var(--rc); fill-opacity: .08; stroke: var(--rc); stroke-opacity: .4; }
+.player .ov-me .ov-me-ring { stroke: var(--rc); }
+.player .ov-me .ov-me-dot { fill: var(--rc); }
+.player .ov-me.is-lit .ov-me-ring { stroke: var(--chikko); }
+.player .ov-me.is-lit .ov-me-dot { fill: var(--chikko); }
+.player .ov-name.is-me { fill: var(--rc); }
+.player.is-lit .ov-name.is-me { fill: var(--chikko); }
+.player .ov-credit { font-size: max(var(--min), 16px); color: var(--tsuki-muted); }
