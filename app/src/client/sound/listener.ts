@@ -28,13 +28,35 @@ export class SoundListener {
   unlock(): void {
     const AC = typeof window === 'undefined' ? undefined : (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
     if (!AC) return;
-    this.ctx ??= new AC();
-    if (this.ctx.state === 'suspended') void this.ctx.resume().catch(() => undefined);
+    if (!this.ctx || this.ctx.state === 'closed') this.ctx = new AC();
+    // iPhone は電話や別の音で止めると 'interrupted' になる。'suspended' と同じく、タップの直後に動かし直す
+    if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => undefined);
+  }
+
+  /**
+   * マイクが本当に音を拾える状態か。開けたあとでも、iPhone では画面を離れる・ほかの音のアプリ・電話などで
+   * マイクが止まったり（track が ended・muted）、音の処理が止まったり（AudioContext が suspended・interrupted）する。
+   * 画面はこれで「マイクをオンにする」を出し続けるかを決める
+   */
+  get live(): boolean {
+    if (this.state !== 'ready') return false;
+    const track = this.stream?.getAudioTracks()[0];
+    return !!track && track.readyState === 'live' && !track.muted && this.ctx?.state === 'running';
   }
 
   /** マイクを開く（許可を聞かれるのはここ）。開いたまま、読むのは listen() の間だけ */
   open(): Promise<void> {
-    if (this.state === 'ready') return Promise.resolve();
+    if (this.live) return Promise.resolve();
+    if (this.state === 'ready') {
+      const track = this.stream?.getAudioTracks()[0];
+      if (track && track.readyState === 'live' && !track.muted) {
+        // マイクは生きていて、音の処理だけ止まっている：動かし直すだけでよい（このタップの中で）
+        this.unlock();
+        return Promise.resolve();
+      }
+      // マイクが止まった：閉じて、開き直す
+      this.close();
+    }
     this.opening ??= this.doOpen().finally(() => {
       this.opening = null;
     });
@@ -72,6 +94,12 @@ export class SoundListener {
       source.connect(node);
       node.connect(sink);
       sink.connect(ctx.destination);
+      // 止まったら（ほかのアプリがマイクを取った・端末が切った）閉じて、画面に「もう一度オンにする」を出させる
+      for (const track of stream.getAudioTracks()) {
+        track.addEventListener('ended', () => {
+          if (this.stream === stream) this.close();
+        });
+      }
       this.stream = stream;
       this.source = source;
       this.node = node;
