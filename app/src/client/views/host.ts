@@ -14,6 +14,7 @@ import {
   START_LEAD_MS,
 } from '../../shared/rules';
 import { isDone, positionAt } from '../../shared/schedule';
+import { MISSION_DEFAULT_TITLE, MISSION_TITLE_MAX, PHOTO_STATUS_NAME, PHOTO_STORE_MAX_BYTES, type PhotoStatus } from '../../shared/mission';
 import { glowPhase, hostStatus } from '../../shared/viewmodel';
 import type { ClientState } from '../core/game-client';
 import type { Sensors } from '../sense';
@@ -52,11 +53,22 @@ export interface HostActions {
       by?: string;
       rid?: string;
       ok?: boolean;
+      title?: string;
+      photo?: string;
       n?: number;
     },
   ): void;
   /** 1イベント＝1行の記録を CSV で保存する */
   downloadLog(): Promise<void>;
+  /** ミッションの写真を取り出して、画面で使える URL にする */
+  photo(id: string): Promise<string | null>;
+  /** 全部の夜の写真の一覧 */
+  album(): Promise<AlbumData>;
+}
+
+export interface AlbumData {
+  bytes: number;
+  photos: { id: string; missionId: number; night: number; round: number; name: string; at: number; status: PhotoStatus; title: string }[];
 }
 
 export interface HostScreen {
@@ -149,6 +161,21 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       <p class="note" data-k="glowReady"></p>
       <button type="button" class="ghost" data-act="glow-map" hidden>地図の真ん中をこの画面の場所にする（位置を使う）</button>
       <div data-k="glowBoard"></div>
+    </section>
+    <section class="cap-host mission-host" data-k="mission">
+      <div class="cap-host-head"><b>ミッション</b><span data-k="missionNow"></span></div>
+      <form data-k="missionForm">
+        <input type="text" maxlength="${MISSION_TITLE_MAX}" placeholder="${MISSION_DEFAULT_TITLE}" data-k="missionTitle" aria-label="ミッションの題">
+        <button type="submit" data-k="missionGo">ミッションを出す</button>
+      </form>
+      <button type="button" class="ghost" data-k="missionClose" hidden>締め切る（成功した写真はそのまま）</button>
+      <p class="note">届いた写真を見て「成功」か「やり直し」を押す。成功は全員の画面に名前が出る。写真そのものは結果発表で全員の画面に出る。</p>
+      <div class="photo-grid" data-k="photoGrid"></div>
+      <details class="album" data-k="album">
+        <summary>写真（全部の夜）</summary>
+        <p class="note" data-k="albumNote"></p>
+        <div data-k="albumList"></div>
+      </details>
     </section>
     <div class="dups" data-k="duplist"></div>
     <div class="spacer"></div>
@@ -268,6 +295,116 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     const pid = target.dataset.pid;
     if (pid && confirm(`${target.dataset.label} を参加者から外す。よいか？`)) actions.command('remove', { pid });
   });
+
+  // ミッション
+  const missionForm = q('missionForm') as HTMLFormElement;
+  const missionTitle = q('missionTitle') as HTMLInputElement;
+  let missionOpen = false;
+  missionForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const title = missionTitle.value.trim() || MISSION_DEFAULT_TITLE;
+    if (missionOpen && !confirm(`いまのミッションを締め切って、「${title}」を出す。よいか？`)) return;
+    actions.command('mission', { title });
+    missionTitle.value = '';
+  });
+  q('missionClose').addEventListener('click', () => {
+    if (confirm('ミッションを締め切る。もう写真は送れなくなる。よいか？')) actions.command('mission-close');
+  });
+  const onPhotoClick = (e: Event) => {
+    const t = e.target as HTMLElement;
+    const b = t.closest('button') as HTMLButtonElement | null;
+    if (b?.dataset.photo) {
+      actions.command('judge', { photo: b.dataset.photo, ok: b.dataset.ok === '1' });
+      return;
+    }
+    // 写真を押すと大きくする・戻す
+    const fig = t.closest('figure');
+    if (fig && t.tagName === 'IMG') fig.classList.toggle('is-big');
+  };
+  q('photoGrid').addEventListener('click', onPhotoClick);
+  q('albumList').addEventListener('click', onPhotoClick);
+  // 全部の夜の写真は、画面に入ったものだけ取りに行く（全部を一度に読むと、主催者のスマホが落ちる）
+  const lazy =
+    typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver(
+          (entries) => {
+            for (const en of entries) {
+              if (!en.isIntersecting) continue;
+              const img = en.target as HTMLImageElement;
+              lazy!.unobserve(img);
+              void actions.photo(img.dataset.id!).then((url) => {
+                if (url) img.src = url;
+              });
+            }
+          },
+          { rootMargin: '200px' },
+        )
+      : null;
+  const album = q('album') as HTMLDetailsElement;
+  album.addEventListener('toggle', () => {
+    if (album.open) void showAlbum();
+  });
+  async function showAlbum(): Promise<void> {
+    q('albumNote').textContent = '読み込んでいる…';
+    try {
+      const data = await actions.album();
+      q('albumNote').textContent = `${data.photos.length}枚・保存 ${mb(data.bytes)} / ${mb(PHOTO_STORE_MAX_BYTES)}。名簿と同じく、新しい夜を始めても消えない。`;
+      const groups = new Map<string, AlbumData['photos']>();
+      for (const ph of data.photos) {
+        const k = `夜${ph.night}・ラウンド${Math.max(ph.round, 0)}「${ph.title}」`;
+        groups.set(k, [...(groups.get(k) ?? []), ph]);
+      }
+      q('albumList').replaceChildren(
+        ...[...groups.entries()].reverse().map(([k, list]) => {
+          const box = document.createElement('div');
+          box.className = 'album-group';
+          const h = document.createElement('div');
+          h.className = 'album-head';
+          h.textContent = k;
+          const grid = document.createElement('div');
+          grid.className = 'photo-grid';
+          grid.append(...list.map((ph) => photoFigure(ph.id, `${ph.name}・${clock(ph.at)}・${PHOTO_STATUS_NAME[ph.status]}`, ph.status, null, true)));
+          box.append(h, grid);
+          return box;
+        }),
+      );
+    } catch {
+      q('albumNote').textContent = '読み込めなかった。閉じてもう一度開く。';
+    }
+  }
+  /** 写真1枚（主催者が見る）。buttons を渡すと「成功」「やり直し」を付ける */
+  function photoFigure(id: string, label: string, status: PhotoStatus, buttons: { id: string } | null, later = false): HTMLElement {
+    const fig = document.createElement('figure');
+    fig.dataset.status = status;
+    const img = document.createElement('img');
+    img.alt = label;
+    img.decoding = 'async';
+    img.dataset.id = id;
+    if (later && lazy) lazy.observe(img);
+    else
+      void actions.photo(id).then((url) => {
+        if (url) img.src = url;
+      });
+    const cap = document.createElement('figcaption');
+    cap.textContent = label;
+    fig.append(img, cap);
+    if (buttons) {
+      const row = document.createElement('div');
+      row.className = 'photo-judge';
+      for (const [text, ok] of [['成功', '1'], ['やり直し', '0']] as const) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = text;
+        b.dataset.photo = buttons.id;
+        b.dataset.ok = ok;
+        b.classList.toggle('primary', (ok === '1' && status === 'ok') || (ok === '0' && status === 'no'));
+        row.append(b);
+      }
+      fig.append(row);
+    }
+    return fig;
+  }
+  let lastPhotoKey = '';
 
   let lastDupKey = '';
   let lastCapKey = '';
@@ -459,6 +596,35 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         }
       }
 
+      // ミッション
+      const mission = game.mission ?? null;
+      missionOpen = !!mission?.open;
+      // 決めるための並びは、このラウンドの全部のミッションの写真（前のミッションの見ていない写真も押せるように）
+      const roundPhotos = host.photos ?? [];
+      const photos = roundPhotos.filter((ph) => ph.missionId === mission?.id);
+      const okCount = photos.filter((ph) => ph.status === 'ok').length;
+      const waitingCount = photos.filter((ph) => ph.status === 'pending').length;
+      q('missionNow').textContent = mission
+        ? `「${mission.title}」${mission.open ? '受け付け中' : '締め切った'}・届いた ${photos.length}枚・成功 ${okCount}枚${waitingCount ? `・見ていない ${waitingCount}枚` : ''}`
+        : 'まだ出していない';
+      const canIssue = game.stage !== 'ended';
+      missionTitle.disabled = !canIssue;
+      const go = q('missionGo') as HTMLButtonElement;
+      go.disabled = !canIssue;
+      go.textContent = mission?.open ? '次のミッションを出す' : 'ミッションを出す';
+      q('missionClose').hidden = !mission?.open;
+      const photoKey = JSON.stringify(roundPhotos.map((ph) => [ph.id, ph.status]));
+      if (photoKey !== lastPhotoKey) {
+        lastPhotoKey = photoKey;
+        // 見ていない写真を先に、そのあと新しい順
+        const order = [...roundPhotos].sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1) || b.at - a.at);
+        q('photoGrid').replaceChildren(
+          ...order.map((ph) => photoFigure(ph.id, `${ph.name}・${clock(ph.at)}・${PHOTO_STATUS_NAME[ph.status]}`, ph.status, { id: ph.id })),
+        );
+        // 全部の夜の一覧を開いている間に、写真が届いた・決めたら読み直す
+        if (album.open) void showAlbum();
+      }
+
       const dupKey = JSON.stringify(host.dupNames);
       if (dupKey !== lastDupKey) {
         lastDupKey = dupKey;
@@ -485,6 +651,10 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       }
     },
   };
+}
+
+function mb(bytes: number): string {
+  return `${(bytes / 1_000_000).toFixed(1)}MB`;
 }
 
 function setEnabled(button: HTMLButtonElement, enabled: boolean, primary: boolean): void {

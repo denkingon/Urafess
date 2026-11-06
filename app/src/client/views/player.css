@@ -299,6 +299,9 @@
 @keyframes p-lit-edge { 0%, 100% { box-shadow: inset 0 0 0 3px var(--chikko); } 50% { box-shadow: inset 0 0 0 3px var(--chikko), inset 0 0 28px 0 rgba(184, 255, 90, .35); } }
 .player.is-ended .stage, .player.is-ended .p-lit { display: none; }
 
+/* ミッションの写真を出している間（結果発表）は、絵の場所を写真に譲る */
+.phone.player:has(.mission-gallery:not([hidden])) .p-pic { display: none; }
+.phone.player .stage:has(> .mission-gallery:not([hidden])) { gap: 10px; margin-top: 10px; }
 /* ---------- 牢屋 ---------- */
 /* 「助ける」は蓄光（光る一か所）の点線の板、牢屋の「助けて」は月白の二重の板。マイクは月白の点線 */
 .player .jail { display: flex; flex-direction: column; gap: 12px; }
@@ -309,3 +312,7 @@
 .player .jail[data-mode="help"] .hold { border: 6px double var(--yami); }
 .player .jail .cap-mic { border-color: var(--tsuki); color: var(--tsuki); }
 .player .jail .cap-status { margin: 0; text-align: center; }
+/* ミッションの札は、牢屋の板と同じ枠の中でも左寄せ・ボタンは横いっぱい */
+.phone.player .slot > .mission { align-items: stretch; text-align: left; }
+.phone.player .slot > .mission .mission-head { justify-content: space-between; }
+.phone.player .slot > .mission .mission-shoot { align-self: stretch; width: 100%; }
