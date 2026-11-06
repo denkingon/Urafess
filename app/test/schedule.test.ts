@@ -3,6 +3,7 @@ import { START_LEAD_MS } from '../src/shared/rules';
 import {
   boundaryTimes,
   formatClock,
+  matchLive,
   pauseTimer,
   positionAt,
   resumeTimer,
@@ -58,5 +59,37 @@ describe('区切りの計算', () => {
     expect(formatClock(1)).toBe('0:01');
     expect(formatClock(0)).toBe('0:00');
     expect(formatClock(-5)).toBe('0:00');
+  });
+});
+
+describe('試合中か（合図を出す・見張る・画面を消さない間）', () => {
+  const end = START_LEAD_MS + 500_000; // 4つの区切りが全部終わる時刻（開始を0として）
+
+  it('配役済みは試合中。待合室と結果発表は試合中ではない', () => {
+    expect(matchLive('assigned', null, 0)).toBe(true);
+    expect(matchLive('lobby', null, 0)).toBe(false);
+    expect(matchLive('result', null, 0)).toBe(false);
+    expect(matchLive(undefined, null, 0)).toBe(false);
+  });
+
+  it('タイマーは、最後の区切り（広場に戻るまで）が0になる瞬間まで試合中。0になったら、結果を押す前でも試合中ではない', () => {
+    const t = startTimer(D, 0);
+    expect(matchLive('timer', t, 0)).toBe(true); // 開始前の2秒
+    expect(matchLive('timer', t, end - 1)).toBe(true);
+    expect(matchLive('timer', t, end)).toBe(false);
+    expect(matchLive('timer', t, end + 12 * 3_600_000)).toBe(false); // 結果待ちのまま一晩
+  });
+
+  it('一時停止中は、どれだけ止めていても試合中', () => {
+    const paused = pauseTimer(startTimer(D, 0), START_LEAD_MS + 100_000);
+    expect(matchLive('timer', paused, end + 3_600_000)).toBe(true);
+    // 再開すると、止めていた分だけ0になる時刻が後ろにずれる
+    const resumed = resumeTimer(paused, START_LEAD_MS + 700_000);
+    expect(matchLive('timer', resumed, end + 600_000)).toBe(true);
+    expect(matchLive('timer', resumed, end + 600_000 + START_LEAD_MS)).toBe(false);
+  });
+
+  it('タイマーの段階なのにタイマーがない（起きない状態）は、見張りを外さない側に倒して試合中とみなす', () => {
+    expect(matchLive('timer', null, 0)).toBe(true);
   });
 });

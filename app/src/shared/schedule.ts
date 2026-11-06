@@ -77,6 +77,19 @@ export function isDone(timer: Timer, serverNow: number): boolean {
   return positionAt(timer, serverNow).kind === 'done';
 }
 
+/**
+ * 試合中か：サーバーが合図（hb）を出し、スマホが合図を見張り、画面を消さない間。
+ * 配役済みから、タイマーの最後の区切り（広場に戻るまで）が0になるまで。一時停止中も試合中。
+ * 時間が0になったら、主催者が結果を押す前でも試合中ではない（結果待ちのまま放っておかれても、画面と合図が止まる）。
+ * サーバーとスマホが同じこの関数で決めるので、合図を止める瞬間と見張りをやめる瞬間がそろう
+ */
+export function matchLive(stage: string | undefined, timer: Timer | null | undefined, serverNow: number): boolean {
+  if (stage === 'assigned') return true;
+  if (stage !== 'timer') return false;
+  // タイマーの段階なのにタイマーがない状態は起きないが、起きたら試合中とみなす（見張りを外さない側に倒す）
+  return !timer || !isDone(timer, serverNow);
+}
+
 /** 走っている間の、各区切りのサーバー時刻（全員が同じ値を持つ） */
 export function boundaryTimes(timer: Timer): number[] | null {
   if (timer.status !== 'running') return null;

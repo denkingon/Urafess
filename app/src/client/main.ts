@@ -1,4 +1,5 @@
 import './styles.css';
+import { matchLive } from '../shared/schedule';
 import { participantView } from '../shared/viewmodel';
 import { GameClient, type KeyValueStore } from './core/game-client';
 import { detectInstall, lineEscapeUrl, type InstallPath } from './install/detect';
@@ -30,9 +31,11 @@ const storage: KeyValueStore = {
 
 const root = document.getElementById('app')!;
 
-/** 試合中（配役〜タイマー）は画面を消さない */
+/** 試合中（配役〜タイマーが0になるまで）は画面を消さない。結果待ちのまま放っておかれたら消える */
 const screenKeeper = createScreenKeeper();
-const inMatch = (stage: string | undefined) => stage === 'assigned' || stage === 'timer';
+const inMatch = (c: GameClient) => matchLive(c.state.game?.stage, c.state.game?.timer, c.serverNow() ?? Date.now());
+/** 配役〜結果を押すまで。新しい版への読み込み直しはこの間しない（時間が0になったあとの、捕獲の答え待ちも含む） */
+const inRound = (stage: string | undefined) => stage === 'assigned' || stage === 'timer';
 
 if (isLab) {
   startLab();
@@ -141,7 +144,7 @@ function sessionSet(k: string, v: string): void {
 
 function startPlayer(): void {
   const client = makeClient({ kind: 'player' });
-  startUpdateChecks(() => !(client.state.phase === 'ready' && inMatch(client.state.game?.stage)));
+  startUpdateChecks(() => !(client.state.phase === 'ready' && inRound(client.state.game?.stage)));
   const join = createJoin((name) => client.join(name));
   const phone = createPhone();
   // 捕獲：逃走者のスマホは長押しの間3桁を鳴らし、鬼のスマホはマイクで聞く
@@ -182,7 +185,7 @@ function startPlayer(): void {
 
   loop(() => {
     const s = client.state;
-    screenKeeper.set(s.phase === 'ready' && inMatch(s.game?.stage));
+    screenKeeper.set(s.phase === 'ready' && inMatch(client));
     if (s.phase === 'need-name' || s.phase === 'joining') {
       show(join.el);
       join.update({ busy: s.phase === 'joining', error: s.joinError });
@@ -229,7 +232,7 @@ function startLab(): void {
 
 function startHost(token: string): void {
   const client = makeClient({ kind: 'host', token });
-  startUpdateChecks(() => !inMatch(client.state.game?.stage));
+  startUpdateChecks(() => !inRound(client.state.game?.stage));
   const host = createHost({
     command: (op, extra) => client.command(op, extra),
     downloadLog: async () => {
@@ -248,7 +251,7 @@ function startHost(token: string): void {
   root.replaceChildren(host.el);
   loop(() => {
     const s = client.state;
-    screenKeeper.set(inMatch(s.game?.stage));
+    screenKeeper.set(inMatch(client));
     if (s.phase === 'denied') {
       screenKeeper.set(false);
       storage.remove('urafess:host-token');

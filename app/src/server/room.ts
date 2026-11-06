@@ -31,7 +31,7 @@ import {
   SYNC_OK_MS,
   type RoleId,
 } from '../shared/rules';
-import { elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, startTimer, type Timer } from '../shared/schedule';
+import { elapsedAt, isDone, matchLive, pauseTimer, positionAt, resumeTimer, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
 import type { ProbeHub } from './probe';
 
@@ -437,9 +437,12 @@ export class GameRoom extends DurableObject<Env> {
 
   // ---------- 試合中の合図 ----------
 
-  /** 合図を出すのは、配役からタイマーの間だけ（待合室や結果発表の間は出さない＝リクエストを使わない） */
-  private heartbeatActive(): boolean {
-    return this.game.stage === 'assigned' || this.game.stage === 'timer';
+  /**
+   * 合図を出すのは試合中だけ＝配役からタイマーが0になるまで（matchLive）。待合室・時間が0になったあとの結果待ち・
+   * 結果発表の間は出さない（リクエストを使わない）。スマホも同じ matchLive で見張りをやめるので、止めても切断とはみなされない
+   */
+  private heartbeatActive(now = Date.now()): boolean {
+    return matchLive(this.game.stage, this.game.timer, now);
   }
 
   /**
