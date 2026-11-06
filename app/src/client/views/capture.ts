@@ -1,6 +1,6 @@
 import type { Candidate } from '../../shared/capture';
 import type { RosterEntry } from '../../shared/protocol';
-import { HOLD_MIN_MS } from '../../shared/rules';
+import { HOLD_LATCH_MS, HOLD_MIN_MS } from '../../shared/rules';
 import type { PhoneView } from '../../shared/viewmodel';
 import type { ClientState, GameClient } from '../core/game-client';
 import type { SoundEmitter } from '../sound/emitter';
@@ -114,6 +114,14 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
   let code: string | null = null;
   let pressing: { id: number; at: number; timer: ReturnType<typeof setTimeout> } | null = null;
   let holding = false;
+  /** 長押しになった（0.5秒押した）押し始め。離してもここから HOLD_LATCH_MS までは続く */
+  let holdAt = 0;
+  /** 離したあとも続けている間の、終わりのタイマー */
+  let latch: ReturnType<typeof setTimeout> | null = null;
+  /** 鬼のスマホが、長押しと関係なく聞いている（ゲームの段階の間ずっと） */
+  let passive = false;
+  /** 離した直後のこの時刻までは、逃走者に候補を出さない（鬼が1人に決まれば、サーバーがそのまま記録するので） */
+  let quietUntil = 0;
   let lastNotice = 0;
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   let lockTimer: ReturnType<typeof setTimeout> | null = null;
@@ -133,33 +141,55 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
 
   // ---------- 長押し ----------
 
+  const onHeardCode = (heard: string) => {
+    // 同じ3桁は3秒に1回だけ送る（相手は繰り返し鳴らしている）
+    const last = sentCodes.get(heard) ?? 0;
+    if (Date.now() - last < 3_000) return;
+    sentCodes.set(heard, Date.now());
+    client.heard(heard);
+  };
   const startEffects = () => {
     if (mode === 'runner' && code) emitter.start(code);
-    if (mode === 'oni') {
-      listener.listen((heard) => {
-        // 同じ3桁は3秒に1回だけ送る（相手は繰り返し鳴らしている）
-        const last = sentCodes.get(heard) ?? 0;
-        if (Date.now() - last < 3_000) return;
-        sentCodes.set(heard, Date.now());
-        client.heard(heard);
-      });
-    }
+    if (mode === 'oni') listener.listen(onHeardCode);
   };
   const stopEffects = () => {
     emitter.stop();
-    listener.pause();
+    // ずっと聞いている鬼は、長押しが終わっても聞き続ける
+    if (!passive) listener.pause();
   };
 
-  const endPress = () => {
-    if (!pressing) return;
-    clearTimeout(pressing.timer);
-    pressing = null;
+  /** 長押しを本当に終える（離したあと続けていた分も含めて） */
+  const finishHold = () => {
+    if (latch) clearTimeout(latch);
+    latch = null;
     stopEffects();
     if (holding) {
       holding = false;
+      quietUntil = Date.now() + 1_500;
       client.holdEnd(Date.now());
     }
-    el.classList.remove('is-pressing', 'is-holding');
+    el.classList.remove('is-pressing', 'is-holding', 'is-latched');
+  };
+
+  /**
+   * 指を離した。0.5秒押していれば離していい：押し始めから HOLD_LATCH_MS までは、音を出し続ける（鬼は聞き続ける）。
+   * 押しっぱなしで近づけなくても、鳴っている間にスマホを相手に寄せればいい
+   */
+  const endPress = (force = false) => {
+    if (!pressing) {
+      if (force) finishHold();
+      return;
+    }
+    clearTimeout(pressing.timer);
+    pressing = null;
+    el.classList.remove('is-pressing');
+    const left = holdAt + HOLD_LATCH_MS - Date.now();
+    if (holding && !force && left > 0) {
+      el.classList.add('is-latched');
+      latch = setTimeout(finishHold, left);
+      return;
+    }
+    finishHold();
   };
 
   hold.addEventListener('pointerdown', (e) => {
@@ -171,12 +201,22 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       // 取れなくても動く
     }
     const at = Date.now();
+    if (latch) {
+      // 離したあと鳴っている間に、また押した：同じ長押しのまま続ける（離すまで）
+      clearTimeout(latch);
+      latch = null;
+      el.classList.remove('is-latched');
+      pressing = { id: e.pointerId, at: holdAt, timer: setTimeout(() => undefined, 0) };
+      el.classList.add('is-pressing');
+      return;
+    }
     pressing = {
       id: e.pointerId,
       at,
       timer: setTimeout(() => {
         if (!pressing) return;
         holding = true;
+        holdAt = pressing.at;
         el.classList.add('is-holding');
         client.holdStart(pressing.at);
         vibrate(20);
@@ -352,7 +392,20 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       mode = view.touch;
       role = view.role;
       code = state.me?.code ?? null;
-      if (prevMode !== mode && mode === 'none') endPress();
+      if (prevMode !== mode && mode === 'none') endPress(true);
+      // 主催者が「ずっと聞く」にしているとき、鬼はゲームの段階の間ずっと聞く（マイクがもう開いているときだけ。開くのはマイクの板を押したとき）。
+      // 足すのは読み取りの計算だけ：マイクは配役のあとから開けたまま。「押している間だけ」なら前の版と同じ
+      const always = (state.game?.micMode ?? 'always') === 'always';
+      const wantPassive = mode === 'oni' && always && listener.state === 'ready';
+      if (wantPassive && !passive) {
+        passive = true;
+        listener.listen(onHeardCode);
+      } else if (!wantPassive && passive) {
+        passive = false;
+        if (!holding) listener.pause();
+      }
+      // ずっと聞いている間は、押していなくても板に波を薄く出す（聞いているのが見えるように）
+      el.classList.toggle('is-passive', passive);
       // ゲームの段階が終わったら（広場に戻る・結果発表・配役前）、または鬼でなくなったらマイクを閉じる。ゲームの前に開けた分は残す
       const afterGame = view.step === 0 || view.step >= 5;
       if (listener.state === 'ready' && ((mode === 'none' && afterGame) || view.role !== '鬼')) listener.close();
@@ -362,7 +415,9 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       // 逃走者の候補（「捕まった」を押してから選ぶまで）
       const claim = state.me?.role === 'runner' && !state.me.caught ? state.me.claim : null;
       const cands = q('cands');
-      cands.hidden = !claim;
+      // 押している間と、離した直後は出さない：鬼が1人に決まるなら選ばずに記録されるので、聞く必要がない
+      const settling = mode === 'runner' && (holding || latch !== null || Date.now() < quietUntil);
+      cands.hidden = !claim || settling;
       if (claim) {
         // 押したのに6秒たっても記録されない（電波が切れていた等）候補は、押せる見た目に戻す
         for (const [pid, at] of sentCands) {
