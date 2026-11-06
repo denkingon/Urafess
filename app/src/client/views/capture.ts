@@ -280,9 +280,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
         b.dataset.pid = p.pid;
         const name = document.createElement('b');
         name.textContent = p.name;
-        const num = document.createElement('span');
-        num.textContent = `${p.num}番`;
-        b.append(name, num);
+        b.append(name);
         if (p.tags?.length) {
           const tag = document.createElement('i');
           tag.textContent = p.tags.join('・');
@@ -299,7 +297,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
     const n = state.notice;
     if (!n || n.seq === lastNotice) return;
     lastNotice = n.seq;
-    const who = n.other ? `${n.other.name}（${n.other.num}番）` : '';
+    const who = n.other ? n.other.name : '';
     switch (n.kind) {
       case 'heard':
         (q('lockName') as HTMLElement).textContent = `${who}をロックオン`;
