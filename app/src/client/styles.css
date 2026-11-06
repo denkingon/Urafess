@@ -167,3 +167,72 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .dups { display: flex; flex-direction: column; gap: 8px; }
 .dup-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
 .dup-row button { min-height: 44px; padding: 0 12px; font-size: 14px; }
+
+/* hidden 属性は、display を持つ部品でも必ず隠す */
+[hidden] { display: none !important; }
+
+/* 捕獲（参加者の画面の下。親指で押す） */
+.slot { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.capture { display: flex; flex-direction: column; gap: 10px; }
+.hold {
+  position: relative; overflow: hidden; min-height: 116px; border-radius: 16px; border: 2px solid var(--ink);
+  background: transparent; color: var(--ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+}
+.hold b { position: relative; font-size: 30px; font-weight: 900; }
+.hold span { position: relative; font-size: 14px; color: var(--quiet); }
+.hold-fill { position: absolute; inset: 0; background: var(--ink); opacity: 0.2; transform: scaleX(0); transform-origin: left; }
+.is-pressing .hold-fill { transform: scaleX(1); transition: transform 0.5s linear; }
+.is-holding .hold { background: var(--ink); color: var(--bg); }
+.is-holding .hold span { color: var(--bg); }
+.is-holding .hold-fill { opacity: 0; }
+.cap-cands, .cap-lock, .cap-prep { border: 1px solid var(--line-strong); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.cap-title { margin: 0; font-size: 16px; font-weight: 900; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.cap-title span { font-size: 12px; color: var(--quiet); font-weight: 500; }
+.cap-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.cap-cand { min-height: 76px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 12px; border: 1px solid var(--ink); }
+.cap-cand b { font-size: 20px; font-weight: 900; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-cand span { font-size: 13px; color: var(--quiet); }
+.cap-cand i { font-style: normal; font-size: 11px; border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 8px; color: var(--quiet); }
+.cap-cand.is-sent { background: var(--ink); color: var(--bg); }
+.cap-wait { margin: 0; font-size: 13px; line-height: 1.6; color: var(--quiet); }
+.cap-row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 700; }
+.cap-status { font-size: 12px; color: var(--quiet); text-align: right; }
+.cap-lock { border-color: var(--ink); }
+.cap-lock b { font-size: 20px; font-weight: 900; }
+.cap-lock span { font-size: 13px; color: var(--quiet); }
+.cap-prep { flex-direction: row; align-items: center; justify-content: space-between; font-size: 13px; line-height: 1.6; color: var(--quiet); }
+.sheet { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.72); display: flex; align-items: flex-end; justify-content: center; z-index: 10; }
+.sheet-body {
+  width: 100%; max-width: 430px; max-height: 80dvh; overflow-y: auto; background: var(--bg); border-top: 1px solid var(--line-strong);
+  border-radius: 16px 16px 0 0; padding: 20px 20px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px;
+}
+.toast {
+  position: fixed; left: 0; right: 0; top: calc(16px + env(safe-area-inset-top)); margin: 0 auto; z-index: 11;
+  width: fit-content; max-width: calc(100vw - 32px); text-align: center;
+  background: var(--ink); color: var(--bg); padding: 12px 18px; border-radius: 12px; font-weight: 900; font-size: 16px;
+}
+.badge[data-role="caught"] { border: 1px dashed var(--ink); color: var(--quiet); }
+
+/* 主催者の捕獲 */
+.cap-host { border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.cap-host-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.cap-host-head b { font-size: 16px; font-weight: 900; }
+.cap-host-head span { font-size: 13px; color: var(--quiet); }
+.cap-host-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.cap-host-grid button { min-height: 40px; padding: 0 10px; font-size: 13px; border-radius: 999px; }
+.cap-host-grid button[data-state="caught"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.cap-host-grid button[data-state="open"] { border-style: dashed; border-color: var(--ink); }
+
+/* 音の試し（/lab） */
+.lab { gap: 14px; padding-top: calc(40px + env(safe-area-inset-top)); }
+.lab h1 { margin: 0; font-size: 32px; font-weight: 900; }
+.lab .lead { margin: 0; font-size: 14px; line-height: 1.8; color: var(--quiet); }
+.lab-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.lab-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 700; color: var(--quiet); }
+.lab-field select, .lab-field input[type="text"] {
+  height: 48px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--field); color: var(--ink); font-size: 16px; font-family: inherit;
+}
+.lab-field input[type="range"] { height: 32px; padding: 0; border: none; background: transparent; }
+.lab-heard { border: 1px solid var(--line-strong); border-radius: 12px; padding: 12px; font-size: 16px; font-weight: 700; line-height: 1.8; font-variant-numeric: tabular-nums; }

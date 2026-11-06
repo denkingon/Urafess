@@ -1,5 +1,6 @@
 import { ClockEstimator } from '../../shared/clock';
-import type { GameView, HostOp, HostSummary, MeView, ServerMsg, Winner } from '../../shared/protocol';
+import type { CaptureVia } from '../../shared/capture';
+import type { GameView, HostOp, HostSummary, MeView, NoticeKind, RosterEntry, ServerMsg, Winner } from '../../shared/protocol';
 import { SILENCE_LIMIT_MS } from '../../shared/rules';
 
 /**
@@ -48,6 +49,15 @@ export interface Identity {
   name: string;
 }
 
+/** 本人だけに届いた短い知らせ。seq は届くたびに増える（画面は seq の変化で帯を出す） */
+export interface Notice {
+  seq: number;
+  kind: NoticeKind;
+  other: { num: number; name: string } | null;
+  via: CaptureVia | null;
+  at: number;
+}
+
 export interface ClientState {
   /** need-name: 入室前 / ready: 状態を受け取った / denied: 主催者の合言葉が違う */
   phase: 'connecting' | 'need-name' | 'joining' | 'ready' | 'denied';
@@ -58,6 +68,9 @@ export interface ClientState {
   identity: Identity | null;
   lastReject: { op: HostOp; reason: string } | null;
   joinError: string | null;
+  notice: Notice | null;
+  /** 手動で選ぶための一覧（頼んだあとに届く）。seq は届くたびに増える */
+  roster: { seq: number; people: RosterEntry[] } | null;
 }
 
 const CONNECTING = 0;
@@ -82,6 +95,10 @@ const CONNECT_TIMEOUT_MS = 8_000;
 const HEARTBEAT_TICK_MS = 1_000;
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 10_000;
+/** つなぎ直したときに送り直す、最近離した長押しの範囲 */
+const RECENT_HOLD_MS = 20_000;
+/** 選んだ・取り下げたの送り直しを諦めるまで */
+const PENDING_MAX_MS = 60_000;
 
 export class GameClient {
   readonly clock = new ClockEstimator();
@@ -104,6 +121,15 @@ export class GameClient {
   private roughOffset: number | null = null;
   private ackedAssignId = 0;
   private pendingJoinName: string | null = null;
+  /** 押している長押し（押し始めのサーバー時刻）。つなぎ直したら送り直す */
+  private holding: { at: number | undefined } | null = null;
+  /** 最近離した長押し。切れていて届いたか分からないので、つなぎ直したら送り直す（サーバーは同じ押し始めを2回数えない） */
+  private recentHolds: { start: number; end: number; doneAt: number }[] = [];
+  /** 送ったが、届いて効いたか分からない操作。つなぎ直して最初の状態を受け取ったとき、まだ効いていなければ送り直す */
+  private pending: { kind: 'answer' | 'nominate' | 'cancel'; pid?: string; manual?: boolean; at: number } | null = null;
+  private resendAfterSnap = false;
+  private noticeSeq = 0;
+  private rosterSeq = 0;
   private stopped = false;
   private readonly listeners = new Set<() => void>();
   private readonly storageKey: string;
@@ -122,6 +148,8 @@ export class GameClient {
       identity: mode.kind === 'player' ? this.loadIdentity() : null,
       lastReject: null,
       joinError: null,
+      notice: null,
+      roster: null,
     };
   }
 
@@ -172,7 +200,84 @@ export class GameClient {
     if (this.isOpen()) this.send({ t: 'join', name });
   }
 
-  command(op: HostOp, extra: { winner?: Winner; durations?: number[]; pid?: string } = {}): boolean {
+  // ---------- 捕獲 ----------
+
+  /** スマホの時計の時刻を、サーバー時刻の見積もりにする（まだ測れていなければ undefined＝サーバーが届いた時刻を使う） */
+  private toServer(localAt: number): number | undefined {
+    const offset = this.clock.offset() ?? this.roughOffset;
+    return offset === null ? undefined : Math.round(localAt + offset);
+  }
+
+  /** 長押しを始めた（HOLD_MIN_MS 押し続けたら呼ぶ。localAt は指を置いた瞬間のスマホの時計） */
+  holdStart(localAt: number): void {
+    const at = this.toServer(localAt);
+    this.holding = { at };
+    this.send({ t: 'hold', on: true, at });
+  }
+
+  /** 長押しを離した */
+  holdEnd(localAt: number): void {
+    if (!this.holding) return;
+    const start = this.holding.at;
+    this.holding = null;
+    const end = this.toServer(localAt);
+    this.send({ t: 'hold', on: false, at: end, start });
+    if (start !== undefined && end !== undefined) {
+      const now = this.deps.now();
+      this.recentHolds = [...this.recentHolds.filter((h) => now - h.doneAt < RECENT_HOLD_MS), { start, end, doneAt: now }].slice(-3);
+    }
+  }
+
+  /** 鬼のスマホが3桁を拾った */
+  heard(code: string): void {
+    this.send({ t: 'heard', code });
+  }
+
+  /** 逃走者が「捕まえたのは◯◯」を選んだ。manual＝手動の一覧から選んだ */
+  answer(oniPid: string, manual = false): void {
+    this.pending = { kind: 'answer', pid: oniPid, manual, at: this.deps.now() };
+    this.send({ t: 'answer', pid: oniPid, manual });
+  }
+
+  /** 鬼が手動の一覧から逃走者を選んだ */
+  nominate(runnerPid: string): void {
+    this.pending = { kind: 'nominate', pid: runnerPid, at: this.deps.now() };
+    this.send({ t: 'nominate', pid: runnerPid });
+  }
+
+  /** 手動で選ぶ一覧を頼む（届くと state.roster が変わる） */
+  requestRoster(): void {
+    this.send({ t: 'roster' });
+  }
+
+  /** 逃走者が「捕まった」を取り下げる */
+  cancelClaim(): void {
+    this.pending = { kind: 'cancel', at: this.deps.now() };
+    this.send({ t: 'cancel' });
+  }
+
+  /** 送った操作が効いたか（状態を受け取るたびに見る）。効いていない・古すぎる操作は捨てる */
+  private settlePending(): void {
+    const pnd = this.pending;
+    if (!pnd) return;
+    const me = this.state.me;
+    const done =
+      this.deps.now() - pnd.at > PENDING_MAX_MS ||
+      (pnd.kind === 'answer' && me?.caught != null) ||
+      (pnd.kind === 'cancel' && !me?.claim);
+    if (done) this.pending = null;
+  }
+
+  private resendPending(): void {
+    this.settlePending();
+    const pnd = this.pending;
+    if (!pnd) return;
+    if (pnd.kind === 'answer' && pnd.pid) this.send({ t: 'answer', pid: pnd.pid, manual: pnd.manual });
+    else if (pnd.kind === 'nominate' && pnd.pid) this.send({ t: 'nominate', pid: pnd.pid });
+    else if (pnd.kind === 'cancel') this.send({ t: 'cancel' });
+  }
+
+  command(op: HostOp, extra: { winner?: Winner; durations?: number[]; pid?: string; by?: string } = {}): boolean {
     const game = this.state.game;
     if (!this.isOpen() || !game) return false;
     this.state = { ...this.state, lastReject: null };
@@ -296,6 +401,19 @@ export class GameClient {
       this.send({ t: 'host', token: this.mode.token });
     } else if (this.state.identity) {
       this.send({ t: 'resume', pid: this.state.identity.pid, key: this.state.identity.key });
+      // 最近離した長押しは、切れていて届いたか分からないので送り直す（サーバーは同じ押し始めを2回数えない）
+      const now = this.deps.now();
+      this.recentHolds = this.recentHolds.filter((h) => now - h.doneAt < RECENT_HOLD_MS);
+      for (const h of this.recentHolds) {
+        this.send({ t: 'hold', on: true, at: h.start, replay: true });
+        this.send({ t: 'hold', on: false, at: h.end, start: h.start });
+      }
+      // 押している途中でつなぎ直したら、同じ押し始めを送り直す（サーバーは同じ長押しとして扱う）。
+      // 押していなければ「離した」を送る（切れている間に離して、その知らせが届かなかった分を閉じる。何も押していなければサーバーは何もしない）
+      if (this.holding) this.send({ t: 'hold', on: true, at: this.holding.at });
+      else this.send({ t: 'hold', on: false, at: this.toServer(now), resume: true });
+      // 選んだ・取り下げたが効いたかは、最初に届く状態を見てから決めて送り直す
+      this.resendAfterSnap = this.pending !== null;
     } else if (this.pendingJoinName) {
       this.send({ t: 'join', name: this.pendingJoinName });
     } else {
@@ -421,6 +539,11 @@ export class GameClient {
           me: msg.me ?? null,
           host: msg.host ?? null,
         };
+        this.settlePending();
+        if (this.resendAfterSnap && msg.me) {
+          this.resendAfterSnap = false;
+          this.resendPending();
+        }
         // 役を受け取ったことをサーバーに返す（主催者画面の「受け取り済み」）
         const me = msg.me;
         if (me && me.role && me.assignId === msg.game.assignId && this.ackedAssignId !== me.assignId) {
@@ -431,6 +554,16 @@ export class GameClient {
       }
       case 'reject':
         this.state = { ...this.state, lastReject: { op: msg.op, reason: msg.reason } };
+        break;
+      case 'notice':
+        if (this.pending?.kind === 'nominate' && (msg.kind === 'nominated' || msg.kind === 'already' || msg.kind === 'closed')) this.pending = null;
+        this.state = {
+          ...this.state,
+          notice: { seq: ++this.noticeSeq, kind: msg.kind, other: msg.other ?? null, via: msg.via ?? null, at: msg.at },
+        };
+        break;
+      case 'roster':
+        this.state = { ...this.state, roster: { seq: ++this.rosterSeq, people: msg.people } };
         break;
     }
     this.emit();

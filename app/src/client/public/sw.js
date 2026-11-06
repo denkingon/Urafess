@@ -21,6 +21,8 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
+  // 画面が「新しい版が出ているか」を確かめるときは、保存してあるものを返さずに通信で取りに行かせる
+  if (request.cache === 'no-store') return;
 
   // 保存してある方をすぐ返し、裏で新しいものを取りに行く。通信が無ければ保存してある方だけで動く
   event.respondWith(
