@@ -25,12 +25,12 @@ import {
   HEARTBEAT_EVERY_MS,
   HOLD_MAX_MS,
   HOLD_UNKNOWN_END_MS,
-  NAME_MAX_LENGTH,
   PHASES,
   ROLES,
   SYNC_OK_MS,
   type RoleId,
 } from '../shared/rules';
+import { nameKey, normalizeName } from '../shared/names';
 import { elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
 import type { ProbeHub } from './probe';
@@ -53,9 +53,50 @@ interface GameState {
   timer: Timer | null;
   result: Winner | null;
   durations: number[];
+  /** 次に名簿に入る人の番号（名簿に入った順。画面には出さない。部屋を空にしても戻さない） */
   nextNum: number;
   counts: { oni: number; runner: number };
+  /** 何番目の夜か（「新しい夜を始める」で1つ進む） */
+  night: number;
+  /** 今の夜を始めた時刻 */
+  nightAt: number;
 }
+
+/**
+ * 名簿の1人。「新しい夜を始める（部屋を空にする）」でも消えない（一生もの）。
+ * pid と key は今夜の参加者（Participant）と同じものを使う。スマホに残る合い鍵はこの2つ
+ */
+interface Member {
+  pid: string;
+  key: string;
+  num: number;
+  name: string;
+  /** 同じ名前かどうかを見る形（names.ts の nameKey） */
+  nameKey: string;
+  createdAt: number;
+  /** 最後に今夜へ入った時刻 */
+  lastAt: number;
+  /** 来た夜の数 */
+  nights: number;
+  firstNight: number;
+  lastNight: number;
+}
+
+type MemberRow = {
+  pid: string;
+  key: string;
+  num: number;
+  name: string;
+  name_key: string;
+  created_at: number;
+  last_at: number;
+  nights: number;
+  first_night: number;
+  last_night: number;
+};
+
+/** 記録に名前を残す相手（今夜の参加者でも、名簿の人でもよい） */
+type Who = { pid: string; num: number; name: string };
 
 interface Participant {
   pid: string;
@@ -101,7 +142,12 @@ interface Evidence {
 
 /** WebSocket ごとに持つ情報。休止（hibernation）をまたいでも残る */
 interface Attachment {
+  /** 今夜に入っている参加者 */
   pid?: string;
+  /** 名簿にはいるが、今夜にはまだ入っていない人（名前のボタンを押すと enter が来る） */
+  mid?: string;
+  /** 「前の◯◯に戻りたい」と主催者を待っている（rid＝頼みの印、mid＝戻りたい先） */
+  reclaim?: { rid: string; mid: string; at: number };
   host?: boolean;
   /** 本人が報告した時計の誤差（往復の半分, ms） */
   syncErr?: number;
@@ -145,7 +191,12 @@ const HOLD_SAME_MS = 1_000;
 export class GameRoom extends DurableObject<Env> {
   private readonly sql: SqlStorage;
   private game!: GameState;
+  /** 今夜の参加者 */
   private readonly people = new Map<string, Participant>();
+  /** 名簿（ずっと残る） */
+  private readonly members = new Map<string, Member>();
+  /** 名前の形 → 名簿の人（同じ形が2人いれば先に入った人） */
+  private readonly memberByName = new Map<string, Member>();
   private readonly claims = new Map<string, Claim>();
   /** 人 → 最近の長押し（古い順） */
   private readonly holds = new Map<string, HoldRec[]>();
@@ -219,6 +270,22 @@ export class GameRoom extends DurableObject<Env> {
         PRIMARY KEY (runner, oni)
       )`,
     );
+    // 名簿。新しい夜を始めても（部屋を空にしても）消さない
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS members (
+        pid TEXT PRIMARY KEY,
+        key TEXT NOT NULL,
+        num INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        name_key TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_at INTEGER NOT NULL,
+        nights INTEGER NOT NULL DEFAULT 1,
+        first_night INTEGER NOT NULL DEFAULT 1,
+        last_night INTEGER NOT NULL DEFAULT 1
+      )`,
+    );
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS members_name_key ON members (name_key)`);
     // 1イベント＝1行。部屋を空にしても消さない（あとで人数比や流れを統計で見るため）
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS events (
@@ -256,7 +323,12 @@ export class GameRoom extends DurableObject<Env> {
           durations: [...DEFAULT_DURATIONS_MS],
           nextNum: 1,
           counts: { oni: 0, runner: 0 },
+          night: 1,
+          nightAt: Date.now(),
         };
+    // 名簿を入れる前の版で作った部屋には、夜の数が無い
+    if (!Number.isInteger(this.game.night) || this.game.night < 1) this.game.night = 1;
+    if (!Number.isFinite(this.game.nightAt)) this.game.nightAt = Date.now();
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -289,6 +361,7 @@ export class GameRoom extends DurableObject<Env> {
         });
       }
     }
+    this.loadMembers();
     this.claims.clear();
     for (const r of this.sql.exec<{ pid: string; assign_id: number; at: number }>(`SELECT * FROM claims`)) {
       this.claims.set(r.pid, { pid: r.pid, assignId: r.assign_id, at: r.at });
@@ -308,6 +381,56 @@ export class GameRoom extends DurableObject<Env> {
       let m = this.evidence.get(r.runner);
       if (!m) this.evidence.set(r.runner, (m = new Map()));
       m.set(r.oni, { assignId: r.assign_id, heardAt: r.heard_at ?? null, nominatedAt: r.nominated_at ?? null });
+    }
+  }
+
+  /**
+   * 名簿を読む。名簿を入れる前の版で入った参加者（外されていない人）は、最初の1回だけ名簿へ移す。
+   * pid・合い鍵・番号はそのまま使うので、その人のスマホは入り直さずに名簿の人として戻れる
+   */
+  private loadMembers(): void {
+    const moved = this.sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'members'`).toArray()[0];
+    if (!moved) {
+      const now = Date.now();
+      const legacy = [...this.people.values()].filter((p) => !p.removed).sort((a, b) => a.num - b.num);
+      this.ctx.storage.transactionSync(() => {
+        for (const p of legacy) {
+          this.sql.exec(
+            `INSERT OR IGNORE INTO members (pid, key, num, name, name_key, created_at, last_at, nights, first_night, last_night)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+            p.pid,
+            p.key,
+            p.num,
+            p.name,
+            nameKey(p.name),
+            p.joinedAt,
+            p.joinedAt,
+            this.game.night,
+            this.game.night,
+          );
+        }
+        this.sql.exec(`INSERT INTO meta (k, v) VALUES ('members', '1') ON CONFLICT(k) DO UPDATE SET v = excluded.v`);
+        this.saveGame();
+        if (legacy.length) this.log('migrate', { at: now, data: { members: legacy.length } });
+      });
+    }
+    this.members.clear();
+    this.memberByName.clear();
+    for (const r of this.sql.exec<MemberRow>(`SELECT * FROM members ORDER BY num`)) {
+      const m: Member = {
+        pid: r.pid,
+        key: r.key,
+        num: r.num,
+        name: r.name,
+        nameKey: r.name_key,
+        createdAt: r.created_at,
+        lastAt: r.last_at,
+        nights: r.nights,
+        firstNight: r.first_night,
+        lastNight: r.last_night,
+      };
+      this.members.set(m.pid, m);
+      if (!this.memberByName.has(m.nameKey)) this.memberByName.set(m.nameKey, m);
     }
   }
 
@@ -354,7 +477,7 @@ export class GameRoom extends DurableObject<Env> {
 
   private log(
     kind: string,
-    e: { p?: Participant | null; other?: Participant | null; via?: string | null; data?: Record<string, unknown>; at?: number } = {},
+    e: { p?: Who | null; other?: Who | null; via?: string | null; data?: Record<string, unknown>; at?: number } = {},
   ): void {
     const at = e.at ?? Date.now();
     const g = this.game;
@@ -403,6 +526,7 @@ export class GameRoom extends DurableObject<Env> {
         now: Date.now(),
         game: this.game,
         people: [...this.people.values()].map(({ key: _key, ...rest }) => rest),
+        members: [...this.members.values()].map(({ key: _key, ...rest }) => rest),
         claims: [...this.claims.values()],
         holds: Object.fromEntries(this.holds),
         evidence: [...this.evidence.entries()].map(([runner, m2]) => ({ runner, oni: [...m2.entries()].map(([oni, e]) => ({ oni, ...e })) })),
@@ -490,6 +614,15 @@ export class GameRoom extends DurableObject<Env> {
       case 'resume':
         this.onResume(ws, att, msg.pid, msg.key);
         return;
+      case 'enter':
+        this.onEnter(ws, att, now);
+        return;
+      case 'reclaim':
+        this.onReclaim(ws, att, msg.name, now);
+        return;
+      case 'reclaim-stop':
+        this.onReclaimStop(ws, att, now);
+        return;
       case 'host':
         this.onHost(ws, att, msg.token);
         return;
@@ -552,17 +685,164 @@ export class GameRoom extends DurableObject<Env> {
 
   // ---------- 参加者 ----------
 
+  /**
+   * 新しく名簿に入って、そのまま今夜に入る。
+   * 名前が名簿のほかの人のものなら、入れずに taken を返す（スマホが「前の◯◯？」と聞く）
+   */
   private onJoin(ws: WebSocket, att: Attachment, rawName: unknown, now: number): void {
     const name = normalizeName(rawName);
     if (!name) {
       this.send(ws, { t: 'unknown' });
       return;
     }
-    const p: Participant = {
+    const key = nameKey(name);
+    const owner = this.memberByName.get(key);
+    if (owner) {
+      this.log('taken', { p: owner, at: now, data: { typed: name } });
+      this.send(ws, { t: 'taken', name: owner.name });
+      return;
+    }
+    const night = this.game.night;
+    const m: Member = {
       pid: crypto.randomUUID(),
       key: randomKey(),
       num: this.game.nextNum,
       name,
+      nameKey: key,
+      createdAt: now,
+      lastAt: now,
+      nights: 1,
+      firstNight: night,
+      lastNight: night,
+    };
+    this.game.nextNum += 1;
+    const p = this.newParticipant(m, att.ua || null, now);
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO members (pid, key, num, name, name_key, created_at, last_at, nights, first_night, last_night)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+        m.pid,
+        m.key,
+        m.num,
+        m.name,
+        m.nameKey,
+        m.createdAt,
+        m.lastAt,
+        night,
+        night,
+      );
+      this.insertParticipant(p);
+      this.saveGame();
+      this.log('join', { p, at: now, data: { ua: p.ua } });
+    });
+    this.members.set(m.pid, m);
+    this.memberByName.set(m.nameKey, m);
+    this.people.set(p.pid, p);
+    this.bindTonight(ws, att, p);
+  }
+
+  /**
+   * スマホに残っている合い鍵で戻る。
+   * 今夜に入っていれば今の状態を送る。名簿にだけいれば known（名前のボタン）。どちらでもなければ unknown
+   */
+  private onResume(ws: WebSocket, att: Attachment, pid: unknown, key: unknown): void {
+    const p = typeof pid === 'string' ? this.people.get(pid) : undefined;
+    if (p && p.key === key) {
+      att.pid = p.pid;
+      delete att.mid;
+      delete att.reclaim;
+      att.host = false;
+      ws.serializeAttachment(att);
+      if (att.ua && att.ua !== p.ua) {
+        p.ua = att.ua;
+        this.sql.exec(`UPDATE participants SET ua = ? WHERE pid = ?`, p.ua, p.pid);
+      }
+      this.sendSnap(ws, att);
+      this.scheduleHostUpdate();
+      return;
+    }
+    const m = typeof pid === 'string' ? this.members.get(pid) : undefined;
+    if (m && m.key === key) {
+      this.markKnown(ws, att, m);
+      return;
+    }
+    this.send(ws, { t: 'unknown' });
+  }
+
+  /** 名簿の人だと分かった接続に、名前のボタンを出してもらう（今夜にはまだ入れない） */
+  private markKnown(ws: WebSocket, att: Attachment, m: Member): void {
+    att.mid = m.pid;
+    delete att.pid;
+    delete att.reclaim;
+    att.host = false;
+    delete att.syncErr;
+    ws.serializeAttachment(att);
+    this.send(ws, { t: 'known', name: m.name });
+    // 今夜の様子（段階・人数）だけ送る。本人の部分は今夜に入ってから
+    this.sendSnap(ws, att);
+    this.scheduleHostUpdate();
+  }
+
+  /** 名簿の人が、名前のボタンを押して今夜に入る */
+  private onEnter(ws: WebSocket, att: Attachment, now: number): void {
+    // もう入っている（送り直し・2回押し）：今の状態を送り直すだけ
+    const already = att.pid ? this.people.get(att.pid) : undefined;
+    if (already) {
+      this.bindTonight(ws, att, already);
+      return;
+    }
+    const m = att.mid ? this.members.get(att.mid) : undefined;
+    if (!m) {
+      this.send(ws, { t: 'unknown' });
+      return;
+    }
+    const p = this.enterTonight(m, att.ua || null, now, 'button');
+    this.bindTonight(ws, att, p);
+  }
+
+  /**
+   * 合い鍵のないスマホで「前の◯◯に戻る」。主催者がつなぐか断るまで、この接続で待つ。
+   * 頼みはこの接続（休止をまたいでも残る印）に持たせるので、切れたら消え、つなぎ直したスマホが出し直す
+   */
+  private onReclaim(ws: WebSocket, att: Attachment, rawName: unknown, now: number): void {
+    const name = normalizeName(rawName);
+    if (!name) {
+      this.send(ws, { t: 'unknown' });
+      return;
+    }
+    const m = this.memberByName.get(nameKey(name));
+    if (!m) {
+      // その名前の人が名簿にいない（打ち直した等）：ふつうに新しく入る
+      this.onJoin(ws, att, name, now);
+      return;
+    }
+    const same = att.reclaim?.mid === m.pid ? att.reclaim : undefined;
+    att.reclaim = { rid: same?.rid ?? randomKey().slice(0, 12), mid: m.pid, at: same?.at ?? now };
+    delete att.pid;
+    delete att.mid;
+    att.host = false;
+    ws.serializeAttachment(att);
+    if (!same) this.log('reclaim-ask', { p: m, at: now, data: { typed: name, ua: att.ua || null } });
+    this.send(ws, { t: 'reclaim', status: 'waiting', name: m.name });
+    this.scheduleHostUpdate();
+  }
+
+  private onReclaimStop(ws: WebSocket, att: Attachment, now: number): void {
+    if (!att.reclaim) return;
+    const m = this.members.get(att.reclaim.mid);
+    delete att.reclaim;
+    ws.serializeAttachment(att);
+    if (m) this.log('reclaim-stop', { p: m, at: now });
+    this.scheduleHostUpdate();
+  }
+
+  /** 名簿の人から、今夜の参加者を作る（まだ保存しない） */
+  private newParticipant(m: Member, ua: string | null, now: number): Participant {
+    return {
+      pid: m.pid,
+      key: m.key,
+      num: m.num,
+      name: m.name,
       role: null,
       assignId: 0,
       ackId: 0,
@@ -573,46 +853,60 @@ export class GameRoom extends DurableObject<Env> {
       caughtBy: null,
       caughtAt: null,
       caughtVia: null,
-      ua: att.ua || null,
+      ua,
     };
-    this.game.nextNum += 1;
+  }
+
+  private insertParticipant(p: Participant): void {
+    this.sql.exec(
+      `INSERT INTO participants (pid, key, num, name, role, assign_id, ack_id, removed, joined_at, ua) VALUES (?, ?, ?, ?, NULL, 0, 0, 0, ?, ?)`,
+      p.pid,
+      p.key,
+      p.num,
+      p.name,
+      p.joinedAt,
+      p.ua,
+    );
+  }
+
+  /**
+   * 名簿の人を今夜に入れる（もう入っていれば、その人を返す）。来た夜の数も数える。
+   * via＝button（名前のボタン）／reclaim（主催者がつないだ）
+   */
+  private enterTonight(m: Member, ua: string | null, now: number, via: 'button' | 'reclaim'): Participant {
+    const have = this.people.get(m.pid);
+    if (have) return have;
+    const p = this.newParticipant(m, ua, now);
+    const night = this.game.night;
+    const firstTonight = m.lastNight !== night;
     this.ctx.storage.transactionSync(() => {
+      this.insertParticipant(p);
       this.sql.exec(
-        `INSERT INTO participants (pid, key, num, name, role, assign_id, ack_id, removed, joined_at, ua) VALUES (?, ?, ?, ?, NULL, 0, 0, 0, ?, ?)`,
-        p.pid,
-        p.key,
-        p.num,
-        p.name,
-        p.joinedAt,
-        p.ua,
+        `UPDATE members SET last_at = ?, nights = ?, last_night = ? WHERE pid = ?`,
+        now,
+        firstTonight ? m.nights + 1 : m.nights,
+        night,
+        m.pid,
       );
-      this.saveGame();
-      this.log('join', { p, at: now, data: { ua: p.ua } });
+      this.log('enter', { p, at: now, data: { via, ua, nights: firstTonight ? m.nights + 1 : m.nights } });
     });
+    m.lastAt = now;
+    if (firstTonight) m.nights += 1;
+    m.lastNight = night;
     this.people.set(p.pid, p);
+    return p;
+  }
+
+  /** この接続を今夜の参加者につなぎ、合い鍵と今の状態を送る */
+  private bindTonight(ws: WebSocket, att: Attachment, p: Participant): void {
     att.pid = p.pid;
+    delete att.mid;
+    delete att.reclaim;
     att.host = false;
     ws.serializeAttachment(att);
     this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name: p.name });
     this.sendSnap(ws, att);
     this.scheduleBroadcast();
-  }
-
-  private onResume(ws: WebSocket, att: Attachment, pid: unknown, key: unknown): void {
-    const p = typeof pid === 'string' ? this.people.get(pid) : undefined;
-    if (!p || p.key !== key) {
-      this.send(ws, { t: 'unknown' });
-      return;
-    }
-    att.pid = p.pid;
-    att.host = false;
-    ws.serializeAttachment(att);
-    if (att.ua && att.ua !== p.ua) {
-      p.ua = att.ua;
-      this.sql.exec(`UPDATE participants SET ua = ? WHERE pid = ?`, p.ua, p.pid);
-    }
-    this.sendSnap(ws, att);
-    this.scheduleHostUpdate();
   }
 
   private onAck(att: Attachment, assignId: number): void {
@@ -942,6 +1236,8 @@ export class GameRoom extends DurableObject<Env> {
     }
     att.host = true;
     delete att.pid;
+    delete att.mid;
+    delete att.reclaim;
     ws.serializeAttachment(att);
     this.sendSnap(ws, att);
   }
@@ -965,6 +1261,28 @@ export class GameRoom extends DurableObject<Env> {
       p.removed = true;
       this.sql.exec(`UPDATE participants SET removed = 1 WHERE pid = ?`, p.pid);
       this.log('remove', { p, at: now });
+      this.broadcastNow();
+      return;
+    }
+
+    // 「前の◯◯に戻りたい」人をつなぐ・断る。1人ずつの操作なので版番号を見ない
+    if (op === 'link') {
+      const rid = typeof msg.rid === 'string' ? msg.rid : '';
+      const target = this.ctx.getWebSockets().find((s) => (s.deserializeAttachment() as Attachment | null)?.reclaim?.rid === rid);
+      const tatt = target ? ((target.deserializeAttachment() as Attachment | null) ?? {}) : null;
+      const m = tatt?.reclaim ? this.members.get(tatt.reclaim.mid) : undefined;
+      if (!target || !tatt || !m) return this.reject(ws, att, op, 'not-found');
+      if (msg.ok !== true) {
+        delete tatt.reclaim;
+        target.serializeAttachment(tatt);
+        this.log('reclaim-no', { p: m, at: now });
+        this.send(target, { t: 'reclaim', status: 'denied', name: m.name });
+        this.broadcastNow();
+        return;
+      }
+      this.log('reclaim-ok', { p: m, at: now, data: { ua: tatt.ua || null } });
+      const p = this.enterTonight(m, tatt.ua || null, now, 'reclaim');
+      this.bindTonight(target, tatt, p);
       this.broadcastNow();
       return;
     }
@@ -1141,7 +1459,8 @@ export class GameRoom extends DurableObject<Env> {
         break;
       }
       case 'clear': {
-        // 部屋を空にする：参加者を全員外し、配役前に戻す（時間の設定は残す）。試合中はできない
+        // 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。
+        // 名簿・時間の設定・名簿の番号は残す。試合中はできない
         if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
         const next: GameState = {
           ...g,
@@ -1151,11 +1470,12 @@ export class GameRoom extends DurableObject<Env> {
           cv: g.cv + 1,
           timer: null,
           result: null,
-          nextNum: 1,
           counts: { oni: 0, runner: 0 },
+          night: g.night + 1,
+          nightAt: now,
         };
         this.ctx.storage.transactionSync(() => {
-          this.log('clear', { at: now, data: { people: this.people.size } });
+          this.log('clear', { at: now, data: { people: this.people.size, night: next.night } });
           this.sql.exec(`DELETE FROM participants`);
           this.dropClaims();
           this.sql.exec(
@@ -1165,14 +1485,19 @@ export class GameRoom extends DurableObject<Env> {
         });
         this.people.clear();
         this.game = next;
-        // つながっている参加者に「その人はもういない」と知らせる → スマホは入室画面に戻る
+        // つながっている参加者には、名前のボタンを出してもらう（名簿にいない人だけ入室画面へ）
         for (const sock of this.ctx.getWebSockets()) {
           const a = sock.deserializeAttachment() as Attachment | null;
           if (!a?.pid) continue;
-          delete a.pid;
-          delete a.syncErr;
-          sock.serializeAttachment(a);
-          this.send(sock, { t: 'unknown' });
+          const m = this.members.get(a.pid);
+          if (m) {
+            this.markKnown(sock, a, m);
+          } else {
+            delete a.pid;
+            delete a.syncErr;
+            sock.serializeAttachment(a);
+            this.send(sock, { t: 'unknown' });
+          }
         }
         break;
       }
@@ -1216,6 +1541,7 @@ export class GameRoom extends DurableObject<Env> {
       counts: { oni: g.counts.oni, runner: g.counts.runner, total: this.activePeople().length, caught: this.caughtCount() },
       result: g.result,
       durations: g.durations,
+      nightAt: g.nightAt,
     };
   }
 
@@ -1291,17 +1617,28 @@ export class GameRoom extends DurableObject<Env> {
     const active = this.activePeople();
     const connected = new Set<string>();
     const synced = new Set<string>();
+    /** 名簿の人として（今夜に入っていなくても）つながっている pid */
+    const present = new Set<string>();
+    const asks: { rid: string; mid: string; at: number }[] = [];
     for (const ws of this.ctx.getWebSockets()) {
       const a = ws.deserializeAttachment() as Attachment | null;
+      if (a?.reclaim) asks.push(a.reclaim);
+      if (a?.mid) present.add(a.mid);
       if (!a?.pid) continue;
       connected.add(a.pid);
+      present.add(a.pid);
       if (typeof a.syncErr === 'number' && a.syncErr <= SYNC_OK_MS) synced.add(a.pid);
     }
+    const reclaims = asks
+      .map((r) => ({ r, m: this.members.get(r.mid) }))
+      .filter((x): x is { r: (typeof asks)[number]; m: Member } => x.m !== undefined)
+      .sort((x, y) => x.r.at - y.r.at)
+      .map(({ r, m }) => ({ rid: r.rid, name: m.name, at: r.at, here: present.has(m.pid) }));
     const g = this.game;
     const inAssign = g.assignId > 0 ? active.filter((p) => p.assignId === g.assignId && p.role !== null) : [];
     const groups = new Map<string, Participant[]>();
     for (const p of active) {
-      const k = p.name.toLowerCase();
+      const k = nameKey(p.name);
       groups.set(k, [...(groups.get(k) ?? []), p]);
     }
     return {
@@ -1313,8 +1650,10 @@ export class GameRoom extends DurableObject<Env> {
       waiting: g.stage === 'lobby' ? 0 : active.length - inAssign.length,
       dupNames: [...groups.values()]
         .filter((ps) => ps.length > 1)
-        .map((ps) => ({ name: ps[0].name, people: ps.map((p) => ({ pid: p.pid, num: p.num })) })),
+        .map((ps) => ({ name: ps[0].name, people: ps.map((p) => ({ pid: p.pid, num: p.num, joinedAt: p.joinedAt })) })),
       capture: this.hostCapture(),
+      reclaims,
+      registry: this.members.size,
     };
   }
 
@@ -1407,14 +1746,6 @@ export class GameRoom extends DurableObject<Env> {
       // 閉じかけの接続は、つなぎ直したときに全部を送り直すので捨ててよい
     }
   }
-}
-
-function normalizeName(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const name = raw.normalize('NFKC').replace(/\s+/g, ' ').trim();
-  const length = [...name].length;
-  if (length < 1 || length > NAME_MAX_LENGTH) return null;
-  return name;
 }
 
 function randomKey(): string {
