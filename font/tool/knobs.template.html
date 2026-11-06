@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>URAJI つまみ</title>
+<style>
+  :root {
+    --t-bg: #ebebe9; --t-panel: #f7f7f6; --t-line: #d2d2ce; --t-ink: #1b1b1a; --t-mute: #62625e;
+    --m-bg: #0b0c10; --m-ink: #f1ede4; --m-glow: #b8ff5a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--t-bg); color: var(--t-ink); font: 14px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  .app { display: grid; grid-template-columns: 290px minmax(0, 1fr); grid-template-rows: auto 1fr; min-height: 100vh; }
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--t-line); background: var(--t-panel); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing: .02em; }
+  header p { margin: 0; color: var(--t-mute); font-size: 12.5px; flex: 1; min-width: 240px; }
+  button { font: inherit; font-size: 13px; border: 1px solid var(--t-ink); background: #fff; color: var(--t-ink); padding: 6px 12px; border-radius: 0; cursor: pointer; }
+  button.primary { background: var(--t-ink); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--t-ink); outline-offset: 2px; }
+  aside { border-right: 1px solid var(--t-line); background: var(--t-panel); padding: 14px 16px 24px; }
+  .grp { margin: 0 0 16px; }
+  .grp h2 { font-size: 11.5px; letter-spacing: .14em; color: var(--t-mute); margin: 0 0 6px; font-weight: 700; }
+  .knob { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; margin: 0 0 8px; }
+  .knob label { font-size: 13px; user-select: none; cursor: default; }
+  .knob label.changed::after { content: " ●"; font-size: 9px; vertical-align: 2px; }
+  .knob output { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--t-mute); }
+  .knob input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: #2a2a28; margin: 2px 0 0; }
+  .derived { font-size: 12px; color: var(--t-mute); border-top: 1px solid var(--t-line); padding-top: 8px; margin-top: 4px; line-height: 1.7; font-variant-numeric: tabular-nums; }
+  .toggles label { display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 0 0 6px; }
+  .note { font-size: 12px; color: var(--t-mute); margin: 8px 0 0; }
+  main { padding: 14px 16px 32px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .stage { background: var(--m-bg); padding: 18px 20px; }
+  .stage canvas { display: block; width: 100%; }
+  textarea { width: 100%; font: inherit; font-size: 13px; border: 1px solid var(--t-line); background: #fff; padding: 6px 8px; resize: vertical; min-height: 64px; border-radius: 0; }
+  .row { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .row strong { font-size: 12.5px; }
+  .snaps { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; min-height: 20px; }
+  .snap { flex: 0 0 auto; border: 1px solid var(--t-line); background: #fff; padding: 6px; cursor: pointer; position: relative; width: 186px; text-align: left; }
+  .snap:hover { border-color: var(--t-ink); }
+  .snap canvas { display: block; width: 100%; height: 52px; background: var(--m-bg); }
+  .snap .meta { font-size: 11px; color: var(--t-mute); margin-top: 4px; line-height: 1.35; font-variant-numeric: tabular-nums; }
+  .snap .x { position: absolute; top: 0; right: 0; border: 0; background: transparent; padding: 2px 7px; font-size: 15px; color: var(--t-mute); }
+  .empty { font-size: 12px; color: var(--t-mute); }
+  .status { font-size: 12.5px; background: #fff; border: 1px solid var(--t-ink); padding: 8px 10px; display: none; }
+  .status.on { display: block; }
+  .status pre { margin: 6px 0 0; font-size: 11.5px; white-space: pre-wrap; word-break: break-all; }
+  @media (max-width: 860px) { .app { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--t-line); } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>URAJI つまみ</h1>
+    <p>字形はすべて左のつまみから組み立てている。どのつまみも全部の字に同時に効く。黒い面が書体、灰色が道具。</p>
+    <a href="https://claude.ai/artifact/51KpKXTyAqecGQS2kp2hRK" style="font-size:12.5px;color:var(--t-ink)">使い方（裏フェス フォント）</a>
+    <button id="reset" type="button">今の書体の値に戻す</button>
+    <button id="snap" type="button">スナップショット</button>
+    <button id="decide" class="primary" type="button">この値で決める</button>
+  </header>
+  <aside>
+    <div id="knobs"></div>
+    <div class="derived" id="derived"></div>
+    <div class="grp toggles" style="margin-top:14px">
+      <h2>表示</h2>
+      <label><input type="checkbox" id="ss01"> 型紙セット（ss01）</label>
+      <label><input type="checkbox" id="guide"> ガイド線（ベースライン・字の高さ・線）</label>
+    </div>
+    <p class="note">つまみの名前をダブルクリックすると、そのつまみだけ今の書体の値に戻る。● は今の書体から動かしたつまみ。</p>
+  </aside>
+  <main>
+    <div class="status" id="status" role="status"></div>
+    <textarea id="text" spellcheck="false" aria-label="見本の文字（1行ずつ）">URAFESS
+裏フェス 21:30
+ケイドロ → START</textarea>
+    <div class="stage"><canvas id="stage" aria-label="見本の文字"></canvas></div>
+    <div class="row"><strong>スナップショット</strong><span class="note" style="margin:0">押した時点の値を並べて比べる。カードを押すとその値に戻る。</span></div>
+    <div class="snaps" id="snaps"><span class="empty">まだない。</span></div>
+    <div class="row"><strong>全部の字</strong><span class="note" style="margin:0" id="count"></span></div>
+    <div class="stage"><canvas id="grid" aria-label="全部の字"></canvas></div>
+  </main>
+</div>
+<!-- polygon-clipping 0.15.7 (MIT License, Copyright (c) 2018 Mike Fogel) -->
+<script>/*__PC__*/</script>
+<script>/*__KANA__*/</script>
+<script>/*__GLYPHS__*/</script>
+<script>/*__GEOM__*/</script>
+<script>/*__APP__*/</script>
+</body>
+</html>
