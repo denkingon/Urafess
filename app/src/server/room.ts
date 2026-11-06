@@ -131,6 +131,8 @@ const HOST_UPDATE_MS = 500;
 const PRESS_MAX_DELAY_MS = 15_000;
 /** 同じ鬼が同じ音を何度も聞き取ったとき、記録し直すまでの間隔（逃走者のスマホは繰り返し鳴らす） */
 const HEARD_DEDUPE_MS = 5_000;
+/** 押している途中に届いた「押し始め」が、前の押し始めとこれだけしか違わなければ、つなぎ直しの送り直し（同じ長押し） */
+const HOLD_SAME_MS = 1_000;
 
 /**
  * 1ゲーム＝1つの Durable Object。正解はここにしかない。
@@ -690,9 +692,13 @@ export class GameRoom extends DurableObject<Env> {
     const list = this.holds.get(p.pid) ?? [];
     const last = list[list.length - 1];
     if (last && last.end === null && last.assignId === this.game.assignId) {
-      // 押している途中の「押し始め」がもう一度届いた（つなぎ直し）。同じ長押しのまま
-      this.sendSnapTo([p.pid]);
-      return;
+      if (Math.abs(at - last.start) <= HOLD_SAME_MS) {
+        // 押している途中の「押し始め」がもう一度届いた（つなぎ直し）。同じ長押しのまま
+        this.sendSnapTo([p.pid]);
+        return;
+      }
+      // 前の「離した」が届かないまま、新しく押した。前の長押しは、新しく押した瞬間までとみなす
+      this.endHold(p.pid, at, 'lost');
     }
     if (this.isCaught(p)) {
       this.notify(p.pid, 'already');
@@ -715,7 +721,7 @@ export class GameRoom extends DurableObject<Env> {
     this.sendSnapTo(p.role === 'oni' ? [p.pid, ...this.openRunners(now)] : [p.pid]);
   }
 
-  private endHold(pid: string, at: number, reason: 'release' | 'disconnect'): void {
+  private endHold(pid: string, at: number, reason: 'release' | 'disconnect' | 'lost' | 'resume'): void {
     const list = this.holds.get(pid);
     const last = list?.[list.length - 1];
     if (!last || last.end !== null) return;

@@ -362,8 +362,10 @@ export class GameClient {
       this.send({ t: 'host', token: this.mode.token });
     } else if (this.state.identity) {
       this.send({ t: 'resume', pid: this.state.identity.pid, key: this.state.identity.key });
-      // 押している途中でつなぎ直したら、同じ押し始めを送り直す（サーバーは同じ長押しとして扱う）
+      // 押している途中でつなぎ直したら、同じ押し始めを送り直す（サーバーは同じ長押しとして扱う）。
+      // 押していなければ「離した」を送る（切れている間に離して、その知らせが届かなかった分を閉じる。何も押していなければサーバーは何もしない）
       if (this.holding) this.send({ t: 'hold', on: true, at: this.holding.at });
+      else this.send({ t: 'hold', on: false, at: this.toServer(this.deps.now()) });
     } else if (this.pendingJoinName) {
       this.send({ t: 'join', name: this.pendingJoinName });
     } else {
