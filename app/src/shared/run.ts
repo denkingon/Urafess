@@ -311,15 +311,33 @@ export function bearingDeg(origin: LatLon, p: LatLon): number {
 }
 
 const COMPASS = ['北', '北東', '東', '南東', '南', '南西', '西', '北西'] as const;
+const COMPASS_EN = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const;
+
+const compassIndex = (deg: number) => Math.round((((deg % 360) + 360) % 360) / 45) % 8;
 
 /** 方角を8方位の言葉に */
 export function compassName(deg: number): (typeof COMPASS)[number] {
-  return COMPASS[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
+  return COMPASS[compassIndex(deg)];
+}
+
+/** 方角を8方位の英語に（N・NE …） */
+export function compassNameEn(deg: number): (typeof COMPASS_EN)[number] {
+  return COMPASS_EN[compassIndex(deg)];
 }
 
 /** 距離の言葉（10m 単位。近いと「すぐ近く」） */
 export function distanceText(m: number): string {
   if (m < 15) return 'すぐ近く';
+  return distanceNumber(m);
+}
+
+/** 距離の英語（近いと CLOSE。ほかは日本語と同じ数字） */
+export function distanceTextEn(m: number): string {
+  if (m < 15) return 'CLOSE';
+  return distanceNumber(m);
+}
+
+function distanceNumber(m: number): string {
   if (m < 1000) return `${Math.round(m / 10) * 10}m`;
   return `${(m / 1000).toFixed(1)}km`;
 }
