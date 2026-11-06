@@ -83,19 +83,54 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .error { margin: 0; color: var(--ink); font-size: 14px; }
 .note { margin: 0; font-size: 13px; line-height: 1.7; color: var(--quiet); }
 
-/* 置き方の案内。押す人の画面を大きく描いた場面を1手ずつ映す。数字は URAJI */
+/* 置き方の案内。押すものを押す順に、全部を一度に並べる（勝手に進まない）。数字は URAJI */
 .install [hidden] { display: none !important; }
-.install { position: relative; padding-top: calc(64px + env(safe-area-inset-top)); gap: 16px; }
-.install[data-stage="bottom"] .movie, .install[data-stage="bottom"] .one { margin-top: auto; margin-bottom: 24px; }
+.install { position: relative; padding-top: calc(50px + env(safe-area-inset-top)); gap: 10px; }
+.install[data-pointer^="bottom"] { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 .install .skip {
-  position: absolute; top: calc(10px + env(safe-area-inset-top)); left: 10px;
+  position: absolute; top: calc(8px + env(safe-area-inset-top)); left: 8px;
   min-height: 0; width: 44px; height: 44px; padding: 10px; border: none; color: var(--faint);
 }
 .install .skip svg { width: 24px; height: 24px; display: block; }
-.install .movie { display: flex; flex-direction: column; gap: 14px; }
-.install .screens { position: relative; width: 100%; aspect-ratio: 320 / 300; }
-.install .frame { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--ink); opacity: 0; transition: opacity .25s; }
-.install .frame.now { opacity: 1; }
+.install .ttl { display: flex; align-items: center; gap: 12px; }
+.install .ttl img { width: 40px; height: 40px; border-radius: 9px; display: block; }
+.install .ttl h1 { margin: 0; font-size: 22px; font-weight: 900; letter-spacing: .02em; line-height: 1.2; }
+.install .ttl .sub { display: block; margin-top: 2px; font-size: 13px; font-weight: 700; color: var(--quiet); }
+.install .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.install .st {
+  display: grid; grid-template-columns: 28px 1fr; align-items: center; column-gap: 12px;
+  min-height: 46px; padding: 4px 12px; border: 1px solid var(--line-strong); border-radius: 14px;
+}
+.install .st[data-optional] { border-style: dashed; }
+.install .st .no { color: var(--ink); }
+.install .st .no .uraji { width: 17px; height: auto; display: block; margin: 0 auto; }
+.install .st .what { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.install .st .hint { grid-column: 2; display: flex; flex-wrap: wrap; gap: 0 10px; margin: 1px 0 2px; font-size: 12px; line-height: 1.35; color: var(--quiet); }
+.install .st .hint .alt { color: var(--faint); }
+.install .ctl { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); min-width: 0; }
+.install .ctl b { font-size: 16px; font-weight: 700; white-space: nowrap; }
+.install .ctl .gl { display: block; flex: none; }
+.install .ctl.circle, .install .ctl.tool { width: 40px; height: 40px; justify-content: center; }
+.install .ctl.circle { border-radius: 20px; background: #2b2b2b; }
+.install .ctl.menu, .install .ctl.row { padding: 7px 12px; border-radius: 10px; background: #2e2e2e; }
+.install .ctl.row { gap: 20px; }
+.install .ctl.action { flex-direction: column; gap: 2px; }
+.install .ctl.action .disc { width: 34px; height: 34px; border-radius: 17px; background: #2e2e2e; display: flex; align-items: center; justify-content: center; }
+.install .ctl.action b { font-size: 11.5px; }
+.install .ctl.pill { padding: 6px 18px; border-radius: 999px; background: var(--ink); }
+.install .ctl.pill b { color: var(--bg); font-size: 16px; }
+.install .ctl.appicon img { width: 40px; height: 40px; border-radius: 9px; display: block; }
+/* 画面のどこにあるか：小さな電話の縁と、隅の点 */
+.install .where { position: relative; width: 18px; height: 32px; border: 2px solid var(--quiet); border-radius: 5px; flex: none; }
+.install .where::after { content: ""; position: absolute; width: 6px; height: 6px; border-radius: 3px; background: var(--ink); }
+.install .where[data-where="bottom-right"]::after { right: 2px; bottom: 2px; }
+.install .where[data-where="bottom-center"]::after { left: 50%; margin-left: -3px; bottom: 2px; }
+.install .where[data-where="top-right"]::after { right: 2px; top: 2px; }
+/* 入ったあと：ホーム画面のアイコンから開く手だけを明るく */
+.install.installed .st { opacity: .35; }
+.install.installed .st:last-child { opacity: 1; border-color: var(--ink); }
+/* 最初に押すボタンのある所（1枚目の場面の、バーのある帯だけ） */
+.install .bar-pic .frame { display: block; width: 100%; height: auto; color: var(--ink); }
 .install .frame .scr { fill: #1a1a1a; }
 .install .frame .faint { fill: #3a3a3a; }
 .install .frame .chip { fill: #2b2b2b; }
@@ -111,19 +146,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .install .frame .lbl.quiet { fill: var(--quiet); font-weight: 500; }
 .install .frame .lbl.on { fill: var(--bg); }
 .install .frame .tap { fill: none; stroke: var(--ink); stroke-width: 2.5; }
-.install .frame .ring { fill: none; stroke: var(--ink); stroke-width: 3; transform-box: fill-box; transform-origin: center; }
-.install .frame.now .ring { animation: install-ring 1s ease-out infinite; }
+.install .frame .ring { fill: none; stroke: var(--ink); stroke-width: 3; transform-box: fill-box; transform-origin: center; animation: install-ring 1s ease-out infinite; }
 @keyframes install-ring { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(1.45); opacity: 0; } }
-.install .steps { display: flex; justify-content: center; gap: 6px; }
-.install .steps .step {
-  min-height: 0; width: 48px; height: 48px; padding: 10px 13px 12px; border: none; border-radius: 8px;
-  color: var(--line-strong); display: flex; flex-direction: column; align-items: center; gap: 5px;
-}
-.install .steps .step .uraji { width: 20px; height: auto; display: block; }
-.install .steps .step::after { content: ""; width: 22px; height: 3px; border-radius: 2px; background: transparent; }
-.install .steps .step.now { color: var(--ink); }
-.install .steps .step.now::after { background: var(--ink); }
-.install .steps .step[aria-pressed="true"]::after { background: var(--quiet); }
 .install .one { display: flex; justify-content: center; }
 .install.prompt .one { margin: auto 0; }
 .install .one-tap {
@@ -132,17 +156,15 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 }
 .install .one-tap img { width: 52px; height: 52px; border-radius: 12px; display: block; }
 .install .one-tap .arrow .uraji { width: 26px; height: auto; display: block; }
-/* 本物のボタンを指す矢印。1手目を映している間だけ出す */
-.install .pointer { position: fixed; width: 34px; color: var(--ink); opacity: 0; transition: opacity .25s; pointer-events: none; }
+/* 本物のボタンを指す矢印。ずっと出しておく（ボタン1つで入れるとき・入ったあとは消す） */
+.install .pointer { position: absolute; width: 30px; color: var(--ink); pointer-events: none; }
 .install .pointer .uraji { width: 100%; height: auto; display: block; }
-.install.first .pointer { opacity: 1; }
-.install.prompt .pointer, .install.installed .pointer { opacity: 0; }
-.install[data-pointer="bottom-right"] .pointer { right: 18px; bottom: calc(6px + env(safe-area-inset-bottom)); }
-.install[data-pointer="bottom-center"] .pointer { left: 50%; bottom: calc(6px + env(safe-area-inset-bottom)); transform: translateX(-50%); }
-.install[data-pointer="top-right"] .pointer { right: 18px; top: calc(6px + env(safe-area-inset-top)); transform: rotate(180deg); }
+.install.prompt .pointer, .install.installed .pointer { display: none; }
+.install[data-pointer="bottom-right"] .pointer { right: 24px; bottom: calc(40px + env(safe-area-inset-bottom)); }
+.install[data-pointer="bottom-center"] .pointer { left: 50%; bottom: calc(40px + env(safe-area-inset-bottom)); transform: translateX(-50%); }
+.install[data-pointer="top-right"] .pointer { right: 22px; top: calc(6px + env(safe-area-inset-top)); transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) {
-  .install .frame.now .ring { animation: none; opacity: 0; }
-  .install .frame { transition: none; }
+  .install .frame .ring { animation: none; opacity: 0; }
 }
 
 /* 主催者 */
