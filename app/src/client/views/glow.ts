@@ -1,9 +1,10 @@
 import type { GlowEntry } from '../../shared/protocol';
-import { RUN_STALE_MS } from '../../shared/rules';
+import { MATES_STALE_MS, RUN_STALE_MS } from '../../shared/rules';
 import { bearingDeg, compassName, distanceM, distanceText, type LatLon } from '../../shared/run';
 import type { PhoneView } from '../../shared/viewmodel';
 import type { ClientState } from '../core/game-client';
 import type { Sensors } from '../sense';
+import { createOverview, type OvKind, type OvPoint } from './overview';
 import { createRadar, type RadarLight } from './radar';
 
 /**
@@ -29,6 +30,21 @@ export interface BoardInput {
   meLit: boolean;
   /** 地図の真ん中に重ねる一言（位置が取れない理由など）。無ければ null */
   message?: string | null;
+  /** 全体の地図：見えてよい人（同じ役の仲間。主催者は全員） */
+  mates?: ClientState['mates'];
+  /** 自分の位置の誤差（m） */
+  meAcc?: number | null;
+  /** 自分の役（全体の地図の自分の印と、仲間の色に使う） */
+  myKind?: OvKind;
+}
+
+export interface BoardOptions {
+  /** 一覧に出す人数（参加者は1人＝いちばん近い人と「ほか n人」） */
+  listMax?: number;
+  /** 最初に出す地図：all＝全体の地図、near＝光の地図（自分が真ん中） */
+  start?: 'all' | 'near';
+  /** 全体の地図で名前を出す最大の人数 */
+  labelMax?: number;
 }
 
 export interface LightsBoard {
@@ -45,21 +61,54 @@ function vibrate(pattern: number | number[]): void {
   }
 }
 
-/** 光の地図＋一覧。主催者の画面でも使う。listMax＝一覧に出す人数（参加者は1人＝いちばん近い人と「ほか n人」） */
-export function createLightsBoard(listMax = 1): LightsBoard {
+/**
+ * 地図（全体の地図／光の地図を切りかえ）＋一覧。主催者の画面でも使う。
+ * 全体の地図：北が上の SFC に、見えてよい仲間と光っている人。光の地図：自分が真ん中、光っている人だけ
+ */
+export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
+  const listMax = opts.listMax ?? 1;
+  const labelMax = opts.labelMax ?? 8;
+  let mode: 'all' | 'near' = opts.start ?? 'all';
   const el = document.createElement('div');
   el.className = 'glow-board';
+  const tabs = document.createElement('div');
+  tabs.className = 'glow-tabs';
+  tabs.setAttribute('role', 'tablist');
+  const tabAll = document.createElement('button');
+  const tabNear = document.createElement('button');
+  for (const [b, m, ja, en] of [
+    [tabAll, 'all', '全体', 'MAP'],
+    [tabNear, 'near', '近く', 'NEAR'],
+  ] as const) {
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    b.dataset.mode = m;
+    b.innerHTML = `<b>${ja}</b><span>${en}</span>`;
+    b.addEventListener('click', () => {
+      mode = m;
+      lastDraw = 0;
+      applyMode();
+    });
+    tabs.append(b);
+  }
   const radar = createRadar();
+  const ov = createOverview();
   const wrap = document.createElement('div');
   wrap.className = 'glow-radar';
   const msg = document.createElement('p');
   msg.className = 'glow-radar-msg';
   msg.hidden = true;
-  wrap.append(radar.el, msg);
+  wrap.append(radar.el, ov.el, msg);
   const list = document.createElement('ul');
   list.className = 'glow-list';
   list.setAttribute('aria-live', 'polite');
-  el.append(wrap, list);
+  el.append(tabs, wrap, list);
+  const applyMode = () => {
+    el.dataset.mode = mode;
+    tabAll.setAttribute('aria-selected', String(mode === 'all'));
+    tabNear.setAttribute('aria-selected', String(mode === 'near'));
+  };
+  applyMode();
 
   const trails = new Map<number, { lat: number; lon: number; at: number }[]>();
   const firstSeen = new Map<number, number>();
@@ -70,7 +119,7 @@ export function createLightsBoard(listMax = 1): LightsBoard {
 
   return {
     el,
-    update({ glow, serverNow, me, heading, myNum, meLit, message }) {
+    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind }) {
       const now = serverNow ?? Date.now();
       const all: GlowEntry[] = (glow?.runs ?? []).filter((r) => now - r.at <= RUN_STALE_MS);
       const meListed = myNum !== null && all.some((r) => r.num === myNum);
@@ -107,7 +156,7 @@ export function createLightsBoard(listMax = 1): LightsBoard {
       const fresh = others.map((r) => r.num);
       if (performance.now() - lastDraw < DRAW_EVERY_MS) return { others: others.length, meListed, fresh };
       lastDraw = performance.now();
-      const text = message ?? (me ? '' : '自分の位置を待っている…');
+      const text = message ?? (me || mode === 'all' ? '' : '自分の位置を待っている…');
       if (msg.textContent !== text) msg.textContent = text;
       if (msg.hidden !== !text) msg.hidden = !text;
 
@@ -123,7 +172,36 @@ export function createLightsBoard(listMax = 1): LightsBoard {
           isNew: now - (firstSeen.get(r.num) ?? 0) < NEW_MS,
         };
       });
-      radar.update({ me, heading, lights, meLit });
+      if (mode === 'near') radar.update({ me, heading, lights, meLit });
+      else {
+        // 全体の地図：仲間（届いている位置）と、光っている人（仲間でなければ役は分からない）
+        const kindOfMate = (role: 'oni' | 'runner' | undefined): OvKind => role ?? (mates?.scope === 'oni' || mates?.scope === 'runner' ? mates.scope : 'unknown');
+        const litNums = new Set(others.map((r) => r.num));
+        const points: OvPoint[] = [];
+        const seen = new Set<number>();
+        for (const m of mates?.people ?? []) {
+          if (m.num === myNum) continue;
+          const age = now - m.at;
+          if (age > MATES_STALE_MS) continue;
+          seen.add(m.num);
+          // 光っていれば、光の位置（1秒ごと）のほうが新しい
+          const run = others.find((r) => r.num === m.num && r.lat !== null && r.lon !== null);
+          points.push({
+            key: `m${m.num}`,
+            name: m.name,
+            pos: run ? { lat: run.lat!, lon: run.lon! } : { lat: m.lat, lon: m.lon },
+            acc: run?.acc ?? m.acc,
+            kind: kindOfMate(m.role),
+            fresh: run ? 1 : 1 - age / MATES_STALE_MS,
+            lit: litNums.has(m.num),
+          });
+        }
+        for (const r of others) {
+          if (seen.has(r.num) || r.lat === null || r.lon === null) continue;
+          points.push({ key: `r${r.num}`, name: r.name, pos: { lat: r.lat, lon: r.lon }, acc: r.acc ?? 0, kind: 'unknown', fresh: 1 - (now - r.at) / RUN_STALE_MS, lit: true });
+        }
+        ov.update({ me: me ? { ...me, acc: meAcc ?? 0 } : null, meKind: myKind ?? 'unknown', meLit, points, labelMax });
+      }
 
       // 一覧：近い順（自分の位置が分からなければ、光った順）
       const rows = others.map((r) => {
@@ -224,7 +302,7 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
   const ask = el.querySelector('.glow-ask') as HTMLButtonElement;
   const note = q('note');
   const litChip = root?.querySelector('[data-k="lit"]') as HTMLElement | null;
-  const board = createLightsBoard();
+  const board = createLightsBoard({ listMax: 1, start: 'all', labelMax: 8 });
   el.append(board.el);
 
   ask.addEventListener('click', () => {
@@ -255,7 +333,7 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
       setHidden(ask, !sensors.needsTap);
       setText(
         q('askSub'),
-        watcher ? '位置を使う。光った人の方角と距離が出る。' : '動きと位置を使う。ゲームの間、走ると全員の画面に光る。',
+        watcher ? '位置を使う。光った人の方角と距離が出る。' : '動きと位置を使う。ゲームの間、仲間の地図に自分が出る。走ると全員の画面に光る。',
       );
       const problem = senseProblem(sensors);
       if (view.glow === 'prep') {
@@ -277,6 +355,9 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
         myNum: state.me?.num ?? null,
         meLit: lit,
         message: pos ? null : sensors.geo === 'ok' || sensors.geo === 'asking' ? null : (problem ?? null),
+        mates: state.mates,
+        meAcc: pos?.acc ?? null,
+        myKind: view.role === '鬼' ? 'oni' : view.role === '逃走者' ? 'runner' : 'unknown',
       });
       // 光っている間は、役の札の横に「光っている」（全員の一覧に自分が入ったら「…」が取れる）
       const shown = view.glow === 'live' && lit;

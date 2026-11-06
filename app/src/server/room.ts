@@ -8,6 +8,8 @@ import type {
   HostCapture,
   HostOp,
   HostSummary,
+  MateEntry,
+  MatesScope,
   MeView,
   NoticeKind,
   RosterEntry,
@@ -29,6 +31,8 @@ import {
   HOLD_MAX_MS,
   HOLD_UNKNOWN_END_MS,
   isValidRatio,
+  MATES_BROADCAST_MS,
+  MATES_STALE_MS,
   PHASES,
   ROLES,
   RUN_STALE_MS,
@@ -168,6 +172,15 @@ interface RunRec {
 
 type RunEnd = 'stop' | 'stale' | 'closed' | 'caught' | 'out';
 
+/** 全体の地図：最後に届いた位置 */
+interface Spot {
+  pid: string;
+  lat: number;
+  lon: number;
+  acc: number;
+  at: number;
+}
+
 /** WebSocket ごとに持つ情報。休止（hibernation）をまたいでも残る */
 interface Attachment {
   /** 今夜に入っている参加者 */
@@ -241,6 +254,9 @@ export class GameRoom extends DurableObject<Env> {
   /** 走ると光る：いま光っている人 */
   private readonly runs = new Map<string, RunRec>();
   private glowTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 全体の地図：ゲームの段階の間に届いた位置（休止で消えてよい。5秒ごとに届き直す） */
+  private readonly spots = new Map<string, Spot>();
+  private matesTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -713,6 +729,9 @@ export class GameRoom extends DurableObject<Env> {
         return;
       case 'sense':
         this.onSense(ws, att, msg.motion, msg.geo);
+        return;
+      case 'pos':
+        this.onPos(att, msg, now);
         return;
     }
   }
@@ -1272,8 +1291,9 @@ export class GameRoom extends DurableObject<Env> {
     this.evidence.delete(runner.pid);
     // 捕まった人が押したまま記録されたら、その長押しはここで終わり
     this.endHold(runner.pid, Date.now(), 'capture');
-    // 捕まった人は光らない
+    // 捕まった人は光らない。全体の地図からも消える
     this.endRun(runner.pid, Date.now(), 'caught');
+    this.dropSpot(runner.pid);
     this.notify(runner.pid, 'caught', oni ?? undefined, via);
     if (oni) this.notify(oni.pid, 'captured', runner, via);
     this.broadcastNow();
@@ -1337,6 +1357,7 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 位置が届かなくなった人・光ってよくなくなった人を消す（合図・主催者の操作のたびに見る） */
   private sweepRuns(now: number): void {
+    this.sweepSpots(now);
     if (this.runs.size === 0) return;
     const open = this.glowOpen(now);
     // ゲームの段階が時間で終わったのなら、消えた時刻は段階の終わり（合図のついでに見るので、最大2秒遅れて気づく）
@@ -1397,8 +1418,107 @@ export class GameRoom extends DurableObject<Env> {
 
   /** つないだ・つなぎ直した人に、いま光っている人を送る（ゲームの段階の間だけ。消えた光が画面に残らないよう、空でも送る） */
   private sendGlowTo(ws: WebSocket, now: number): void {
+    // 全体の地図も同じときに送る（つないだ・つなぎ直した人の地図をすぐ埋める）
+    this.sendMatesTo(ws, now);
     if (this.runs.size === 0 && !this.glowOpen(now)) return;
     this.send(ws, this.glowMsg(now));
+  }
+
+  // ---------- 全体の地図（仲間の居場所） ----------
+
+  /** 位置が届いた。ゲームの段階の外・捕まった人・配役に入っていない人の分は捨てる */
+  private onPos(att: Attachment, msg: Extract<ClientMsg, { t: 'pos' }>, now: number): void {
+    const p = this.inRound(att.pid);
+    if (!p) return;
+    if (this.isCaught(p) || !this.glowOpen(now)) return this.dropSpot(p.pid);
+    const pos = cleanPos(msg.lat, msg.lon, msg.acc);
+    if (!pos) return;
+    const had = this.spots.has(p.pid);
+    this.spots.set(p.pid, { pid: p.pid, lat: pos.lat, lon: pos.lon, acc: pos.acc, at: now });
+    this.flushMatesSoon(!had);
+  }
+
+  private dropSpot(pid: string): void {
+    if (this.spots.delete(pid)) this.flushMatesSoon(true);
+  }
+
+  /** 段階が終わった・届かなくなった・捕まった・外された人の位置を消す（合図・主催者の操作のたびに見る） */
+  private sweepSpots(now: number): void {
+    if (this.spots.size === 0) return;
+    const open = this.glowOpen(now);
+    let changed = false;
+    for (const sp of [...this.spots.values()]) {
+      const p = this.inRound(sp.pid);
+      if (!open || !p || this.isCaught(p) || now - sp.at > MATES_STALE_MS) {
+        this.spots.delete(sp.pid);
+        changed = true;
+      }
+    }
+    if (changed) this.flushMatesSoon(true);
+  }
+
+  /** まとめて配る。urgent（地図に人が増えた・消えた）は次の一瞬で、位置の更新だけなら MATES_BROADCAST_MS ごと */
+  private flushMatesSoon(urgent: boolean): void {
+    if (this.matesTimer) {
+      if (!urgent) return;
+      clearTimeout(this.matesTimer);
+    }
+    this.matesTimer = setTimeout(
+      () => {
+        this.matesTimer = null;
+        this.broadcastMates();
+      },
+      urgent ? 0 : MATES_BROADCAST_MS,
+    );
+  }
+
+  /** この接続に見せてよい範囲。主催者は全員、参加者は同じ役（捕まった逃走者も仲間は見える）、それ以外は誰も */
+  private matesScope(att: Attachment | null): MatesScope {
+    if (att?.host) return 'all';
+    const p = this.inRound(att?.pid);
+    if (!p || (p.role !== 'oni' && p.role !== 'runner')) return 'none';
+    return p.role;
+  }
+
+  /** 範囲ごとの中身（役を組み立てるのは主催者の分だけ） */
+  private matesLists(): Record<MatesScope, MateEntry[]> {
+    const lists: Record<MatesScope, MateEntry[]> = { oni: [], runner: [], all: [], none: [] };
+    for (const sp of this.spots.values()) {
+      const p = this.inRound(sp.pid);
+      if (!p || (p.role !== 'oni' && p.role !== 'runner')) continue;
+      const e: MateEntry = { num: p.num, name: p.name, lat: sp.lat, lon: sp.lon, acc: sp.acc, at: sp.at };
+      lists[p.role].push(e);
+      lists.all.push({ ...e, role: p.role });
+    }
+    for (const l of Object.values(lists)) l.sort((a, b) => a.num - b.num);
+    return lists;
+  }
+
+  private broadcastMates(): void {
+    const now = Date.now();
+    const lists = this.matesLists();
+    const msgs = new Map<MatesScope, string>();
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as Attachment | null;
+      if (!att?.pid && !att?.host) continue;
+      const scope = this.matesScope(att);
+      let msg = msgs.get(scope);
+      if (!msg) {
+        msg = JSON.stringify({ t: 'mates', s: now, scope, people: lists[scope] } satisfies ServerMsg);
+        msgs.set(scope, msg);
+      }
+      try {
+        ws.send(msg);
+      } catch {
+        // 閉じかけの接続は、つなぎ直したときに送り直す
+      }
+    }
+  }
+
+  private sendMatesTo(ws: WebSocket, now: number): void {
+    if (this.spots.size === 0 && !this.glowOpen(now)) return;
+    const scope = this.matesScope(ws.deserializeAttachment() as Attachment | null);
+    this.send(ws, { t: 'mates', s: now, scope, people: this.matesLists()[scope] });
   }
 
   /** このスマホで、動きのセンサー・位置が使えるか */

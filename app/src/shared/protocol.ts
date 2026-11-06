@@ -123,6 +123,23 @@ export interface GlowEntry {
 }
 
 /**
+ * 全体の地図：見えている1人。role は主催者に送るときだけ入る（参加者には同じ役の人しか送らないので要らない）。
+ * at は最後に届いたサーバー時刻
+ */
+export interface MateEntry {
+  num: number;
+  name: string;
+  role?: RoleId;
+  lat: number;
+  lon: number;
+  acc: number;
+  at: number;
+}
+
+/** 全体の地図で、誰の位置が届くか。oni＝鬼どうし、runner＝逃走者どうし、all＝全員（主催者）、none＝誰も（見学・段階の外） */
+export type MatesScope = 'oni' | 'runner' | 'all' | 'none';
+
+/**
  * スマホのセンサーが使えるか。off＝まだ聞いていない、ok＝使える、denied＝許可されていない、
  * unsupported＝このスマホには無い、error＝開けない・位置が取れない
  */
@@ -202,7 +219,9 @@ export type ClientMsg =
    */
   | { t: 'run'; on: boolean; lat?: number; lon?: number; acc?: number }
   /** このスマホで、動きのセンサーと位置が使えるか（変わったときと、つなぎ直したときに送る。主催者画面に数が出る） */
-  | { t: 'sense'; motion: SenseState; geo: SenseState };
+  | { t: 'sense'; motion: SenseState; geo: SenseState }
+  /** 全体の地図：自分の位置（ゲームの段階の間だけ MATES_SEND_EVERY_MS ごとに送る。段階の外・捕まった人の分は、サーバーが捨てる） */
+  | { t: 'pos'; lat: number; lon: number; acc: number };
 
 /**
  * 本人だけに出す短い知らせ（画面の帯・振動）。状態そのものは snap の me で届く。
@@ -237,4 +256,6 @@ export type ServerMsg =
   /** 手動で選ぶ一覧（頼んだ本人にだけ。鬼には捕まっていない逃走者、逃走者には鬼） */
   | { t: 'roster'; people: RosterEntry[] }
   /** 走ると光る：いま光っている全員（全員に同じものを送る。変わるたびに、まとめて）。s はサーバーの時刻 */
-  | { t: 'glow'; s: number; runs: GlowEntry[] };
+  | { t: 'glow'; s: number; runs: GlowEntry[] }
+  /** 全体の地図：見えてよい人の位置（その人の役で中身が変わる）。s はサーバーの時刻 */
+  | { t: 'mates'; s: number; scope: MatesScope; people: MateEntry[] };

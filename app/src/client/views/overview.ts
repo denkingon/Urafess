@@ -1,0 +1,259 @@
+import { CAMPUS_BOX, MATES_FAR_M } from '../../shared/rules';
+import { distanceM, type LatLon } from '../../shared/run';
+
+/**
+ * 全体の地図（見た目の層）。北が上の SFC の地図に、見えてよい人を置く。
+ * - 最初の枠は SFC のキャンパス（CAMPUS_BOX）。人がその外にいれば、そこまで広げる（キャンパスから MATES_FAR_M より遠い人は数えない）
+ * - 下地は OpenStreetMap の地図を暗くしたもの（画像はブラウザがそのまま読む。サーバーのリクエストは使わない）。読めなくても点は出る
+ * - 鬼は朱の点に2本の角、逃走者は月白の点、役の分からない人（走って光った相手）は白い光だけ。役は色と形の両方で見分ける
+ * - 光っている人は光の輪。自分は蓄光の輪と、位置の誤差の円
+ * - 古い位置ほど薄く。名前は重ならない分だけ出す（16px）
+ */
+
+export type OvKind = 'oni' | 'runner' | 'unknown';
+
+export interface OvPoint {
+  key: string;
+  name: string;
+  pos: LatLon;
+  /** 位置の誤差の半径（m） */
+  acc: number;
+  kind: OvKind;
+  /** 0〜1：1＝今届いた、0＝もうすぐ消える */
+  fresh: number;
+  /** いま走って光っている */
+  lit: boolean;
+}
+
+export interface OvInput {
+  me: (LatLon & { acc: number }) | null;
+  meKind: OvKind;
+  meLit: boolean;
+  points: OvPoint[];
+  /** 名前を出す最大の人数 */
+  labelMax: number;
+}
+
+export interface Overview {
+  el: HTMLElement;
+  update(input: OvInput): void;
+}
+
+const NS = 'http://www.w3.org/2000/svg';
+const TILE = 256;
+const TILE_URL = (z: number, x: number, y: number) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+const Z_MIN = 13;
+const Z_MAX = 19;
+const EARTH_CIRC_M = 40_075_016.686;
+const LABEL_PX = 16;
+
+function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number> = {}): SVGElementTagNameMap[K] {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+  return e;
+}
+
+/** 緯度・経度 → 世界の座標（0〜1。x 右、y 下。ウェブの地図と同じ形） */
+export function toWorld(p: LatLon): { x: number; y: number } {
+  const s = Math.sin((p.lat * Math.PI) / 180);
+  return { x: (p.lon + 180) / 360, y: 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI) };
+}
+
+const CAMPUS_CENTER: LatLon = { lat: (CAMPUS_BOX.north + CAMPUS_BOX.south) / 2, lon: (CAMPUS_BOX.west + CAMPUS_BOX.east) / 2 };
+
+/** 地図の枠：キャンパスと、近くにいる人を全部入れる。返り値は世界の座標の矩形 */
+export function frameOf(points: LatLon[]): { x0: number; y0: number; x1: number; y1: number } {
+  const nw = toWorld({ lat: CAMPUS_BOX.north, lon: CAMPUS_BOX.west });
+  const se = toWorld({ lat: CAMPUS_BOX.south, lon: CAMPUS_BOX.east });
+  let x0 = nw.x;
+  let y0 = nw.y;
+  let x1 = se.x;
+  let y1 = se.y;
+  for (const p of points) {
+    if (distanceM(CAMPUS_CENTER, p) > MATES_FAR_M) continue;
+    const w = toWorld(p);
+    x0 = Math.min(x0, w.x);
+    y0 = Math.min(y0, w.y);
+    x1 = Math.max(x1, w.x);
+    y1 = Math.max(y1, w.y);
+  }
+  const padX = (x1 - x0) * 0.06;
+  const padY = (y1 - y0) * 0.06;
+  return { x0: x0 - padX, y0: y0 - padY, x1: x1 + padX, y1: y1 + padY };
+}
+
+export function createOverview(): Overview {
+  const el = document.createElement('div');
+  el.className = 'ov';
+  const tiles = document.createElement('div');
+  tiles.className = 'ov-tiles';
+  const over = svg('svg', { class: 'ov-svg', role: 'img' });
+  const accG = svg('g', { class: 'ov-acc' });
+  const dotsG = svg('g', { class: 'ov-dots' });
+  const labelsG = svg('g', { class: 'ov-labels' });
+  over.append(accG, dotsG, labelsG);
+  const credit = document.createElement('a');
+  credit.className = 'ov-credit';
+  credit.href = 'https://www.openstreetmap.org/copyright';
+  credit.target = '_blank';
+  credit.rel = 'noopener';
+  credit.textContent = '© OpenStreetMap';
+  el.append(tiles, over, credit);
+
+  const imgs = new Map<string, HTMLImageElement>();
+  let size = { w: 0, h: 0 };
+  let lastInput: OvInput | null = null;
+  let lastKey = '';
+  const measure = () => {
+    const r = el.getBoundingClientRect();
+    size = { w: Math.round(r.width), h: Math.round(r.height) };
+  };
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => {
+      measure();
+      if (lastInput) draw(lastInput, true);
+    }).observe(el);
+  }
+
+  const draw = (input: OvInput, force = false) => {
+    lastInput = input;
+    if (!size.w || !size.h) measure();
+    const { w, h } = size;
+    if (w < 40 || h < 40) return;
+    const all: LatLon[] = [...input.points.map((p) => p.pos), ...(input.me ? [input.me] : [])];
+    const f = frameOf(all);
+    const S = Math.min(w / (f.x1 - f.x0), h / (f.y1 - f.y0)); // 画面の px ／ 世界の 1
+    const cx = (f.x0 + f.x1) / 2;
+    const cy = (f.y0 + f.y1) / 2;
+    const key = JSON.stringify([
+      w,
+      h,
+      Math.round(S),
+      cx.toFixed(7),
+      cy.toFixed(7),
+      input.me && [input.me.lat, input.me.lon, Math.round(input.me.acc)],
+      input.meKind,
+      input.meLit,
+      input.points.map((p) => [p.key, p.name, p.pos.lat, p.pos.lon, p.kind, Math.round(p.fresh * 5), p.lit]),
+      input.labelMax,
+    ]);
+    if (!force && key === lastKey) return;
+    lastKey = key;
+    const px = (p: LatLon) => {
+      const q = toWorld(p);
+      return { x: (q.x - cx) * S + w / 2, y: (q.y - cy) * S + h / 2 };
+    };
+
+    // 下地のタイル（画面の大きさに合うズームを選び、少し引き伸ばして敷く）
+    const z = Math.max(Z_MIN, Math.min(Z_MAX, Math.ceil(Math.log2(S / TILE))));
+    const n = 2 ** z;
+    const tilePx = S / n;
+    const tx0 = Math.floor((cx - w / 2 / S) * n);
+    const tx1 = Math.floor((cx + w / 2 / S) * n);
+    const ty0 = Math.floor((cy - h / 2 / S) * n);
+    const ty1 = Math.floor((cy + h / 2 / S) * n);
+    const keep = new Set<string>();
+    for (let tx = tx0; tx <= tx1; tx++) {
+      for (let ty = ty0; ty <= ty1; ty++) {
+        if (ty < 0 || ty >= n) continue;
+        const k = `${z}/${tx}/${ty}`;
+        keep.add(k);
+        let img = imgs.get(k);
+        if (!img) {
+          img = document.createElement('img');
+          img.alt = '';
+          img.decoding = 'async';
+          img.draggable = false;
+          img.referrerPolicy = 'strict-origin-when-cross-origin';
+          img.addEventListener('error', () => img!.classList.add('is-missing'));
+          img.src = TILE_URL(z, ((tx % n) + n) % n, ty);
+          imgs.set(k, img);
+          tiles.append(img);
+        }
+        const left = (tx / n - cx) * S + w / 2;
+        const top = (ty / n - cy) * S + h / 2;
+        // 1px 重ねて継ぎ目を消す
+        img.style.cssText = `left:${left.toFixed(1)}px;top:${top.toFixed(1)}px;width:${(tilePx + 1).toFixed(1)}px;height:${(tilePx + 1).toFixed(1)}px`;
+      }
+    }
+    for (const [k, img] of imgs) {
+      if (!keep.has(k)) {
+        img.remove();
+        imgs.delete(k);
+      }
+    }
+
+    over.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    over.setAttribute('width', String(w));
+    over.setAttribute('height', String(h));
+    const mPerPx = (lat: number) => (EARTH_CIRC_M * Math.cos((lat * Math.PI) / 180)) / S;
+
+    accG.replaceChildren();
+    dotsG.replaceChildren();
+    labelsG.replaceChildren();
+    const labelBoxes: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    const placeLabel = (x: number, y: number, text: string, cls: string) => {
+      const width = [...text].length * LABEL_PX * 0.95 + 4;
+      for (const right of [true, false]) {
+        const bx0 = right ? x + 10 : x - 10 - width;
+        const box = { x0: bx0, y0: y - LABEL_PX * 0.6, x1: bx0 + width, y1: y + LABEL_PX * 0.6 };
+        if (box.x0 < 2 || box.x1 > w - 2 || box.y0 < 2 || box.y1 > h - 2) continue;
+        if (labelBoxes.some((b) => b.x0 < box.x1 && box.x0 < b.x1 && b.y0 < box.y1 && box.y0 < b.y1)) continue;
+        labelBoxes.push(box);
+        const t = svg('text', { x: right ? x + 10 : x - 10, y: y + 1, class: `ov-name ${cls}`, 'text-anchor': right ? 'start' : 'end', 'dominant-baseline': 'central' });
+        t.textContent = text;
+        labelsG.append(t);
+        return;
+      }
+    };
+
+    // 光っている人・新しい人ほど上に重ねる。名前は光っている人 → 新しい人の順に出す
+    const pts = input.points.map((p) => ({ p, q: px(p.pos) }));
+    pts.sort((a, b) => Number(a.p.lit) - Number(b.p.lit) || a.p.fresh - b.p.fresh);
+    if (input.me) {
+      const q = px(input.me);
+      const r = Math.max(6, input.me.acc / mPerPx(input.me.lat));
+      if (r < Math.max(w, h)) accG.append(svg('circle', { cx: q.x.toFixed(1), cy: q.y.toFixed(1), r: r.toFixed(1), class: 'ov-acc-me' }));
+    }
+    for (const { p, q } of pts) {
+      const g = svg('g', { class: `ov-pt is-${p.kind}${p.lit ? ' is-lit' : ''}`, transform: `translate(${q.x.toFixed(1)} ${q.y.toFixed(1)})` });
+      g.setAttribute('opacity', (0.3 + 0.7 * Math.max(0, Math.min(1, p.fresh))).toFixed(2));
+      if (p.lit) {
+        g.append(svg('circle', { r: 13, class: 'ov-halo' }), svg('circle', { r: 8, class: 'ov-ping' }));
+      }
+      if (p.kind === 'oni') {
+        // 角2本（ピクトの追跡者と同じ印）
+        g.append(svg('path', { d: 'M-5.5,-4 L-7.5,-12 L-1.5,-6 Z M5.5,-4 L7.5,-12 L1.5,-6 Z', class: 'ov-horn' }));
+      }
+      if (p.kind !== 'unknown') g.append(svg('circle', { r: 6.5, class: 'ov-dot' }));
+      else g.append(svg('circle', { r: 5, class: 'ov-dot' }));
+      dotsG.append(g);
+    }
+    if (input.me) {
+      const q = px(input.me);
+      const g = svg('g', { class: `ov-me is-${input.meKind}${input.meLit ? ' is-lit' : ''}`, transform: `translate(${q.x.toFixed(1)} ${q.y.toFixed(1)})` });
+      if (input.meLit) g.append(svg('circle', { r: 13, class: 'ov-halo' }));
+      g.append(svg('circle', { r: 9, class: 'ov-me-ring' }), svg('circle', { r: 4, class: 'ov-me-dot' }));
+      dotsG.append(g);
+    }
+    let labelled = 0;
+    if (input.me) {
+      const q = px(input.me);
+      placeLabel(q.x, q.y, 'じぶん', 'is-me');
+    }
+    for (const { p, q } of [...pts].reverse()) {
+      if (labelled >= input.labelMax) break;
+      const before = labelsG.childElementCount;
+      placeLabel(q.x, q.y, p.name, `is-${p.kind}`);
+      if (labelsG.childElementCount > before) labelled++;
+    }
+    const counts = { oni: 0, runner: 0, unknown: 0 };
+    for (const p of input.points) counts[p.kind]++;
+    over.setAttribute(
+      'aria-label',
+      `全体の地図：${counts.oni ? `鬼 ${counts.oni}人 ` : ''}${counts.runner ? `逃走者 ${counts.runner}人 ` : ''}${counts.unknown ? `光った人 ${counts.unknown}人` : ''}`.trim() || '全体の地図：まだ誰もいない',
+    );
+  };
+
+  return { el, update: (input) => draw(input) };
+}

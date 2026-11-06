@@ -1,5 +1,6 @@
 import './styles.css';
 import { RunReporter } from '../shared/run';
+import { MATES_SEND_EVERY_MS } from '../shared/rules';
 import { participantView, type PhoneView } from '../shared/viewmodel';
 import { GameClient, type KeyValueStore } from './core/game-client';
 import { detectInstall, lineEscapeUrl, type InstallPath } from './install/detect';
@@ -168,6 +169,7 @@ function startPlayer(): void {
   phone.stage.append(glow.el);
   const reporter = new RunReporter();
   let lastView: PhoneView | null = null;
+  let lastMatePos = 0;
   setInterval(() => {
     const view = lastView;
     const s = client.state;
@@ -177,6 +179,16 @@ function startPlayer(): void {
     const lit = sensors.tick(now);
     const send = reporter.next(now, lit, !!view?.lightable && s.online, sensors.sendPos(now));
     if (send) client.run(send.on, send.on ? send.pos : null);
+    // 全体の地図：ゲームの段階の間だけ、5秒ごとに自分の位置を送る（捕まった人・見学の人は送らない）
+    if (view?.lightable && view.role !== 'なし' && s.online) {
+      const mp = now - lastMatePos >= MATES_SEND_EVERY_MS ? sensors.matePos(now) : null;
+      if (mp) {
+        lastMatePos = now;
+        client.pos(mp);
+      }
+    } else {
+      lastMatePos = 0;
+    }
     if (sensors.asked || sensors.motion !== 'off' || sensors.geo !== 'off') {
       const r = sensors.report();
       client.sense(r.motion, r.geo);
@@ -336,6 +348,7 @@ function startHost(token: string): void {
       online: s.online,
       lastReject: s.lastReject,
       glow: s.glow,
+      mates: s.mates,
     });
   });
 }

@@ -1,5 +1,6 @@
 import type { SenseState } from '../shared/protocol';
 import { RunDetector, RunLatch, type RunParams, type RunPos, type RunReading } from '../shared/run';
+import { MATES_ACC_MAX, MATES_FIX_MAX_AGE_MS } from '../shared/rules';
 
 /**
  * 走ると光る：スマホのセンサー（動き・方角・位置）。見た目は持たない。
@@ -219,6 +220,13 @@ export class Sensors {
   sendPos(now: number): RunPos | null {
     const f = this.fix;
     if (!f || now - f.at > FIX_SEND_MAX_MS || f.acc > FIX_SEND_ACC_MAX) return null;
+    return { lat: f.lat, lon: f.lon, acc: f.acc };
+  }
+
+  /** 全体の地図に送る位置（MATES_FIX_MAX_AGE_MS より新しく、誤差が MATES_ACC_MAX 以下のものだけ） */
+  matePos(now: number): RunPos | null {
+    const f = this.fix;
+    if (!f || now - f.at > MATES_FIX_MAX_AGE_MS || f.acc > MATES_ACC_MAX) return null;
     return { lat: f.lat, lon: f.lon, acc: f.acc };
   }
 
