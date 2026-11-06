@@ -190,6 +190,12 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .reject { margin: 0; border: 1px solid var(--line-strong); border-radius: 8px; padding: 10px 12px; font-size: 14px; line-height: 1.6; }
 .buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .buttons .wide { grid-column: span 2; }
+.mic-mode { border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--quiet); }
+.mic-mode .seg { display: flex; gap: 0; }
+.mic-mode .seg button { flex: 1; min-height: 44px; font-size: 15px; border-radius: 0; }
+.mic-mode .seg button:first-child { border-radius: 10px 0 0 10px; }
+.mic-mode .seg button:last-child { border-radius: 0 10px 10px 0; border-left: none; }
+.mic-mode .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
 .durations, .ratio { border-top: 1px solid var(--line); padding-top: 12px; font-size: 14px; color: var(--quiet); }
 .durations summary, .ratio summary { cursor: pointer; }
 .durations form, .ratio form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }

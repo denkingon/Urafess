@@ -358,6 +358,7 @@ export class GameClient {
       winner?: Winner;
       durations?: number[];
       ratio?: { oni: number; runner: number };
+      mic?: 'always' | 'hold';
       pid?: string;
       by?: string;
       rid?: string;

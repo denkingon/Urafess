@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { captureOpenAt, pickCodes, rankCandidates, relateHolds, viaOf, type OniSignal } from '../src/shared/capture';
-import { CLAIM_PAIR_WINDOW_MS, HOLD_MAX_MS, START_LEAD_MS } from '../src/shared/rules';
+import { autoPick, captureOpenAt, pickCodes, rankCandidates, relateHolds, viaOf, type OniSignal } from '../src/shared/capture';
+import { CLAIM_PAIR_WINDOW_MS, HEARD_SLACK_MS, HOLD_MAX_MS, START_LEAD_MS } from '../src/shared/rules';
 import { pauseTimer, startTimer } from '../src/shared/schedule';
 
 const oni = (pid: string, num: number, holds: OniSignal['holds'], extra: Partial<OniSignal> = {}): OniSignal => ({
@@ -113,3 +113,36 @@ describe('その回の3桁', () => {
     expect(codes.every((c) => /^[1-9]\d\d$/.test(c))).toBe(true);
   });
 });
+
+describe('選ばなくていいとき（鬼がちょうど1人に決まる）', () => {
+  const runner = [{ start: 10_000, end: 13_000 }];
+  const o = (num: number, holds: { start: number; end: number | null }[], heardAt: number | null = null): OniSignal => ({
+    pid: `o${num}`, num, name: `鬼${num}`, holds, heardAt, nominatedAt: null,
+  });
+
+  it('長押しが重なった鬼が1人だけなら、その鬼', () => {
+    expect(autoPick(runner, [o(1, [{ start: 11_000, end: 12_000 }]), o(2, [{ start: 20_000, end: 21_000 }])], 14_000)?.pid).toBe('o1');
+  });
+
+  it('鬼は押していなくても、長押しの間に音を拾った鬼が1人だけなら、その鬼（ずっと聞いている鬼）', () => {
+    expect(autoPick(runner, [o(1, [], 11_500), o(2, [])], 14_000)?.pid).toBe('o1');
+    // 離したあとの知らせも、回線の遅れの分は待つ
+    expect(autoPick(runner, [o(1, [], 13_000 + HEARD_SLACK_MS)], 16_000)?.pid).toBe('o1');
+  });
+
+  it('長押しの前や、ずっとあとに拾った音では決めない', () => {
+    expect(autoPick(runner, [o(1, [], 9_000)], 14_000)).toBeNull();
+    expect(autoPick(runner, [o(1, [], 13_000 + HEARD_SLACK_MS + 1)], 20_000)).toBeNull();
+  });
+
+  it('2人以上なら決めない（候補を並べて逃走者が選ぶ）', () => {
+    expect(autoPick(runner, [o(1, [{ start: 11_000, end: 12_000 }]), o(2, [], 12_000)], 14_000)).toBeNull();
+    expect(autoPick(runner, [o(1, [{ start: 11_000, end: 12_000 }]), o(2, [{ start: 12_500, end: 13_500 }])], 14_000)).toBeNull();
+  });
+
+  it('前後に押しただけ・誰もいないなら決めない', () => {
+    expect(autoPick(runner, [o(1, [{ start: 15_000, end: 16_000 }])], 17_000)).toBeNull();
+    expect(autoPick(runner, [], 14_000)).toBeNull();
+  });
+});
+

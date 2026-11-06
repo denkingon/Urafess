@@ -78,6 +78,24 @@ export const NAME_MAX_LENGTH = 20;
 /** 長押しとみなすまでの時間。これより短く離したら何もしない（押し間違い・ポケットの中） */
 export const HOLD_MIN_MS = 500;
 
+/**
+ * 0.5秒押したら離していい。押し始めからこの長さまでは、離しても音を出し続ける（鬼は聞き続ける）。
+ * 3桁の音（超音波・速い）は1回およそ1.2秒なので、2回は鳴る。長押しを続ければ離すまで続く
+ */
+export const HOLD_LATCH_MS = 3_000;
+
+/** 逃走者の長押しが終わったあと、鬼のスマホが拾った知らせを「その長押しの間の音」として待つ長さ（回線の遅れの分） */
+export const HEARD_SLACK_MS = 2_000;
+
+/**
+ * 鬼のマイクの聞き方。主催者が切り替える（どちらがいいか、本番で比べるため。記録にも残す）
+ * - always：マイクをオンにしたら、ゲームの段階の間ずっと聞く（鬼は押さなくていい）
+ * - hold：「捕まえた」を押している間だけ聞く（前の版と同じ）
+ */
+export type MicMode = 'always' | 'hold';
+export const DEFAULT_MIC_MODE: MicMode = 'always';
+export const isMicMode = (m: unknown): m is MicMode => m === 'always' || m === 'hold';
+
 /** 長押しの長さの上限。押しっぱなしのまま「離した」が届かない長押しも、ここで離したとみなす */
 export const HOLD_MAX_MS = 30_000;
 
