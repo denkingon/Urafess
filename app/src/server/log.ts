@@ -31,6 +31,7 @@ const KIND_NAME: Record<string, string> = {
   resume: '再開',
   reset: 'やり直し',
   result: '結果',
+  end: '夜を終える',
   durations: '時間の設定',
   remove: '外す',
   clear: '部屋を空にする',

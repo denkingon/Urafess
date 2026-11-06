@@ -59,6 +59,8 @@ export function createPhone(): PhoneScreen {
       parts.badge.dataset.role = view.caught ? 'caught' : view.role === '鬼' ? 'oni' : view.role === '逃走者' ? 'runner' : 'none';
       parts.label.textContent = view.label;
       parts.big.textContent = view.big;
+      // 夜の最後：SEE YOU AGAIN だけを真ん中に出す（段階バー・人数・役の札は隠す）
+      el.classList.toggle('is-ended', view.ended === true);
       parts.big.style.fontSize = `${bigFontSize(view.big, parts.big.clientWidth || 342)}px`;
       parts.message.textContent = view.message;
       parts.oni.textContent = `鬼 ${view.oni}人`;
@@ -72,6 +74,7 @@ export function createPhone(): PhoneScreen {
 
 /** キャンバスの Phone と同じ決め方：数字は細め、漢字は1文字分で幅を見積もり、はみ出さない大きさにする */
 export function bigFontSize(text: string, width: number): number {
-  const em = [...text].reduce((sum, ch) => sum + (ch.charCodeAt(0) < 256 ? 0.62 : 1), 0);
+  // 英大文字（SEE YOU AGAIN など）は数字より幅広い。0.62 だと右にはみ出す
+  const em = [...text].reduce((sum, ch) => sum + (/[A-Z]/.test(ch) ? 0.8 : ch.charCodeAt(0) < 256 ? 0.62 : 1), 0);
   return Math.max(24, Math.min(104, Math.floor((width - 6) / Math.max(em, 1))));
 }

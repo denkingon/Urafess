@@ -79,6 +79,7 @@ export function createHost(actions: HostActions): HostScreen {
       <button type="button" data-op="win-oni">鬼の勝ち</button>
       <button type="button" data-op="win-runner">逃走者の勝ち</button>
       <button type="button" data-op="reset" class="wide">リセット（配役済みに戻す）</button>
+      <button type="button" data-op="end" class="wide">夜を終える（全員の画面を SEE YOU AGAIN に）</button>
       <button type="button" data-op="clear" class="wide">部屋を空にする（全員を外す）</button>
     </div>
     <details class="durations">
@@ -174,6 +175,9 @@ export function createHost(actions: HostActions): HostScreen {
   btn('reset').addEventListener('click', () => {
     if (confirm('タイマーを止めて、配役済みに戻す。役はそのまま。よいか？')) actions.command('reset');
   });
+  btn('end').addEventListener('click', () => {
+    if (confirm('夜を終える。全員の画面が SEE YOU AGAIN になる。配役で再開もできる。よいか？')) actions.command('end');
+  });
   btn('clear').addEventListener('click', () => {
     if (confirm('参加者を全員外して、配役前に戻す。スマホは入室画面に戻り、入り直しになる。よいか？')) actions.command('clear');
   });
@@ -224,9 +228,15 @@ export function createHost(actions: HostActions): HostScreen {
 
       const timer = game.timer;
       const done = game.stage === 'timer' && timer !== null && isDone(timer, serverNow);
-      const canAssign = game.stage === 'lobby' || game.stage === 'assigned' || game.stage === 'result' || done;
+      const canAssign = game.stage === 'lobby' || game.stage === 'assigned' || game.stage === 'result' || game.stage === 'ended' || done;
       btn('assign').textContent =
-        game.stage === 'assigned' ? '引き直し' : game.stage === 'result' || done ? '次のラウンド（配役）' : '配役';
+        game.stage === 'assigned'
+          ? '引き直し'
+          : game.stage === 'ended'
+            ? '再開（次のラウンドの配役）'
+            : game.stage === 'result' || done
+              ? '次のラウンド（配役）'
+              : '配役';
       setEnabled(btn('assign'), canAssign && host.total > 0, game.stage === 'lobby' || game.stage === 'result' || done);
       setEnabled(btn('start'), game.stage === 'assigned', game.stage === 'assigned');
       const running = game.stage === 'timer' && timer?.status === 'running' && !done;
@@ -240,6 +250,7 @@ export function createHost(actions: HostActions): HostScreen {
       btn('skip').textContent = goTo ? `次に進む → ${goTo}` : '次に進む';
       skipConfirm = phaseNow && phaseNow.index === GAME_PHASE ? `ゲームを終えて「${goTo}」へ進む。よいか？` : null;
       setEnabled(btn('skip'), !!phaseNow && phaseNow.remainingMs > START_LEAD_MS + 500, false);
+      setEnabled(btn('end'), game.stage !== 'ended' && (game.stage !== 'timer' || done), game.stage === 'result');
       setEnabled(btn('reset'), game.stage === 'timer', false);
       setEnabled(btn('clear'), (game.stage !== 'timer' || done) && host.total > 0, false);
       const canResult = game.stage === 'result' || done;

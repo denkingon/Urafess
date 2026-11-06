@@ -282,3 +282,16 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .lab-band .max { position: absolute; top: -2px; bottom: -2px; width: 3px; margin-left: -1.5px; background: var(--ink); opacity: .55; }
 .lab-warn { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--ink); color: var(--bg); font-weight: 700; line-height: 1.6; }
 .lab-hint { margin: 0; color: var(--quiet); line-height: 1.7; }
+
+/* 夜の最後（SEE YOU AGAIN）：役の札・段階バー・人数・接続の表示を隠し、言葉だけを画面の真ん中に */
+.phone.is-ended { justify-content: center; }
+.phone.is-ended .top,
+.phone.is-ended .offline,
+.phone.is-ended .badge-row,
+.phone.is-ended .label,
+.phone.is-ended .message,
+.phone.is-ended .spacer,
+.phone.is-ended .slot,
+.phone.is-ended .steps,
+.phone.is-ended .foot { display: none; }
+.phone.is-ended .big { margin-top: 0; text-align: center; letter-spacing: 2px; }
