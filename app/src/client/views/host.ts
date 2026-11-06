@@ -222,7 +222,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     const kind = t.dataset.mission;
     const n = kind === 'all' ? undefined : kind === '1' ? 1 : Math.round(Number((q('missionN') as HTMLInputElement).value));
     if (n !== undefined && !(Number.isInteger(n) && n >= 1)) return;
-    actions.command('mission', n === undefined ? {} : { n });
+    actions.command('mission-free', n === undefined ? {} : { n });
   });
   btn('assign').addEventListener('click', () => actions.command('assign'));
   btn('start').addEventListener('click', () => actions.command('start'));

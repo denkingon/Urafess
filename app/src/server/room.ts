@@ -2031,7 +2031,7 @@ export class GameRoom extends DurableObject<Env> {
         this.commit({ stage: 'ended', timer: null });
         break;
       }
-      case 'mission': {
+      case 'mission-free': {
         // ミッション成功：牢屋の人を出す。ゲームの段階の間だけ（止めている間も押せる）。全員が入ったあとは出せない
         const n = msg.n === undefined || msg.n === null ? null : Number(msg.n);
         if (n !== null && !(Number.isInteger(n) && n >= 1 && n <= 999)) return this.reject(ws, att, op, 'bad-input');
@@ -2046,7 +2046,7 @@ export class GameRoom extends DurableObject<Env> {
         const out = n === null ? jailed : jailed.slice(0, n);
         // 二度押し（ほかの主催者画面の同時押し）で2回出さないよう、版番号を進める
         this.commit({});
-        this.log('mission', { at: now, data: { n, released: out.length, jailed: jailed.length } });
+        this.log('mission-free', { at: now, data: { n, released: out.length, jailed: jailed.length } });
         for (const q of out) this.freeFromJail(q, null, 'mission', now, { mission: n ?? 'all' });
         break;
       }

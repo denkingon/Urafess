@@ -223,11 +223,11 @@ describe('牢屋と終わり方', () => {
     await waitFor('r1 が牢屋', () => r1.state.me?.caught != null);
 
     // ---- ミッション成功（1人） ----
-    host.command('mission', { n: 1 });
+    host.command('mission-free', { n: 1 });
     await waitFor('ミッションで r1 が出る', () => r1.state.me?.caught == null);
     expect(lastNotice(r1, 'freed')?.via).toBe('mission');
     // 牢屋に誰もいなければ断る
-    host.command('mission', {});
+    host.command('mission-free', {});
     await waitFor('誰もいないと断る', () => host.state.lastReject?.reason === 'nobody-jailed');
 
     // ---- 全員が牢屋に入ったら、2秒後にゲームの段階が終わり、時間が0になると鬼の勝ち ----
@@ -243,7 +243,7 @@ describe('牢屋と終わり方', () => {
     for (const p of players) expect(JSON.stringify(p.state.game!.timer)).toBe(JSON.stringify(players[0].state.game!.timer));
     // 全員が入ったあとは、出られない
     r1.heard(r2.state.me!.rcode!);
-    host.command('mission', {});
+    host.command('mission-free', {});
     await waitFor('ミッションも断る', () => host.state.lastReject?.reason === 'not-allowed');
     await waitFor('全員そろって広場に戻る段階へ', () => players.every((p) => phaseOf(p) === 3), 5_000);
     await waitFor('時間が0になると、結果はアプリが決める（鬼の勝ち）', () => host.state.game?.stage === 'result', 10_000);
