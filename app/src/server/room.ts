@@ -19,15 +19,18 @@ import {
   CLAIM_OPEN_MS,
   CLAIM_PAIR_WINDOW_MS,
   DEFAULT_DURATIONS_MS,
+  DEFAULT_RATIO,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
   EVIDENCE_VALID_MS,
   HEARTBEAT_EVERY_MS,
   HOLD_MAX_MS,
   HOLD_UNKNOWN_END_MS,
+  isValidRatio,
   PHASES,
   ROLES,
   SYNC_OK_MS,
+  type Ratio,
   type RoleId,
 } from '../shared/rules';
 import { nameKey, normalizeName } from '../shared/names';
@@ -53,6 +56,8 @@ interface GameState {
   timer: Timer | null;
   result: Winner | null;
   durations: number[];
+  /** 配役の比率の重み。古い保存データには無いので load で補う */
+  ratio: Ratio;
   /** 次に名簿に入る人の番号（名簿に入った順。画面には出さない。部屋を空にしても戻さない） */
   nextNum: number;
   counts: { oni: number; runner: number };
@@ -321,6 +326,7 @@ export class GameRoom extends DurableObject<Env> {
           timer: null,
           result: null,
           durations: [...DEFAULT_DURATIONS_MS],
+          ratio: { ...DEFAULT_RATIO },
           nextNum: 1,
           counts: { oni: 0, runner: 0 },
           night: 1,
@@ -329,6 +335,7 @@ export class GameRoom extends DurableObject<Env> {
     // 名簿を入れる前の版で作った部屋には、夜の数が無い
     if (!Number.isInteger(this.game.night) || this.game.night < 1) this.game.night = 1;
     if (!Number.isFinite(this.game.nightAt)) this.game.nightAt = Date.now();
+    if (!isValidRatio(this.game.ratio)) this.game.ratio = { ...DEFAULT_RATIO };
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -1328,14 +1335,14 @@ export class GameRoom extends DurableObject<Env> {
 
     switch (op) {
       case 'assign': {
-        if (!(g.stage === 'lobby' || g.stage === 'assigned' || g.stage === 'result' || timerDone)) {
+        if (!(g.stage === 'lobby' || g.stage === 'assigned' || g.stage === 'result' || g.stage === 'ended' || timerDone)) {
           return this.reject(ws, att, op, 'not-allowed');
         }
         const active = [...this.people.values()].filter((p) => !p.removed);
         if (active.length === 0) return this.reject(ws, att, op, 'no-participants');
         const roles = assignRoles(
           active.map((p) => p.pid),
-          ROLES,
+          ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] })),
         );
         const codes = pickCodes(active.length);
         const codeOf = new Map(active.map((p, i) => [p.pid, codes[i]] as const));
@@ -1437,6 +1444,17 @@ export class GameRoom extends DurableObject<Env> {
         this.commit({ stage: 'assigned', timer: null });
         break;
       }
+      case 'end': {
+        // 夜を終える：試合中はできない（時間が0になったあとは押せる）。すでに終わっていれば何もしない
+        if (g.stage === 'ended' || (g.stage === 'timer' && !timerDone)) return this.reject(ws, att, op, 'not-allowed');
+        // 答え待ちの「捕まった」も長押しも閉じる（最後の画面に捕獲の板が残らないように）
+        this.ctx.storage.transactionSync(() => {
+          this.log('end', { at: now, data: { round: g.round } });
+          this.dropClaims();
+        });
+        this.commit({ stage: 'ended', timer: null });
+        break;
+      }
       case 'result': {
         if (msg.winner !== 'oni' && msg.winner !== 'runner') return this.reject(ws, att, op, 'bad-input');
         if (!(g.stage === 'result' || timerDone)) return this.reject(ws, att, op, 'not-allowed');
@@ -1456,6 +1474,16 @@ export class GameRoom extends DurableObject<Env> {
         if (!ok) return this.reject(ws, att, op, 'bad-input');
         this.commit({ durations: [...d] });
         this.log('durations', { at: now, data: { durations: d } });
+        break;
+      }
+      case 'ratio': {
+        if (!(g.stage === 'lobby' || g.stage === 'assigned' || g.stage === 'result')) {
+          return this.reject(ws, att, op, 'not-allowed');
+        }
+        const r = msg.ratio;
+        if (!isValidRatio(r)) return this.reject(ws, att, op, 'bad-input');
+        this.commit({ ratio: { oni: r.oni, runner: r.runner } });
+        this.log('ratio', { at: now, data: { ratio: r } });
         break;
       }
       case 'clear': {
@@ -1542,6 +1570,7 @@ export class GameRoom extends DurableObject<Env> {
       result: g.result,
       durations: g.durations,
       nightAt: g.nightAt,
+      ratio: g.ratio,
     };
   }
 

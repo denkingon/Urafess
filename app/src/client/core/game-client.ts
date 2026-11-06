@@ -328,7 +328,10 @@ export class GameClient {
     else if (pnd.kind === 'cancel') this.send({ t: 'cancel' });
   }
 
-  command(op: HostOp, extra: { winner?: Winner; durations?: number[]; pid?: string; by?: string; rid?: string; ok?: boolean } = {}): boolean {
+  command(
+    op: HostOp,
+    extra: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string; rid?: string; ok?: boolean } = {},
+  ): boolean {
     const game = this.state.game;
     if (!this.isOpen() || !game) return false;
     this.state = { ...this.state, lastReject: null };

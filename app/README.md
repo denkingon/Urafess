@@ -1,6 +1,6 @@
 # Urafess アプリの土台
 
-入室（名簿）・①配役（鬼3：逃走者7）・②同期タイマー・③捕獲の記録を、300人で崩れないように作ったもの。
+入室（名簿）・①配役（鬼3：逃走者7が初期値。主催者画面の「鬼と逃走者の割合」で変えられる）・②同期タイマー・③捕獲の記録を、300人で崩れないように作ったもの。
 
 - 計画書（正本）：[Urafess アプリ根幹 計画書](https://claude.ai/artifact/7ouAiRxriSSYHpYCdgGRm5)
 - 画面の下書き：[Urafess アプリ画面（Claude Design）](https://claude.ai/artifact/9RCkDqT7CL9dtifftVs1SY)

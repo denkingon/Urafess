@@ -22,7 +22,12 @@ export interface PhoneView {
   touch: 'oni' | 'runner' | 'none';
   /** 自分が今の配役で捕まった */
   caught: boolean;
+  /** 夜が終わった（SEE YOU AGAIN の画面）。古い呼び出し側は省略できる */
+  ended?: boolean;
 }
+
+/** 夜の最後の画面に出す言葉 */
+export const FAREWELL = 'SEE YOU AGAIN';
 
 const MESSAGES: Record<'oni' | 'runner', string[]> = {
   // 配役, 逃走開始まで, 追跡開始まで, ゲーム, 広場に戻る
@@ -70,6 +75,11 @@ export function participantView(
     touch: 'none',
     caught: false,
   };
+
+  // 夜の最後：入室している人にも、途中で外された人にも、同じ言葉を出す
+  if (game.stage === 'ended') {
+    return { ...base, step: 6, label: '', big: FAREWELL, message: '', ended: true };
+  }
 
   if (me.removed) {
     return { ...base, label: '参加していない', big: '—', message: '主催者に確認する。' };
@@ -163,6 +173,8 @@ export function hostStatus(game: GameView, serverNow: number): { title: string; 
       return { title: '配役前', big: `${game.counts.total}人`, next: '次：配役' };
     case 'assigned':
       return { title: '1 配役済み', big: `${game.counts.oni}/${game.counts.runner}`, next: '次：開始で「逃走開始まで」' };
+    case 'ended':
+      return { title: '夜は終わった', big: FAREWELL, next: '次：配役で再開／部屋を空にする' };
     case 'result':
       return {
         title: '6 結果発表',

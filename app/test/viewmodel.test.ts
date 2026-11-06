@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { GameView, MeView } from '../src/shared/protocol';
 import { START_LEAD_MS } from '../src/shared/rules';
 import { pauseTimer, startTimer } from '../src/shared/schedule';
-import { participantView } from '../src/shared/viewmodel';
+import { FAREWELL, hostStatus, participantView } from '../src/shared/viewmodel';
 
 const D = [20_000, 60_000, 300_000, 120_000];
 
@@ -73,5 +73,19 @@ describe('参加者の画面（キャンバスの Phone に渡す中身）', () 
 
   it('通信が切れていたら、そう出す', () => {
     expect(participantView(game({}), oni, 0, false).offline).toBe(true);
+  });
+
+  it('夜の最後は、役にかかわらず全員が SEE YOU AGAIN だけを見る', () => {
+    const ended = game({ stage: 'ended', result: 'runner' });
+    expect(FAREWELL).toBe('SEE YOU AGAIN');
+    for (const me of [oni, runner, { ...oni, role: null, assignId: 0 }, { ...oni, removed: true }]) {
+      expect(participantView(ended, me, 0, true)).toMatchObject({ step: 6, big: 'SEE YOU AGAIN', message: '', touch: 'none', caught: false, ended: true });
+    }
+    // 終わっていない画面には ended が付かない
+    expect(participantView(game({ stage: 'result', result: 'runner' }), oni, 0, true).ended).toBeUndefined();
+  });
+
+  it('夜の最後の主催者画面は、再開か部屋を空にするを案内する', () => {
+    expect(hostStatus(game({ stage: 'ended' }), 0)).toMatchObject({ title: '夜は終わった', big: 'SEE YOU AGAIN' });
   });
 });
