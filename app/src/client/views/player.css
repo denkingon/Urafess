@@ -230,6 +230,11 @@
 .phone.player.is-glow .glow { flex: 1 1 0; margin-top: 10px; }
 .phone.player.is-glow .p-time { margin-top: 8px; font-size: clamp(calc(var(--min) * 1.2), 8dvh, 64px); }
 .phone.player.is-glow .hold { min-height: clamp(120px, 19dvh, 156px); }
+/* ゲームの段階は、鬼の「手動」を横並びの小さい形にして、地図に高さを譲る（押す場所の大きさは 44px） */
+.phone.player.is-glow .cap-foot button.rb { flex-direction: row; gap: 10px; }
+.phone.player.is-glow .cap-foot button.rb i { width: 44px; height: 44px; border-radius: 22px; }
+.phone.player.is-glow .cap-foot button.rb .gl { width: 22px; height: 22px; }
+.phone.player.is-glow .cap-foot button.rb .ja, .phone.player.is-glow .cap-foot button.rb .en { text-align: left; }
 /* 「捕まえたのは？」が出ている間は、地図をしまって候補に場所を譲る */
 .phone.player.is-glow:has(.cap-cands:not([hidden])) .stage { display: none; }
 
@@ -254,7 +259,7 @@
 .player .radar-bg { fill: var(--raised); stroke: var(--sen); stroke-width: 1; }
 .player .radar-rings circle { stroke: var(--sen); }
 .player .radar-ring-label { fill: var(--tsuki-muted); }
-.player .radar-north { fill: var(--tsuki-muted); }
+.player .radar-north { fill: var(--tsuki-muted); paint-order: stroke; stroke: var(--raised); stroke-width: calc(var(--radar-font, 12px) * 0.28); }
 .player .radar.is-north-up .radar-north { fill: var(--tsuki); }
 .player .radar-me-dot { fill: var(--ground); stroke: var(--rc); stroke-width: 2.2; }
 .player .radar-me-arrow { fill: var(--rc); }
