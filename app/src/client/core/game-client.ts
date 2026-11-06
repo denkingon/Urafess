@@ -1,6 +1,6 @@
 import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
-import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
+import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
 import { SILENCE_LIMIT_MS } from '../../shared/rules';
 
 /**
@@ -54,7 +54,7 @@ export interface Notice {
   seq: number;
   kind: NoticeKind;
   other: { num: number; name: string } | null;
-  via: CaptureVia | null;
+  via: CaptureVia | RescueVia | null;
   at: number;
 }
 
@@ -137,6 +137,8 @@ export class GameClient {
   private pendingReclaimName: string | null = null;
   /** 押している長押し（押し始めのサーバー時刻）。つなぎ直したら送り直す */
   private holding: { at: number | undefined } | null = null;
+  /** 押している「助けて」「助ける」（押し始めのサーバー時刻）。つなぎ直したら送り直す */
+  private rescuing: { at: number | undefined } | null = null;
   /** 最近離した長押し。切れていて届いたか分からないので、つなぎ直したら送り直す（サーバーは同じ押し始めを2回数えない） */
   private recentHolds: { start: number; end: number; doneAt: number }[] = [];
   /** 送ったが、届いて効いたか分からない操作。つなぎ直して最初の状態を受け取ったとき、まだ効いていなければ送り直す */
@@ -270,6 +272,20 @@ export class GameClient {
   }
 
   /** 長押しを始めた（HOLD_MIN_MS 押し続けたら呼ぶ。localAt は指を置いた瞬間のスマホの時計） */
+  /** 牢屋から出す長押しを始めた（牢屋の人は「助けて」、外の逃走者は「助ける」。HOLD_MIN_MS 押し続けたら呼ぶ） */
+  rescueStart(localAt: number): void {
+    const at = this.toServer(localAt);
+    this.rescuing = { at };
+    this.send({ t: 'rescue', on: true, at });
+  }
+
+  rescueEnd(localAt: number): void {
+    if (!this.rescuing) return;
+    const start = this.rescuing.at;
+    this.rescuing = null;
+    this.send({ t: 'rescue', on: false, at: this.toServer(localAt), start });
+  }
+
   holdStart(localAt: number): void {
     const at = this.toServer(localAt);
     this.holding = { at };
@@ -372,6 +388,7 @@ export class GameClient {
       by?: string;
       rid?: string;
       ok?: boolean;
+      n?: number;
     } = {},
   ): boolean {
     const game = this.state.game;
@@ -508,6 +525,9 @@ export class GameClient {
       // 押していなければ「離した」を送る（切れている間に離して、その知らせが届かなかった分を閉じる。何も押していなければサーバーは何もしない）
       if (this.holding) this.send({ t: 'hold', on: true, at: this.holding.at });
       else this.send({ t: 'hold', on: false, at: this.toServer(now), resume: true });
+      // 「助けて」「助ける」も同じ：押していれば送り直し、押していなければ「離した」（切れている間に離した分を閉じる）
+      if (this.rescuing) this.send({ t: 'rescue', on: true, at: this.rescuing.at });
+      else this.send({ t: 'rescue', on: false, at: this.toServer(now) });
       // 選んだ・取り下げたが効いたかは、最初に届く状態を見てから決めて送り直す
       this.resendAfterSnap = this.pending !== null;
       // 名前のボタンを押したが、届いたか分からない（サーバーは2回入れない）

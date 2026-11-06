@@ -324,3 +324,14 @@
 .player .ov-name.is-me { fill: var(--rc); }
 .player.is-lit .ov-name.is-me { fill: var(--chikko); }
 .player .ov-credit { font-size: max(var(--min), 16px); color: var(--tsuki-muted); }
+
+/* ---------- 牢屋 ---------- */
+/* 「助ける」は蓄光（光る一か所）の点線の板、牢屋の「助けて」は月白の二重の板。マイクは月白の点線 */
+.player .jail { display: flex; flex-direction: column; gap: 12px; }
+.player .jail[data-mode="save"] { --pad: var(--chikko); }
+.player .jail[data-mode="help"] { --pad: var(--tsuki); }
+.player .jail[data-mode="save"] .hold { background: transparent; color: var(--chikko); border: 3px dashed var(--chikko); min-height: 88px; }
+.player .jail[data-mode="save"].is-holding .hold { background: var(--chikko); color: var(--yami); }
+.player .jail[data-mode="help"] .hold { border: 6px double var(--yami); }
+.player .jail .cap-mic { border-color: var(--tsuki); color: var(--tsuki); }
+.player .jail .cap-status { margin: 0; text-align: center; }
