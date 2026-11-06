@@ -6,6 +6,7 @@ import {
   pauseTimer,
   positionAt,
   resumeTimer,
+  skipPhase,
   startTimer,
 } from '../src/shared/schedule';
 
@@ -58,5 +59,60 @@ describe('区切りの計算', () => {
     expect(formatClock(1)).toBe('0:01');
     expect(formatClock(0)).toBe('0:00');
     expect(formatClock(-5)).toBe('0:00');
+  });
+});
+
+describe('次に進む（いまの段階を2秒後に終わらせる）', () => {
+  const start = 1_000_000;
+  const t = startTimer(D, start); // 逃走開始は start+2秒から
+  const t0 = start + START_LEAD_MS;
+
+  it('ゲームの途中で押すと、ちょうど2秒後に「広場に戻るまで」が始まり、その長さは変わらない', () => {
+    const now = t0 + 20_000 + 60_000 + 100_000; // ゲームが始まって100秒
+    const s2 = skipPhase(t, now);
+    expect(positionAt(s2, now)).toMatchObject({ kind: 'phase', index: 2, remainingMs: START_LEAD_MS });
+    expect(positionAt(s2, now + START_LEAD_MS)).toMatchObject({ kind: 'phase', index: 3, remainingMs: 120_000 });
+    expect(positionAt(s2, now + START_LEAD_MS + 120_000)).toMatchObject({ kind: 'done' });
+    // 区切りは全員が同じ値で持つ（いまの区切りから先が、そろって前へずれる）
+    const before = boundaryTimes(t)!;
+    const after = boundaryTimes(s2)!;
+    const shift = before[3] - after[3];
+    expect(after[3]).toBe(now + START_LEAD_MS);
+    expect(after.map((b, i) => before[i] - b)).toEqual(after.map(() => shift));
+  });
+
+  it('時間は前にしか進まない（押した瞬間の残りが2秒に縮むだけで、戻らない）', () => {
+    for (const now of [start, start + 500, t0 + 1, t0 + 19_000, t0 + 30_000, t0 + 400_000]) {
+      const s2 = skipPhase(t, now);
+      expect(positionAt(s2, now).elapsedMs).toBeGreaterThanOrEqual(positionAt(t, now).elapsedMs);
+    }
+  });
+
+  it('開始の直後（数え始める前）に押しても、2秒後に「追跡開始まで」が始まる', () => {
+    const now = start + 500;
+    const s2 = skipPhase(t, now);
+    expect(positionAt(s2, now + START_LEAD_MS)).toMatchObject({ kind: 'phase', index: 1, remainingMs: 60_000 });
+  });
+
+  it('最後の段階で押すと、2秒後に終わる（結果発表待ち）', () => {
+    const now = t0 + 380_000 + 10_000; // 広場に戻るまで の途中
+    const s2 = skipPhase(t, now);
+    expect(positionAt(s2, now + START_LEAD_MS - 1)).toMatchObject({ kind: 'phase', index: 3 });
+    expect(positionAt(s2, now + START_LEAD_MS)).toMatchObject({ kind: 'done' });
+  });
+
+  it('あと2秒以内に終わる段階・止めている間・終わったあとは、そのまま', () => {
+    expect(skipPhase(t, t0 + 20_000 - 1_500)).toBe(t);
+    const paused = pauseTimer(t, t0 + 5_000);
+    expect(skipPhase(paused, t0 + 6_000)).toBe(paused);
+    expect(skipPhase(t, t0 + 500_000 + 1)).toBe(t);
+  });
+
+  it('再開の直後（止めた所で表示を止めている間）に押しても、2秒後に次の段階が始まる', () => {
+    const paused = pauseTimer(t, t0 + 10_000); // 逃走開始まで の残り10秒で止めた
+    const resumed = resumeTimer(paused, t0 + 50_000);
+    const now = t0 + 50_500;
+    const s2 = skipPhase(resumed, now);
+    expect(positionAt(s2, now + START_LEAD_MS)).toMatchObject({ kind: 'phase', index: 1, remainingMs: 60_000 });
   });
 });

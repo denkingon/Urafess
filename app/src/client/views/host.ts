@@ -1,12 +1,15 @@
 import { VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
-import { DURATION_MAX_MS, DURATION_MIN_MS, PHASES } from '../../shared/rules';
-import { isDone } from '../../shared/schedule';
+import { DURATION_MAX_MS, DURATION_MIN_MS, PHASES, START_LEAD_MS } from '../../shared/rules';
+import { isDone, positionAt } from '../../shared/schedule';
 import { hostStatus } from '../../shared/viewmodel';
 import { bigFontSize } from './phone';
 
 /** 主催者画面の大きい数字・文字の上限（「逃走者の勝ち」など長いときは枠に収まるまで縮める） */
 const HOST_BIG_MAX_PX = 56;
+/** 「次に進む」の行き先（いまの段階の番号ごと）。ゲームの段階の名前は「残り時間」なので、ここでは「ゲーム」と書く */
+const SKIP_TO = ['追跡開始まで', 'ゲーム', '広場に戻るまで', '結果発表'] as const;
+const GAME_PHASE = PHASES.findIndex((p) => p.id === 'game');
 
 /** 主催者の画面（キャンバスの「主催者」）。押せるボタンは今の段階で決まる */
 
@@ -61,6 +64,7 @@ export function createHost(actions: HostActions): HostScreen {
       <button type="button" data-op="start">開始</button>
       <button type="button" data-op="pause">一時停止</button>
       <button type="button" data-op="resume">再開</button>
+      <button type="button" data-op="skip" class="wide">次に進む</button>
       <button type="button" data-op="win-oni">鬼の勝ち</button>
       <button type="button" data-op="win-runner">逃走者の勝ち</button>
       <button type="button" data-op="reset" class="wide">リセット（配役済みに戻す）</button>
@@ -112,6 +116,12 @@ export function createHost(actions: HostActions): HostScreen {
   btn('start').addEventListener('click', () => actions.command('start'));
   btn('pause').addEventListener('click', () => actions.command('pause'));
   btn('resume').addEventListener('click', () => actions.command('resume'));
+  // 次に進む：ゲームの段階を縮めるときだけ確かめる（ほかの段階は待ち時間なので、そのまま進める）
+  let skipConfirm: string | null = null;
+  btn('skip').addEventListener('click', () => {
+    if (skipConfirm && !confirm(skipConfirm)) return;
+    actions.command('skip');
+  });
   btn('win-oni').addEventListener('click', () => actions.command('result', { winner: 'oni' }));
   btn('win-runner').addEventListener('click', () => actions.command('result', { winner: 'runner' }));
   btn('reset').addEventListener('click', () => {
@@ -175,6 +185,13 @@ export function createHost(actions: HostActions): HostScreen {
       setEnabled(btn('pause'), running, running);
       const paused = game.stage === 'timer' && timer?.status === 'paused';
       setEnabled(btn('resume'), paused, paused);
+      // 次に進む：いまの段階を2秒後に終わらせる。行き先をボタンに書く。あと2秒ほどで終わるときは押せない
+      const pos = running && timer ? positionAt(timer, serverNow) : null;
+      const phaseNow = pos && pos.kind === 'phase' ? pos : null;
+      const goTo = phaseNow ? (SKIP_TO[phaseNow.index] ?? '結果発表') : null;
+      btn('skip').textContent = goTo ? `次に進む → ${goTo}` : '次に進む';
+      skipConfirm = phaseNow && phaseNow.index === GAME_PHASE ? `ゲームを終えて「${goTo}」へ進む。よいか？` : null;
+      setEnabled(btn('skip'), !!phaseNow && phaseNow.remainingMs > START_LEAD_MS + 500, false);
       setEnabled(btn('reset'), game.stage === 'timer', false);
       setEnabled(btn('clear'), (game.stage !== 'timer' || done) && host.total > 0, false);
       const canResult = game.stage === 'result' || done;

@@ -31,7 +31,7 @@ import {
   SYNC_OK_MS,
   type RoleId,
 } from '../shared/rules';
-import { elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, startTimer, type Timer } from '../shared/schedule';
+import { elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
 import type { ProbeHub } from './probe';
 
@@ -1085,6 +1085,18 @@ export class GameRoom extends DurableObject<Env> {
         this.commit({ timer: resumeTimer(g.timer, now) });
         this.log('resume', { at: now });
         break;
+      case 'skip': {
+        // 次に進む：走っている間だけ。あと2秒以内に終わる段階は縮めない（二度押しは版番号で断っている）
+        if (g.stage !== 'timer' || !g.timer || g.timer.status !== 'running' || timerDone) {
+          return this.reject(ws, att, op, 'not-allowed');
+        }
+        const next = skipPhase(g.timer, now);
+        if (next === g.timer) return this.reject(ws, att, op, 'not-allowed');
+        const from = positionAt(g.timer, now);
+        this.commit({ timer: next });
+        this.log('skip', { at: now, data: { from: from.kind === 'phase' ? from.index : null } });
+        break;
+      }
       case 'reset': {
         if (g.stage !== 'timer') return this.reject(ws, att, op, 'not-allowed');
         // やり直しなので、この配役の捕獲と押した記録も消す（ログには残る）

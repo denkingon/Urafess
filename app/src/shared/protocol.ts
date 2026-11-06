@@ -100,7 +100,9 @@ export type HostOp =
   /** 主催者が手で「捕まった」にする（pid＝逃走者、by＝鬼。by は省略できる） */
   | 'capture'
   /** 主催者が捕獲を取り消す（pid＝逃走者） */
-  | 'release';
+  | 'release'
+  /** 次に進む：走っているタイマーの、いまの段階を2秒後に終わらせて次の段階へ */
+  | 'skip';
 
 export type ClientMsg =
   | { t: 'join'; name: string }

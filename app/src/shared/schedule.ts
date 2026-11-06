@@ -62,6 +62,21 @@ export function resumeTimer(timer: Timer, serverNow: number): Timer {
   };
 }
 
+/**
+ * 次に進む：いまの段階を2秒後（START_LEAD_MS）に終わらせる。そのあとの段階は、縮めた分だけ前へずらす（長さは変えない）。
+ * 「今すぐ」ではなく2秒後を予約するので、全員の画面が同じ瞬間に次の段階へ切り替わる（開始・再開と同じ考え方）。
+ * 時間は前にしか進まない。止めている・終わっている・あと2秒以内に終わる段階は、そのまま返す
+ */
+export function skipPhase(timer: Timer, serverNow: number): Timer {
+  if (timer.status !== 'running') return timer;
+  const pos = positionAt(timer, serverNow);
+  if (pos.kind === 'done') return timer;
+  const nextStart = cumulative(timer.durations)[pos.index + 1];
+  const t0 = serverNow + START_LEAD_MS - nextStart;
+  if (t0 >= timer.t0) return timer;
+  return { ...timer, t0 };
+}
+
 export function positionAt(timer: Timer, serverNow: number): PhasePosition {
   const elapsed = elapsedAt(timer, serverNow);
   const cum = cumulative(timer.durations);

@@ -42,10 +42,31 @@ function vibrate(pattern: number | number[]): void {
   }
 }
 
+/** 鬼のマイクのボタンに出す言葉：[大きい字, 小さい字, 押せるか] */
+function micPrompt(state: SoundListener['state']): [string, string, boolean] {
+  switch (state) {
+    case 'starting':
+      return ['マイクを準備中…', '許可を聞かれたら「許可」を押す', false];
+    case 'ready':
+      return ['マイクをもう一度オンにする', 'マイクが止まっている。押すと戻る', true];
+    case 'denied':
+      return ['マイクが許可されていない', '押してもう一度試す。だめなら設定アプリでマイクを許可する。それまでは長押しの時刻だけで記録の候補に出る', true];
+    case 'error':
+      return ['マイクをもう一度オンにする', 'マイクを開けなかった。押してもう一度試す', true];
+    case 'unsupported':
+      return ['このスマホではマイクが使えない', '長押しの時刻だけで記録の候補に出る', false];
+    default:
+      return ['マイクをオンにする', '捕まえた相手の音を拾うのに使う。オンになるまで、ここに出る', true];
+  }
+}
+
 export function createCapture({ client, emitter, listener }: CaptureDeps): CaptureScreen {
   const el = document.createElement('section');
   el.className = 'capture';
   el.innerHTML = `
+    <button type="button" class="cap-mic" data-act="mic" data-k="mic" hidden>
+      <b data-k="micLabel"></b><span data-k="micSub"></span>
+    </button>
     <div class="cap-cands" data-k="cands" hidden>
       <p class="cap-title">捕まえたのは？<span>押した人が記録される</span></p>
       <div class="cap-grid" data-k="grid"></div>
@@ -232,6 +253,11 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       case 'close':
         sheet.hidden = true;
         return;
+      case 'mic':
+        // このタップの中で開く（音の処理を動かすのも、許可を聞くのもタップの直後でないとできない端末がある）
+        listener.unlock();
+        void listener.open();
+        return;
       case 'prep':
         if (role === '鬼') {
           void listener.open();
@@ -373,7 +399,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
         const mic: Record<string, string> = {
           off: 'マイク：押すと使う',
           starting: 'マイク：準備中',
-          ready: holding ? `マイク：${'▮'.repeat(1 + Math.round(listener.level * 5))}` : 'マイク：準備OK',
+          ready: !listener.live ? 'マイク：止まっている（上のボタンで戻す）' : holding ? `マイク：${'▮'.repeat(1 + Math.round(listener.level * 5))}` : 'マイク：準備OK',
           denied: 'マイクが使えない（長押しの時刻で候補に出る）',
           unsupported: 'マイクが使えない（長押しの時刻で候補に出る）',
           error: 'マイクが使えない（長押しの時刻で候補に出る）',
@@ -385,19 +411,23 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
         status.textContent = '';
       }
 
-      // 準備（ゲームの前に一度：鬼はマイク、逃走者は音を試す）
+      // 鬼のマイク：配役からゲームの終わりまで、マイクが本当に音を拾えるようになるまで大きく出し続ける。
+      // 一度オンにしても、止まったら（iPhone で画面を離れた・ほかの音のアプリ・電話など）また出す
       const inRound = view.role !== 'なし' && !view.caught;
       const beforeOrDuring = view.step >= 1 && view.step <= 4;
+      const mic = q('mic') as HTMLButtonElement;
+      const needMic = inRound && beforeOrDuring && role === '鬼' && !listener.live;
+      mic.hidden = !needMic;
+      if (needMic) {
+        const [label, sub, usable] = micPrompt(listener.state);
+        q('micLabel').textContent = label;
+        q('micSub').textContent = sub;
+        mic.disabled = !usable;
+      }
+
+      // 準備（ゲームの前に一度：逃走者は音を試す）
       const prep = q('prep');
-      if (inRound && beforeOrDuring && role === '鬼' && listener.state !== 'ready') {
-        prep.hidden = false;
-        q('prepText').textContent =
-          listener.state === 'denied' || listener.state === 'unsupported' || listener.state === 'error'
-            ? 'マイクが使えない。長押しの時刻だけで候補に出る。'
-            : '捕まえたら、相手の音をマイクで拾う。';
-        q('prepBtn').textContent = 'マイクを使う';
-        (q('prepBtn') as HTMLButtonElement).hidden = listener.state === 'starting' || listener.state === 'denied' || listener.state === 'unsupported';
-      } else if (inRound && beforeOrDuring && role === '逃走者' && !emitter.unlocked) {
+      if (inRound && beforeOrDuring && role === '逃走者' && !emitter.unlocked) {
         prep.hidden = false;
         q('prepText').textContent = '捕まったら長押しすると音が鳴る。';
         q('prepBtn').textContent = '音を試す';

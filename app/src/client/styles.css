@@ -186,6 +186,18 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .is-holding .hold { background: var(--ink); color: var(--bg); }
 .is-holding .hold span { color: var(--bg); }
 .is-holding .hold-fill { opacity: 0; }
+/* 鬼のマイク：オンになるまで出し続ける。白地に黒字で、画面でいちばん強いもの（押せないときは枠だけ） */
+.cap-mic {
+  min-height: 76px; border-radius: 16px; border: 2px solid var(--ink); background: var(--ink); color: var(--bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 12px 16px; text-align: center;
+}
+.cap-mic b { font-size: 22px; font-weight: 900; line-height: 1.3; }
+.cap-mic span { font-size: 12px; line-height: 1.5; opacity: 0.75; }
+.cap-mic:disabled { background: transparent; color: var(--ink); }
+@media (prefers-reduced-motion: no-preference) {
+  .cap-mic:not(:disabled) { animation: cap-mic-pulse 1.6s ease-in-out infinite; }
+}
+@keyframes cap-mic-pulse { 50% { box-shadow: 0 0 0 6px rgba(242, 242, 242, 0.25); } }
 .cap-cands, .cap-lock, .cap-prep { border: 1px solid var(--line-strong); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .cap-title { margin: 0; font-size: 16px; font-weight: 900; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .cap-title span { font-size: 12px; color: var(--quiet); font-weight: 500; }
