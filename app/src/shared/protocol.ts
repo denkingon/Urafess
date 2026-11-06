@@ -11,7 +11,9 @@ export type Stage =
   /** タイマーが動いている／止まっている（終わったら各スマホが結果発表を出す） */
   | 'timer'
   /** 主催者が勝ちを押した */
-  | 'result';
+  | 'result'
+  /** 夜の最後。主催者が「夜を終える」を押した。全員の画面が SEE YOU AGAIN になる（配役で再開もできる） */
+  | 'ended';
 
 export type Winner = 'oni' | 'runner';
 
@@ -29,6 +31,8 @@ export interface GameView {
   counts: { oni: number; runner: number; total: number; caught: number };
   result: Winner | null;
   durations: number[];
+  /** 配役の比率（鬼：逃走者）。古いサーバーからは来ない */
+  ratio?: { oni: number; runner: number };
 }
 
 /** 本人だけに送る部分 */
@@ -94,6 +98,8 @@ export type HostOp =
   | 'reset'
   | 'result'
   | 'durations'
+  /** 鬼：逃走者の比率を変える（配役の前だけ） */
+  | 'ratio'
   | 'remove'
   /** 部屋を空にする：参加者を全員外し、配役前に戻す（リハーサルのあと用） */
   | 'clear'
@@ -102,7 +108,9 @@ export type HostOp =
   /** 主催者が捕獲を取り消す（pid＝逃走者） */
   | 'release'
   /** 次に進む：走っているタイマーの、いまの段階を2秒後に終わらせて次の段階へ */
-  | 'skip';
+  | 'skip'
+  /** 夜を終える：全員の画面を SEE YOU AGAIN にする。試合中（時間が0になる前）はできない */
+  | 'end';
 
 export type ClientMsg =
   | { t: 'join'; name: string }
@@ -111,7 +119,7 @@ export type ClientMsg =
   | { t: 'ping'; id: number; a: number }
   | { t: 'ack'; assignId: number }
   | { t: 'sync'; err: number }
-  | { t: 'cmd'; op: HostOp; cv: number; winner?: Winner; durations?: number[]; pid?: string; by?: string }
+  | { t: 'cmd'; op: HostOp; cv: number; winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string }
   /**
    * 長押し。on=true は押し始め（HOLD_MIN_MS 押し続けたら送る）、false は離した。
    * at はその瞬間のサーバー時刻の見積もり（押し始めは、指を置いた瞬間）。

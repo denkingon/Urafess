@@ -19,16 +19,19 @@ import {
   CLAIM_OPEN_MS,
   CLAIM_PAIR_WINDOW_MS,
   DEFAULT_DURATIONS_MS,
+  DEFAULT_RATIO,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
   EVIDENCE_VALID_MS,
   HEARTBEAT_EVERY_MS,
   HOLD_MAX_MS,
   HOLD_UNKNOWN_END_MS,
+  isValidRatio,
   NAME_MAX_LENGTH,
   PHASES,
   ROLES,
   SYNC_OK_MS,
+  type Ratio,
   type RoleId,
 } from '../shared/rules';
 import { elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
@@ -53,6 +56,8 @@ interface GameState {
   timer: Timer | null;
   result: Winner | null;
   durations: number[];
+  /** 配役の比率の重み。古い保存データには無いので load で補う */
+  ratio: Ratio;
   nextNum: number;
   counts: { oni: number; runner: number };
 }
@@ -254,9 +259,11 @@ export class GameRoom extends DurableObject<Env> {
           timer: null,
           result: null,
           durations: [...DEFAULT_DURATIONS_MS],
+          ratio: { ...DEFAULT_RATIO },
           nextNum: 1,
           counts: { oni: 0, runner: 0 },
         };
+    if (!isValidRatio(this.game.ratio)) this.game.ratio = { ...DEFAULT_RATIO };
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -1010,14 +1017,14 @@ export class GameRoom extends DurableObject<Env> {
 
     switch (op) {
       case 'assign': {
-        if (!(g.stage === 'lobby' || g.stage === 'assigned' || g.stage === 'result' || timerDone)) {
+        if (!(g.stage === 'lobby' || g.stage === 'assigned' || g.stage === 'result' || g.stage === 'ended' || timerDone)) {
           return this.reject(ws, att, op, 'not-allowed');
         }
         const active = [...this.people.values()].filter((p) => !p.removed);
         if (active.length === 0) return this.reject(ws, att, op, 'no-participants');
         const roles = assignRoles(
           active.map((p) => p.pid),
-          ROLES,
+          ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] })),
         );
         const codes = pickCodes(active.length);
         const codeOf = new Map(active.map((p, i) => [p.pid, codes[i]] as const));
@@ -1119,6 +1126,17 @@ export class GameRoom extends DurableObject<Env> {
         this.commit({ stage: 'assigned', timer: null });
         break;
       }
+      case 'end': {
+        // 夜を終える：試合中はできない（時間が0になったあとは押せる）。すでに終わっていれば何もしない
+        if (g.stage === 'ended' || (g.stage === 'timer' && !timerDone)) return this.reject(ws, att, op, 'not-allowed');
+        // 答え待ちの「捕まった」も長押しも閉じる（最後の画面に捕獲の板が残らないように）
+        this.ctx.storage.transactionSync(() => {
+          this.log('end', { at: now, data: { round: g.round } });
+          this.dropClaims();
+        });
+        this.commit({ stage: 'ended', timer: null });
+        break;
+      }
       case 'result': {
         if (msg.winner !== 'oni' && msg.winner !== 'runner') return this.reject(ws, att, op, 'bad-input');
         if (!(g.stage === 'result' || timerDone)) return this.reject(ws, att, op, 'not-allowed');
@@ -1138,6 +1156,16 @@ export class GameRoom extends DurableObject<Env> {
         if (!ok) return this.reject(ws, att, op, 'bad-input');
         this.commit({ durations: [...d] });
         this.log('durations', { at: now, data: { durations: d } });
+        break;
+      }
+      case 'ratio': {
+        if (!(g.stage === 'lobby' || g.stage === 'assigned' || g.stage === 'result')) {
+          return this.reject(ws, att, op, 'not-allowed');
+        }
+        const r = msg.ratio;
+        if (!isValidRatio(r)) return this.reject(ws, att, op, 'bad-input');
+        this.commit({ ratio: { oni: r.oni, runner: r.runner } });
+        this.log('ratio', { at: now, data: { ratio: r } });
         break;
       }
       case 'clear': {
@@ -1216,6 +1244,7 @@ export class GameRoom extends DurableObject<Env> {
       counts: { oni: g.counts.oni, runner: g.counts.runner, total: this.activePeople().length, caught: this.caughtCount() },
       result: g.result,
       durations: g.durations,
+      ratio: g.ratio,
     };
   }
 

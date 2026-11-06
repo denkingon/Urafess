@@ -39,6 +39,7 @@ export function createPhone(): PhoneScreen {
     <div class="p-counts" data-k="counts"></div>
     <div class="p-word" data-k="word"></div>
     <div class="p-note" data-k="note"></div>
+    <div class="p-end u" data-k="end" hidden></div>
     <div class="slot" data-k="slot"></div>
   `;
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
@@ -51,6 +52,7 @@ export function createPhone(): PhoneScreen {
     counts: q('counts'),
     word: q('word'),
     note: q('note'),
+    end: q('end'),
   };
   setHTML(parts.offline, sent(['通信が切れている。タイマーはこのまま進む', 'Offline. The timer keeps running']));
   let last = '';
@@ -72,6 +74,11 @@ export function createPhone(): PhoneScreen {
       el.style.setProperty('--ground', rc ? mix(COLOR.yami, rc, UI.tint) : COLOR.yami);
       el.style.setProperty('--min', `${UI.minText}px`);
       parts.offline.hidden = !view.offline;
+
+      // 夜の最後：SEE YOU AGAIN だけを真ん中に出す（段階バー・絵・人数は隠す）
+      el.classList.toggle('is-ended', view.ended === true);
+      parts.end.hidden = view.ended !== true;
+      if (view.ended) parts.end.textContent = view.big;
 
       // 段階バー：配役・0:20・1:00・5:00・2:00・結果（時間は主催者が決めた長さ）
       const times = view.times.length === 4 ? view.times : DEFAULT_TIMES;
@@ -124,6 +131,7 @@ export function createPhone(): PhoneScreen {
 
 /** 主催者画面の大きい文字：数字は細め、漢字は1文字分で幅を見積もり、はみ出さない大きさにする */
 export function bigFontSize(text: string, width: number): number {
-  const em = [...text].reduce((sum, ch) => sum + (ch.charCodeAt(0) < 256 ? 0.62 : 1), 0);
+  // 英大文字（SEE YOU AGAIN など）は数字より幅広い。0.62 だと右にはみ出す
+  const em = [...text].reduce((sum, ch) => sum + (/[A-Z]/.test(ch) ? 0.8 : ch.charCodeAt(0) < 256 ? 0.62 : 1), 0);
   return Math.max(24, Math.min(104, Math.floor((width - 6) / Math.max(em, 1))));
 }

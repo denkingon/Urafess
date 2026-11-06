@@ -41,7 +41,12 @@ export interface PhoneView {
   /** 段階バーの時間（逃走開始まで〜広場に戻るまで。主催者が変えた長さ） */
   times: string[];
   paused: boolean;
+  /** 夜が終わった（SEE YOU AGAIN の画面）。古い呼び出し側は省略できる */
+  ended?: boolean;
 }
+
+/** 夜の最後の画面に出す言葉 */
+export const FAREWELL = 'SEE YOU AGAIN';
 
 /** 日本語と英語の組 */
 export type Pair = readonly [ja: string, en: string];
@@ -122,6 +127,11 @@ export function participantView(
     times: (game.timer?.durations ?? game.durations).map((d) => formatClock(d)),
     paused: false,
   };
+
+  // 夜の最後：入室している人にも、途中で外された人にも、同じ言葉を出す
+  if (game.stage === 'ended') {
+    return { ...base, step: 6, label: '', big: FAREWELL, message: '', ended: true, scene: 'home', counts: null };
+  }
 
   if (me.removed) {
     return {
@@ -254,6 +264,8 @@ export function hostStatus(game: GameView, serverNow: number): { title: string; 
       return { title: '配役前', big: `${game.counts.total}人`, next: '次：配役' };
     case 'assigned':
       return { title: '1 配役済み', big: `${game.counts.oni}/${game.counts.runner}`, next: '次：開始で「逃走開始まで」' };
+    case 'ended':
+      return { title: '夜は終わった', big: FAREWELL, next: '次：配役で再開／部屋を空にする' };
     case 'result':
       return {
         title: '6 結果発表',

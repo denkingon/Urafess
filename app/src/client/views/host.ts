@@ -1,6 +1,17 @@
 import { VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
-import { DURATION_MAX_MS, DURATION_MIN_MS, PHASES, START_LEAD_MS } from '../../shared/rules';
+import { allocateCounts } from '../../shared/allocate';
+import {
+  DEFAULT_RATIO,
+  DURATION_MAX_MS,
+  DURATION_MIN_MS,
+  isValidRatio,
+  PHASES,
+  RATIO_MAX,
+  RATIO_MIN,
+  ROLES,
+  START_LEAD_MS,
+} from '../../shared/rules';
 import { isDone, positionAt } from '../../shared/schedule';
 import { hostStatus } from '../../shared/viewmodel';
 import { bigFontSize } from './phone';
@@ -22,7 +33,7 @@ export interface HostInput {
 }
 
 export interface HostActions {
-  command(op: HostOp, extra?: { winner?: Winner; durations?: number[]; pid?: string; by?: string }): void;
+  command(op: HostOp, extra?: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string }): void;
   /** 1イベント＝1行の記録を CSV で保存する */
   downloadLog(): Promise<void>;
 }
@@ -68,6 +79,7 @@ export function createHost(actions: HostActions): HostScreen {
       <button type="button" data-op="win-oni">鬼の勝ち</button>
       <button type="button" data-op="win-runner">逃走者の勝ち</button>
       <button type="button" data-op="reset" class="wide">リセット（配役済みに戻す）</button>
+      <button type="button" data-op="end" class="wide">夜を終える（全員の画面を SEE YOU AGAIN に）</button>
       <button type="button" data-op="clear" class="wide">部屋を空にする（全員を外す）</button>
     </div>
     <details class="durations">
@@ -75,6 +87,15 @@ export function createHost(actions: HostActions): HostScreen {
       <form>
         ${PHASES.map((p, i) => `<label>${p.label}<input type="number" min="1" max="3600" step="1" data-i="${i}" inputmode="numeric">秒</label>`).join('')}
         <button type="submit">時間を変える</button>
+      </form>
+    </details>
+    <details class="ratio">
+      <summary>鬼と逃走者の割合</summary>
+      <form>
+        <label>鬼<input type="number" min="${RATIO_MIN}" max="${RATIO_MAX}" step="1" data-r="oni" inputmode="numeric"></label>
+        <label>逃走者<input type="number" min="${RATIO_MIN}" max="${RATIO_MAX}" step="1" data-r="runner" inputmode="numeric"></label>
+        <p class="note" data-k="ratioPreview"></p>
+        <button type="submit">割合を変える</button>
       </form>
     </details>
     <section class="cap-host" data-k="cap" hidden>
@@ -93,6 +114,33 @@ export function createHost(actions: HostActions): HostScreen {
   const inputs = [...el.querySelectorAll('.durations input')] as HTMLInputElement[];
   const form = el.querySelector('.durations form') as HTMLFormElement;
   let editingDurations = false;
+  const ratioInputs = [...el.querySelectorAll('.ratio input')] as HTMLInputElement[];
+  const ratioForm = el.querySelector('.ratio form') as HTMLFormElement;
+  let editingRatio = false;
+  let totalNow = 0;
+  const readRatio = () => ({
+    oni: Number(ratioInputs.find((i) => i.dataset.r === 'oni')!.value),
+    runner: Number(ratioInputs.find((i) => i.dataset.r === 'runner')!.value),
+  });
+  // いまの入室人数でこの割合だと、何人ずつになるか
+  const showPreview = () => {
+    const r = readRatio();
+    q('ratioPreview').textContent = isValidRatio(r)
+      ? totalNow > 0
+        ? `いま${totalNow}人なら 鬼 ${allocateCounts(totalNow, ROLES.map((x) => ({ ...x, weight: r[x.id] })))[0]}人・逃走者 ${allocateCounts(totalNow, ROLES.map((x) => ({ ...x, weight: r[x.id] })))[1]}人。次の配役（引き直しも）から効く`
+        : '次の配役（引き直しも）から効く'
+      : `${RATIO_MIN}〜${RATIO_MAX}の整数で入れる`;
+  };
+  ratioInputs.forEach((i) => {
+    i.addEventListener('focus', () => (editingRatio = true));
+    i.addEventListener('input', showPreview);
+  });
+  ratioForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    editingRatio = false;
+    const ratio = readRatio();
+    if (isValidRatio(ratio)) actions.command('ratio', { ratio });
+  });
 
   btn('csv').addEventListener('click', () => {
     const b = btn('csv');
@@ -126,6 +174,9 @@ export function createHost(actions: HostActions): HostScreen {
   btn('win-runner').addEventListener('click', () => actions.command('result', { winner: 'runner' }));
   btn('reset').addEventListener('click', () => {
     if (confirm('タイマーを止めて、配役済みに戻す。役はそのまま。よいか？')) actions.command('reset');
+  });
+  btn('end').addEventListener('click', () => {
+    if (confirm('夜を終える。全員の画面が SEE YOU AGAIN になる。配役で再開もできる。よいか？')) actions.command('end');
   });
   btn('clear').addEventListener('click', () => {
     if (confirm('参加者を全員外して、配役前に戻す。スマホは入室画面に戻り、入り直しになる。よいか？')) actions.command('clear');
@@ -168,6 +219,7 @@ export function createHost(actions: HostActions): HostScreen {
       q('dups').textContent = host.dupNames.length ? `${host.dupNames.length}組` : 'なし';
       q('foot').textContent =
         `時間：${PHASES.map((p, i) => `${p.label} ${fmt(game.durations[i])}`).join(' → ')}` +
+        `　／　割合 鬼${(game.ratio ?? DEFAULT_RATIO).oni}：逃走者${(game.ratio ?? DEFAULT_RATIO).runner}` +
         (host.waiting ? `　／　次の配役を待っている人 ${host.waiting}人` : '');
 
       const reject = q('reject');
@@ -176,9 +228,15 @@ export function createHost(actions: HostActions): HostScreen {
 
       const timer = game.timer;
       const done = game.stage === 'timer' && timer !== null && isDone(timer, serverNow);
-      const canAssign = game.stage === 'lobby' || game.stage === 'assigned' || game.stage === 'result' || done;
+      const canAssign = game.stage === 'lobby' || game.stage === 'assigned' || game.stage === 'result' || game.stage === 'ended' || done;
       btn('assign').textContent =
-        game.stage === 'assigned' ? '引き直し' : game.stage === 'result' || done ? '次のラウンド（配役）' : '配役';
+        game.stage === 'assigned'
+          ? '引き直し'
+          : game.stage === 'ended'
+            ? '再開（次のラウンドの配役）'
+            : game.stage === 'result' || done
+              ? '次のラウンド（配役）'
+              : '配役';
       setEnabled(btn('assign'), canAssign && host.total > 0, game.stage === 'lobby' || game.stage === 'result' || done);
       setEnabled(btn('start'), game.stage === 'assigned', game.stage === 'assigned');
       const running = game.stage === 'timer' && timer?.status === 'running' && !done;
@@ -192,6 +250,7 @@ export function createHost(actions: HostActions): HostScreen {
       btn('skip').textContent = goTo ? `次に進む → ${goTo}` : '次に進む';
       skipConfirm = phaseNow && phaseNow.index === GAME_PHASE ? `ゲームを終えて「${goTo}」へ進む。よいか？` : null;
       setEnabled(btn('skip'), !!phaseNow && phaseNow.remainingMs > START_LEAD_MS + 500, false);
+      setEnabled(btn('end'), game.stage !== 'ended' && (game.stage !== 'timer' || done), game.stage === 'result');
       setEnabled(btn('reset'), game.stage === 'timer', false);
       setEnabled(btn('clear'), (game.stage !== 'timer' || done) && host.total > 0, false);
       const canResult = game.stage === 'result' || done;
@@ -204,6 +263,16 @@ export function createHost(actions: HostActions): HostScreen {
         if (!editingDurations) input.value = String(Math.round(game.durations[i] / 1000));
       });
       (form.querySelector('button') as HTMLButtonElement).disabled = !canEditDurations;
+
+      const canEditRatio = canEditDurations;
+      const ratio = game.ratio ?? DEFAULT_RATIO;
+      totalNow = host.total;
+      ratioInputs.forEach((input) => {
+        input.disabled = !canEditRatio;
+        if (!editingRatio) input.value = String(ratio[input.dataset.r as 'oni' | 'runner']);
+      });
+      (ratioForm.querySelector('button') as HTMLButtonElement).disabled = !canEditRatio;
+      if (!editingRatio) showPreview();
 
       const cap = host.capture;
       q('cap').hidden = !cap || !(game.stage === 'timer' || game.stage === 'result');

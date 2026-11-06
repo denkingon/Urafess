@@ -86,6 +86,12 @@
 .player[data-role="caught"] .p-word, .player[data-role="caught"] .p-note { color: var(--tsuki-muted); }
 
 .player .gl { display: block; flex: 0 0 auto; }
+
+/* 夜の最後：SEE YOU AGAIN だけ */
+.player .p-end { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; text-align: center; font-size: clamp(calc(var(--min) * 1.2), 16vw, 88px); line-height: 1.1; letter-spacing: .04em; }
+.player .p-end[hidden] { display: none; }
+.player.is-ended .p-bar, .player.is-ended .p-pic, .player.is-ended .p-time, .player.is-ended .p-counts,
+.player.is-ended .p-word, .player.is-ended .p-note, .player.is-ended .slot { display: none; }
 /* もとの styles.css の、中の span を小さく灰色にする決まりを打ち消す（字は最低ラインより小さくしない） */
 .player .hold span, .player .cap-mic span, .player .cap-title span, .player .cap-cand span, .player .cap-prep span { font-size: inherit; color: inherit; opacity: 1; font-weight: inherit; }
 .player .slot { margin: 12px 0 0; }
