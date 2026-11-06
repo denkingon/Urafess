@@ -1,5 +1,5 @@
 import './styles.css';
-import { participantView } from '../shared/viewmodel';
+import { connectingView, participantView } from '../shared/viewmodel';
 import { GameClient, type KeyValueStore } from './core/game-client';
 import { detectInstall, lineEscapeUrl, type InstallPath } from './install/detect';
 import { getCodec } from './sound/codec';
@@ -190,10 +190,7 @@ function startPlayer(): void {
     }
     if (s.phase !== 'ready' || !s.game || !s.me) {
       show(phone.el);
-      phone.update({
-        round: '—', role: 'なし', step: 0, label: s.online ? 'つないでいる' : '通信を待っている',
-        big: '…', message: '', oni: '?', runners: '?', offline: !s.online, touch: 'none', caught: false,
-      });
+      phone.update(connectingView(s.online));
       return;
     }
     show(phone.el);

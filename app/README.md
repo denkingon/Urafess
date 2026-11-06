@@ -16,7 +16,9 @@
 | `src/server/` | Cloudflare Worker と Durable Object（1ゲーム＝1つ、SQLite に保存してから配る）。記録の CSV（`log.ts`） |
 | `src/client/core/` | しくみ：接続・つなぎ直し・時計合わせ・状態（見た目を知らない） |
 | `src/client/sound/` | 音：3桁を音にする・聞き取る（`codec.ts`、中身は [ggwave](https://github.com/ggerganov/ggwave)・MIT）、鳴らす（`emitter.ts`）、マイク（`listener.ts`） |
-| `src/client/views/` と `styles.css` | 見た目：キャンバスの Phone を写した仮の白黒。差し替えるのはここだけ。捕獲は `capture.ts`、音の試しは `lab.ts` |
+| `src/client/views/` と `styles.css` | 見た目。参加者の画面は `phone.ts`＋`player.css`（ルールのアニメと同じ枠）、捕獲は `capture.ts`、音の試しは `lab.ts`、主催者は `host.ts`（まだ仮の白黒） |
+| `src/client/ui.ts` | 参加者の画面の決め事（文字の最低ライン・言語・色）と、日本語・英語の言葉の出し方、小さい印 |
+| `src/client/picto/engine.js` | 裏フェス ピクトグラムの正本を写したもの（直すときは正本を直してから写す） |
 | `src/client/install/` と `views/install.ts` | ホーム画面への置き方の案内（端末の見分け・言葉なしの絵） |
 | `icon/` | アイコンの元の SVG（PNG は `src/client/public/` に書き出したもの） |
 | `test/` | 単体テスト（配役は1〜300人を全部確かめる。音の読み取り・捕獲の候補も） |
@@ -40,6 +42,17 @@
 捕獲を入れたときに2つ足した：`touch`（`oni`＝「捕まえた」の長押しを出す／`runner`＝「捕まった」を出す／`none`）と `caught`（自分が捕まった）。`runners` は試合中「残り5/7」の形になる。
 新しい見た目は `src/client/views/phone.ts` と `styles.css` を差し替えて、これを描けばいい。主催者画面は `views/host.ts`。
 捕獲の画面（長押し・候補・手動）は `views/capture.ts` で、`ClientState`（`me.claim` の候補、`notice` の知らせ、`roster` の一覧）から描く。
+
+### 参加者の画面（アニメと同じ枠）
+
+上＝段階バー（配役・0:20・1:00・5:00・2:00・結果。時間は主催者が決めた長さ）、真ん中＝いまやることのピクト、下＝残り時間（URAJI）と人数の印（鬼は角の頭、逃走者は点。捕まると白抜き。多いときは数字）、ひとこと。
+そのために `PhoneView` に足した：`scene`（ピクトの id）・`word`（ひとこと［日本語, 英語］）・`note`（大事なときだけの文）・`time`（大きい数字）・`unit`・`outcome`（自分の側の勝ち負け）・`counts`・`times`・`paused`。
+
+- 値はパレット「裏フェス 画面のパレット」 https://claude.ai/artifact/2uVdsAzPTMrhuJATQKsznX の既定（2026-11-06）。決めた値が来たら `ui.ts` と `player.css` を替える
+- **文字の最低ライン**：画面の中の字は全部 `--min`（16px）より小さくしない。URAJI は字の背が低い（字の高さ 0.7em）ので、URAJI の字は 1.2 倍（19.2px）を下限にする
+- **言語**：`UI.lang`（日本語＋英語が既定）。短い言葉は `say()`（英語は URAJI の大文字）、文は `sent()`（英語はゴシック）
+- 捕獲：鬼の板は朱に角の頭、逃走者の板は月白に両手を上げた人。鬼のマイクは、まだ一度も試していないうちは長押しの板の場所に点線の板で出す（試したあと、止まった・断られたときは小さくして、長押しの板も出す）
+- フォントは `public/fonts/URAJI-Black.woff2`（URAJI v0.2）。Service Worker の保存名は `urafess-v3` にした（フォントを保存し直す）
 
 ## 捕獲の記録
 

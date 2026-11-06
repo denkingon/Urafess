@@ -22,7 +22,29 @@ export interface PhoneView {
   touch: 'oni' | 'runner' | 'none';
   /** 自分が今の配役で捕まった */
   caught: boolean;
+
+  // ---- 見た目の層（アニメと同じ枠：上＝段階、真ん中＝絵、下＝時間と人数の印）が使う ----
+  /** 真ん中に出すピクトの id（裏フェス ピクトグラムの正本） */
+  scene: string;
+  /** ひとこと（日本語・英語） */
+  word: Pair | null;
+  /** 大事なときだけ出す文（誰に捕まった・一時停止・見学など） */
+  note: Pair | null;
+  /** 大きい数字（残り時間・待合室の人数）。出さないときは null */
+  time: string | null;
+  /** 数字の横に出す印 */
+  unit: 'person' | null;
+  /** 結果で、自分の側が勝ったか */
+  outcome: 'win' | 'lose' | null;
+  /** 人数の印（配役のあと） */
+  counts: { oni: number; runners: number; left: number } | null;
+  /** 段階バーの時間（逃走開始まで〜広場に戻るまで。主催者が変えた長さ） */
+  times: string[];
+  paused: boolean;
 }
+
+/** 日本語と英語の組 */
+export type Pair = readonly [ja: string, en: string];
 
 const MESSAGES: Record<'oni' | 'runner', string[]> = {
   // 配役, 逃走開始まで, 追跡開始まで, ゲーム, 広場に戻る
@@ -43,6 +65,25 @@ const MESSAGES: Record<'oni' | 'runner', string[]> = {
 };
 
 const WINNER_TEXT: Record<Winner, string> = { oni: '鬼の勝ち', runner: '逃走者の勝ち' };
+const WINNER_PAIR: Record<Winner, Pair> = { oni: ['鬼の勝ち', 'Chasers win'], runner: ['逃走者の勝ち', 'Runners win'] };
+
+/** 段階ごとの絵とひとこと（配役・逃走開始まで・追跡開始まで・ゲーム・広場に戻るまで） */
+const SCENES: Record<'oni' | 'runner', { scene: string; word: Pair }[]> = {
+  runner: [
+    { scene: 'runner', word: ['逃走者', 'RUNNER'] },
+    { scene: 'ready', word: ['待つ', 'WAIT'] },
+    { scene: 'run', word: ['逃げろ', 'RUN'] },
+    { scene: 'wall', word: ['隠れろ', 'HIDE'] },
+    { scene: 'gather', word: ['戻る', 'BACK'] },
+  ],
+  oni: [
+    { scene: 'chaser', word: ['鬼', 'CHASER'] },
+    { scene: 'ready', word: ['待つ', 'WAIT'] },
+    { scene: 'chaser', word: ['待つ', 'WAIT'] },
+    { scene: 'search', word: ['探せ', 'HUNT'] },
+    { scene: 'gather', word: ['戻る', 'BACK'] },
+  ],
+};
 
 export function participantView(
   game: GameView,
@@ -69,10 +110,24 @@ export function participantView(
     offline: !online,
     touch: 'none',
     caught: false,
+    scene: 'gather',
+    word: null,
+    note: null,
+    time: null,
+    unit: null,
+    outcome: null,
+    counts: assigned
+      ? { oni: game.counts.oni, runners: game.counts.runner, left: game.counts.runner - (game.counts.caught ?? 0) }
+      : null,
+    times: (game.timer?.durations ?? game.durations).map((d) => formatClock(d)),
+    paused: false,
   };
 
   if (me.removed) {
-    return { ...base, label: '参加していない', big: '—', message: '主催者に確認する。' };
+    return {
+      ...base, label: '参加していない', big: '—', message: '主催者に確認する。',
+      scene: 'quiet', word: ['参加していない', 'NOT IN'], note: ['主催者に確認する', 'Ask the host'], counts: null,
+    };
   }
 
   if (game.stage === 'lobby') {
@@ -81,6 +136,10 @@ export function participantView(
       label: '配役を待っている',
       big: `${game.counts.total}人`,
       message: '主催者が配役を始めるまで、そのまま待つ。',
+      scene: 'gather',
+      word: ['待つ', 'WAIT'],
+      time: String(game.counts.total),
+      unit: 'person',
     };
   }
 
@@ -94,13 +153,17 @@ export function participantView(
       label: '次の配役から参加',
       big: game.timer && step >= 2 && step <= 5 ? bigClock(game, serverNow) : '待機',
       message: 'このラウンドは見学。次の配役で役が決まる。',
+      scene: 'quiet',
+      word: ['見学', 'WATCH'],
+      note: ['次の配役から参加', 'You join from the next round'],
+      time: game.timer && step >= 2 && step <= 5 ? bigClock(game, serverNow) : null,
     };
   }
 
   const role = me.role as 'oni' | 'runner';
 
   if (game.stage === 'assigned') {
-    return { ...base, step: 1, label: 'あなたの役', big: roleName, message: MESSAGES[role][0] };
+    return { ...base, step: 1, label: 'あなたの役', big: roleName, message: MESSAGES[role][0], ...SCENES[role][0] };
   }
 
   if (game.stage === 'result') {
@@ -110,6 +173,10 @@ export function participantView(
       label: '結果発表',
       big: game.result ? WINNER_TEXT[game.result] : '発表待ち',
       message: '次のラウンドは配役から。',
+      scene: game.result ? 'result' : 'gather',
+      word: !game.result ? ['発表待ち', 'WAITING'] : game.result === role ? ['勝ち', 'WIN'] : ['負け', 'LOSE'],
+      note: game.result ? WINNER_PAIR[game.result] : null,
+      outcome: !game.result ? null : game.result === role ? 'win' : 'lose',
     };
   }
 
@@ -122,7 +189,10 @@ export function participantView(
   const open = captureOpenAt(timer, serverNow) || captureOpenAt(timer, serverNow - CLAIM_GRACE_MS);
   const touch: PhoneView['touch'] = !open ? 'none' : role === 'oni' ? 'oni' : caught ? 'none' : 'runner';
   if (pos.kind === 'done') {
-    return { ...base, step: 6, label: '結果発表', big: '発表待ち', message: '主催者の発表を待つ。', touch, caught };
+    return {
+      ...base, step: 6, label: '結果発表', big: '発表待ち', message: '主催者の発表を待つ。', touch, caught,
+      scene: 'gather', word: ['発表待ち', 'WAITING'],
+    };
   }
   const paused = timer.status === 'paused';
   const message = paused
@@ -138,6 +208,27 @@ export function participantView(
     message,
     touch,
     caught,
+    scene: caught ? 'jail' : SCENES[role][pos.index + 1].scene,
+    word: paused ? ['一時停止', 'PAUSED'] : caught ? ['捕まった', 'CAUGHT'] : SCENES[role][pos.index + 1].word,
+    note: paused
+      ? ['主催者の合図を待つ', 'Wait for the host']
+      : caught
+        ? me.caught?.byName
+          ? [`${me.caught.byName}に捕まった`, `Caught by ${me.caught.byName}`]
+          : ['その場の決まりに従う', 'Follow the rules on site']
+        : null,
+    time: formatClock(pos.remainingMs),
+    paused,
+  };
+}
+
+/** つないでいる間（まだ部屋の様子が来ていない）の画面 */
+export function connectingView(online: boolean): PhoneView {
+  return {
+    round: '—', role: 'なし', step: 0, label: online ? 'つないでいる' : '通信を待っている',
+    big: '…', message: '', oni: '?', runners: '?', offline: !online, touch: 'none', caught: false,
+    scene: 'gather', word: online ? ['つないでいる', 'CONNECTING'] : ['通信を待っている', 'OFFLINE'], note: null,
+    time: null, unit: null, outcome: null, counts: null, times: [], paused: false,
   };
 }
 
