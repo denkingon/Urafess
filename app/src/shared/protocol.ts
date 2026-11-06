@@ -112,9 +112,11 @@ export type ClientMsg =
   | { t: 'cmd'; op: HostOp; cv: number; winner?: Winner; durations?: number[]; pid?: string; by?: string }
   /**
    * 長押し。on=true は押し始め（HOLD_MIN_MS 押し続けたら送る）、false は離した。
-   * at はその瞬間のサーバー時刻の見積もり（押し始めは、指を置いた瞬間）
+   * at はその瞬間のサーバー時刻の見積もり（押し始めは、指を置いた瞬間）。
+   * 離したときの start は、どの長押しを離したか（押し始めの at）。resume は、つなぎ直したときに「押していない」と知らせるもの。
+   * replay は、切れていて届いたか分からない長押しの送り直し（サーバーは同じ押し始めを2回数えない。知らせも出さない）
    */
-  | { t: 'hold'; on: boolean; at?: number }
+  | { t: 'hold'; on: boolean; at?: number; start?: number; resume?: boolean; replay?: boolean }
   /** 鬼のマイクが、誰かの3桁を拾った */
   | { t: 'heard'; code: string }
   /** 逃走者が「捕まえたのは◯◯」を選んだ。manual＝並んだ候補ではなく、手動の一覧から選んだ */

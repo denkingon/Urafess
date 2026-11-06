@@ -32,6 +32,8 @@ export class SoundEmitter {
     if (!a || this.unlocked || this.want) return;
     this.silentUrl ??= URL.createObjectURL(wavBlob(new Float32Array(4800), 48_000));
     a.src = this.silentUrl;
+    // 今入っているのは無音。次に鳴らすときは、3桁の音を入れ直す
+    this.current = this.silentUrl;
     a.play()
       .then(() => {
         this.unlocked = true;

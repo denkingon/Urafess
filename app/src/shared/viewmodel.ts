@@ -64,7 +64,7 @@ export function participantView(
     runners: !assigned
       ? '?'
       : game.stage === 'timer' || game.stage === 'result'
-        ? `残り${game.counts.runner - game.counts.caught}/${game.counts.runner}`
+        ? `残り${game.counts.runner - (game.counts.caught ?? 0)}/${game.counts.runner}`
         : String(game.counts.runner),
     offline: !online,
     touch: 'none',
@@ -116,7 +116,8 @@ export function participantView(
   // stage === 'timer'
   const timer = game.timer!;
   const pos = positionAt(timer, serverNow);
-  const caught = role === 'runner' && me.caught !== null;
+  // 古いサーバー（捕獲の前の版）は caught を送らない。undefined も「捕まっていない」
+  const caught = role === 'runner' && me.caught != null;
   // 長押しはゲームの段階（終わった直後の少しを含む）だけ。捕まった人には出さない
   const open = captureOpenAt(timer, serverNow) || captureOpenAt(timer, serverNow - CLAIM_GRACE_MS);
   const touch: PhoneView['touch'] = !open ? 'none' : role === 'oni' ? 'oni' : caught ? 'none' : 'runner';

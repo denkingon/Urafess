@@ -327,13 +327,19 @@ describe('捕獲の記録（機械テスト）', () => {
     await expectCaught(V, A, 'near', '前後');
     reports.push(`前後に長押し：重なっていなくても ${(near.gapMs! / 1000).toFixed(1)}秒差の鬼が候補に出る`);
 
-    // 5. 逃走者が手動で選ぶ（長押しなし）
+    // 5. 逃走者が手動で選ぶ。「捕まった」を長押しする前は、鬼の一覧は空（役が分からないように）
     U.client.requestRoster();
-    await waitFor('U に鬼の一覧', () => (U.client.state.roster?.people.length ?? 0) === oni.length);
+    await waitFor('長押し前の U には空の一覧', () => U.client.state.roster !== null);
+    expect(U.client.state.roster!.people).toEqual([]);
+    await hold(U, 800);
+    await waitFor('U の「捕まった」が開く', () => claimOf(U) !== null);
+    const rosterSeq = U.client.state.roster!.seq;
+    U.client.requestRoster();
+    await waitFor('U に鬼の一覧', () => U.client.state.roster!.seq > rosterSeq && U.client.state.roster!.people.length === oni.length);
     expect(new Set(U.client.state.roster!.people.map((p) => p.pid))).toEqual(new Set(oni.map(pidOf)));
     U.client.answer(pidOf(C), true);
     await expectCaught(U, C, 'manual', '手動');
-    reports.push('逃走者の手動：一覧は鬼だけ。長押しなしで選んでも記録（手動）');
+    reports.push('逃走者の手動：長押しする前は一覧が空。長押ししたあとの一覧は鬼だけで、そこから選ぶと記録（手動）');
 
     // 6. 鬼が手動で選ぶ → その逃走者の候補に出る → 逃走者が選ぶ
     D.client.requestRoster();
@@ -359,6 +365,37 @@ describe('捕獲の記録（機械テスト）', () => {
     S.client.holdEnd(S.now());
     await waitFor('切れても：S の候補に A（同時）', () => claimOf(S)?.cands.some((c) => c.pid === pidOf(A) && c.together) === true, 30_000);
     reports.push('長押しの途中で回線が切れても、つなぎ直した端末が押し始めを送り直し、同じ長押しとして候補が出る');
+
+    // 7b. 送ったはずの長押しが、回線が切れて届かなかった → つなぎ直したときに送り直され、1回だけ数えられる
+    const R = runners.find((r, i) => i >= 8 && bots.indexOf(r) % 2 === 1) ?? runners[10];
+    const rStart = R.now();
+    const aHold2 = hold(A, 3_000);
+    await sleep(300);
+    R.client.holdStart(rStart);
+    await sleep(1_000);
+    R.client.holdEnd(R.now());
+    R.sockets.at(-1)!.kill();
+    await aHold2;
+    await waitFor('届かなかった長押し：R の候補に A（同時）', () => claimOf(R)?.cands.some((c) => c.pid === pidOf(A) && c.together) === true, 30_000);
+    const rHolds = ((await debug()) as unknown as { holds: Record<string, { start: number }[]> }).holds[pidOf(R)] ?? [];
+    expect(rHolds).toHaveLength(1);
+    reports.push('長押しの途中で送った知らせが回線ごと消えても、つなぎ直したときに送り直され、長押しは1回だけ数えられた');
+
+    // 7c. 「離した」が届かないまま長く切れていた鬼の長押しは、押し始めから8秒で離したとみなす（ずっと押していたことにしない）
+    const E = oni[4];
+    const eStart = E.now();
+    await sleep(500);
+    E.client.holdStart(eStart);
+    await sleep(10_000);
+    E.sockets.at(-1)!.kill();
+    E.client.holdEnd(E.now());
+    await waitFor('E がつなぎ直す', () => E.client.state.online && E.sockets.at(-1)!.readyState === 1, 30_000);
+    await sleep(1_000);
+    const eHolds = ((await debug()) as unknown as { holds: Record<string, { start: number; end: number | null }[]> }).holds[pidOf(E)] ?? [];
+    const eLast = eHolds.at(-1)!;
+    expect(eLast.end).not.toBeNull();
+    expect(eLast.end! - eLast.start).toBe(8_000);
+    reports.push('「離した」が届かないまま10秒切れていた鬼の長押しは、押し始めから8秒で離したとみなした（関係ない逃走者に「同時」で出ない）');
 
     // 8. 答え待ちのままサーバーが再起動しても、候補は残る
     await stopServer();

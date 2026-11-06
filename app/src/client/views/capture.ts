@@ -50,7 +50,10 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       <p class="cap-title">捕まえたのは？<span>押した人が記録される</span></p>
       <div class="cap-grid" data-k="grid"></div>
       <p class="cap-wait" data-k="wait">鬼が近くで長押しすると、ここに出る。</p>
-      <div class="cap-row"><button type="button" class="ghost" data-act="cancel">やめる（押し間違い）</button></div>
+      <div class="cap-row">
+        <button type="button" class="ghost" data-act="manual">手動で選ぶ</button>
+        <button type="button" class="ghost" data-act="cancel">やめる（押し間違い）</button>
+      </div>
     </div>
     <div class="cap-lock" data-k="lock" hidden><b data-k="lockName"></b><span>離してOK。相手が選ぶと記録される。</span></div>
     <div class="cap-prep" data-k="prep" hidden><span data-k="prepText"></span><button type="button" class="ghost" data-act="prep" data-k="prepBtn"></button></div>
@@ -59,7 +62,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       <b data-k="holdLabel"></b><span data-k="holdSub"></span>
     </button>
     <div class="cap-row cap-foot" data-k="foot" hidden>
-      <button type="button" class="ghost" data-act="manual">手動で選ぶ</button>
+      <button type="button" class="ghost" data-act="manual" data-k="footManual">手動で選ぶ</button>
       <span class="cap-status" data-k="status"></span>
     </div>
     <div class="sheet" data-k="sheet" hidden>
@@ -92,6 +95,8 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
   let lastCandsKey = '';
   let lastSheetSeq = -1;
   const sentCodes = new Map<string, number>();
+  /** 押した候補と、押した時刻（効いたか分からないまま6秒たったら、押せる見た目に戻す） */
+  const sentCands = new Map<string, number>();
 
   const showToast = (text: string) => {
     toast.textContent = text;
@@ -164,22 +169,52 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
 
   // ---------- 押すボタン ----------
 
+  const choose = (t: HTMLElement) => {
+    const pid = t.dataset.pid!;
+    if (t.closest('[data-k="sheet"]')) {
+      if (role === '鬼') {
+        client.nominate(pid);
+      } else {
+        client.answer(pid, true);
+      }
+      sheet.hidden = true;
+    } else {
+      client.answer(pid);
+      t.classList.add('is-sent');
+      sentCands.set(pid, Date.now());
+    }
+  };
+
+  // 候補は、指を離した瞬間（pointerup）に選ぶ。「捕まった」を長押ししたまま別の指で押すと、ブラウザは click を出さないため
+  const downOn = new Map<number, HTMLElement>();
+  let chosenAt = 0;
+  el.addEventListener(
+    'pointerdown',
+    (e) => {
+      const t = (e.target as HTMLElement).closest('[data-pid]') as HTMLElement | null;
+      if (t) downOn.set(e.pointerId, t);
+    },
+    true,
+  );
+  el.addEventListener(
+    'pointerup',
+    (e) => {
+      const t = downOn.get(e.pointerId);
+      downOn.delete(e.pointerId);
+      if (!t || (e.target as HTMLElement).closest('[data-pid]') !== t) return;
+      chosenAt = Date.now();
+      choose(t);
+    },
+    true,
+  );
+  el.addEventListener('pointercancel', (e) => downOn.delete(e.pointerId), true);
+
   el.addEventListener('click', (e) => {
     const t = (e.target as HTMLElement).closest('[data-act], [data-pid]') as HTMLElement | null;
     if (!t) return;
-    const pid = t.dataset.pid;
-    if (pid) {
-      if (t.closest('[data-k="sheet"]')) {
-        if (role === '鬼') {
-          client.nominate(pid);
-        } else {
-          client.answer(pid, true);
-        }
-        sheet.hidden = true;
-      } else {
-        client.answer(pid);
-        t.classList.add('is-sent');
-      }
+    if (t.dataset.pid) {
+      // pointerup で選んだ直後の click は同じ操作（キーボードなど pointerup の無い操作だけ、ここで選ぶ）
+      if (Date.now() - chosenAt > 800) choose(t);
       return;
     }
     switch (t.dataset.act) {
@@ -290,14 +325,23 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       const cands = q('cands');
       cands.hidden = !claim;
       if (claim) {
+        // 押したのに6秒たっても記録されない（電波が切れていた等）候補は、押せる見た目に戻す
+        for (const [pid, at] of sentCands) {
+          if (Date.now() - at > 6_000) {
+            sentCands.delete(pid);
+            lastCandsKey = '';
+          }
+        }
         const key = JSON.stringify(claim.cands);
         if (key !== lastCandsKey) {
           lastCandsKey = key;
           renderGrid(grid, claim.cands.map((c) => ({ ...c, tags: TAGS(c) })));
+          for (const b of grid.querySelectorAll<HTMLElement>('[data-pid]')) b.classList.toggle('is-sent', sentCands.has(b.dataset.pid!));
         }
         q('wait').hidden = claim.cands.length > 0;
       } else {
         lastCandsKey = '';
+        sentCands.clear();
       }
 
       // 手動の一覧
@@ -311,7 +355,9 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
 
       // 長押しボタン
       hold.hidden = mode === 'none';
-      q('foot').hidden = mode === 'none' && !claim;
+      q('foot').hidden = mode === 'none';
+      // 手動の一覧：鬼はゲームの間いつでも。逃走者は「捕まった」を長押ししたあと（候補の枠の中）だけ
+      q('footManual').hidden = mode !== 'oni';
       if (mode === 'oni') {
         q('holdLabel').textContent = holding ? '聞いている…' : '捕まえた';
         q('holdSub').textContent = holding ? '相手のスマホに近づける' : '長押し';

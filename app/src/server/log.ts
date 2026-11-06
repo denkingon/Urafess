@@ -109,6 +109,8 @@ export function jst(ms: number): string {
 }
 
 function cell(v: unknown): string {
-  const s = String(v);
+  let s = String(v);
+  // 名前などが = + - @ で始まると、Excel が数式として動かしてしまう。頭に ' を付けて文字のまま見せる
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }

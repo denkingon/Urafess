@@ -23,6 +23,8 @@ import {
   DURATION_MIN_MS,
   EVIDENCE_VALID_MS,
   HEARTBEAT_EVERY_MS,
+  HOLD_MAX_MS,
+  HOLD_UNKNOWN_END_MS,
   NAME_MAX_LENGTH,
   PHASES,
   ROLES,
@@ -127,8 +129,8 @@ type ParticipantRow = {
 
 const LOBBY_BROADCAST_MS = 300;
 const HOST_UPDATE_MS = 500;
-/** 押した時刻として受け付けるのは、届いた時刻からこれだけ前まで（電波の詰まりで遅れて届く分） */
-const PRESS_MAX_DELAY_MS = 15_000;
+/** 押した時刻として受け付けるのは、届いた時刻からこれだけ前まで（電波の詰まり・つなぎ直しの送り直しで遅れて届く分） */
+const PRESS_MAX_DELAY_MS = 60_000;
 /** 同じ鬼が同じ音を何度も聞き取ったとき、記録し直すまでの間隔（逃走者のスマホは繰り返し鳴らす） */
 const HEARD_DEDUPE_MS = 5_000;
 /** 押している途中に届いた「押し始め」が、前の押し始めとこれだけしか違わなければ、つなぎ直しの送り直し（同じ長押し） */
@@ -274,6 +276,18 @@ export class GameRoom extends DurableObject<Env> {
         caughtVia: (r.caught_via as CaptureVia | null) ?? null,
         ua: r.ua ?? null,
       });
+    }
+    // 捕獲を入れる前の版で配役した部屋（公開の瞬間に試合中だった等）は、3桁が無い。ここで配る
+    if (this.game.assignId > 0) {
+      const missing = [...this.people.values()].filter((p) => !p.removed && p.assignId === this.game.assignId && p.role && !p.code);
+      if (missing.length) {
+        const used = new Set([...this.people.values()].map((p) => p.code));
+        const pool = pickCodes(900).filter((c) => !used.has(c));
+        missing.forEach((p, i) => {
+          p.code = pool[i] ?? null;
+          this.sql.exec(`UPDATE participants SET code = ? WHERE pid = ?`, p.code, p.pid);
+        });
+      }
     }
     this.claims.clear();
     for (const r of this.sql.exec<{ pid: string; assign_id: number; at: number }>(`SELECT * FROM claims`)) {
@@ -497,7 +511,7 @@ export class GameRoom extends DurableObject<Env> {
         await this.ensureHeartbeat();
         return;
       case 'hold':
-        this.onHold(att, msg.on === true, msg.at, now);
+        this.onHold(att, msg, now);
         return;
       case 'heard':
         this.onHeard(att, msg.code, now);
@@ -680,55 +694,76 @@ export class GameRoom extends DurableObject<Env> {
     return c;
   }
 
-  /** 長押し（押し始め・離した） */
-  private onHold(att: Attachment, on: boolean, rawAt: unknown, now: number): void {
+  /** 長押し（押し始め・離した）。送り直し・順番の入れ替わり・届かなかった「離した」に耐える */
+  private onHold(att: Attachment, msg: Extract<ClientMsg, { t: 'hold' }>, now: number): void {
     const p = this.inRound(att.pid);
     if (!p) return;
-    const at = this.pressAt(rawAt, now);
-    if (!on) {
-      this.endHold(p.pid, at, 'release');
+    const at = this.pressAt(msg.at, now);
+    if (msg.on !== true) {
+      const start = Number(msg.start);
+      if (Number.isFinite(start)) {
+        // どの長押しを離したかが分かる：その長押しだけを閉じる（もう閉じていれば何もしない）
+        this.endHold(p.pid, at, 'release', start);
+      } else {
+        // 押し始めの分からない「離した」（つなぎ直したとき・古い画面）：開いている長押しがあれば閉じる
+        this.endHold(p.pid, at, msg.resume ? 'resume' : 'release');
+      }
       return;
     }
-    const list = this.holds.get(p.pid) ?? [];
-    const last = list[list.length - 1];
-    if (last && last.end === null && last.assignId === this.game.assignId) {
-      if (Math.abs(at - last.start) <= HOLD_SAME_MS) {
-        // 押している途中の「押し始め」がもう一度届いた（つなぎ直し）。同じ長押しのまま
-        this.sendSnapTo([p.pid]);
+    const list = this.holdsOf(p.pid);
+    const same = list.find((h) => Math.abs(h.start - at) <= HOLD_SAME_MS);
+    if (same) {
+      // 同じ押し始めの送り直し。2回数えない。
+      // 「まだ押している」の送り直し（replay でない）なのに、切断で閉じてしまっていたら、押している途中に戻す
+      if (!msg.replay && same.end !== null && !this.isCaught(p)) {
+        same.end = null;
+        this.sql.exec(`UPDATE holds SET end = NULL WHERE id = ?`, same.id);
+        this.log('hold', { p, at, data: { on: true, reopen: true } });
+        this.sendSnapTo(p.role === 'oni' ? [p.pid, ...this.openRunners(now)] : [p.pid]);
         return;
       }
-      // 前の「離した」が届かないまま、新しく押した。前の長押しは、新しく押した瞬間までとみなす
-      this.endHold(p.pid, at, 'lost');
+      this.sendSnapTo([p.pid]);
+      return;
     }
+    // 前の「離した」が届かないまま、新しく押した。前の長押しは、離した瞬間が分からないものとして閉じる
+    if (list.some((h) => h.end === null)) this.endHold(p.pid, at, 'lost');
     if (this.isCaught(p)) {
-      this.notify(p.pid, 'already');
+      if (!msg.replay) this.notify(p.pid, 'already');
       this.sendSnapTo([p.pid]);
       return;
     }
     if (!this.pressOpen(at)) {
-      this.notify(p.pid, 'closed');
+      if (!msg.replay) this.notify(p.pid, 'closed');
       return;
     }
     this.sql.exec(`INSERT INTO holds (pid, assign_id, start, end) VALUES (?, ?, ?, NULL)`, p.pid, this.game.assignId, at);
     const id = this.sql.exec<{ id: number }>(`SELECT last_insert_rowid() AS id`).one().id;
     // 古い長押しは候補の計算に使わないので、手元には最近の分だけ持つ
-    const keep = list.filter((h) => h.assignId === this.game.assignId && now - (h.end ?? now) <= CLAIM_OPEN_MS + CLAIM_PAIR_WINDOW_MS);
+    const keep = list.filter((h) => now - (h.end ?? now) <= CLAIM_OPEN_MS + CLAIM_PAIR_WINDOW_MS);
     keep.push({ id, assignId: this.game.assignId, start: at, end: null });
     this.holds.set(p.pid, keep.slice(-8));
-    this.log('hold', { p, at, data: { on: true, lagMs: now - at } });
+    this.log('hold', { p, at, data: { on: true, lagMs: now - at, replay: msg.replay === true } });
     if (p.role === 'runner' && !this.liveClaim(p.pid, now)) this.openClaim(p, at);
     // 鬼の長押しは、答え待ちの逃走者全員の候補を変えうる
     this.sendSnapTo(p.role === 'oni' ? [p.pid, ...this.openRunners(now)] : [p.pid]);
   }
 
-  private endHold(pid: string, at: number, reason: 'release' | 'disconnect' | 'lost' | 'resume'): void {
+  /**
+   * 長押しを閉じる。start を渡したらその押し始めの長押しだけ、渡さなければ開いている最後の長押し。
+   * 離した瞬間が分からない閉じ方（切断・つなぎ直し・届かなかった）は、押し始めから HOLD_UNKNOWN_END_MS までとみなす
+   * （長い切断のあいだ「ずっと押していた」ことにして、関係ない逃走者に「同時」で出ないように）
+   */
+  private endHold(pid: string, at: number, reason: 'release' | 'capture' | 'disconnect' | 'lost' | 'resume', start?: number): void {
     const list = this.holds.get(pid);
-    const last = list?.[list.length - 1];
-    if (!last || last.end !== null) return;
-    last.end = Math.max(last.start, at);
-    this.sql.exec(`UPDATE holds SET end = ? WHERE id = ?`, last.end, last.id);
+    if (!list) return;
+    const open = list.filter((h) => h.end === null && h.assignId === this.game.assignId);
+    const h = start === undefined ? open[open.length - 1] : open.find((x) => Math.abs(x.start - start) <= HOLD_SAME_MS);
+    if (!h) return;
+    const known = reason === 'release' || reason === 'capture';
+    h.end = Math.max(h.start, Math.min(at, h.start + (known ? HOLD_MAX_MS : HOLD_UNKNOWN_END_MS)));
+    this.sql.exec(`UPDATE holds SET end = ? WHERE id = ?`, h.end, h.id);
     const p = this.people.get(pid) ?? null;
-    this.log('hold', { p, at: last.end, data: { on: false, ms: last.end - last.start, reason } });
+    this.log('hold', { p, at: h.end, data: { on: false, ms: h.end - h.start, reason } });
     const now = Date.now();
     this.sendSnapTo(p?.role === 'oni' ? [pid, ...this.openRunners(now)] : [pid]);
   }
@@ -768,11 +803,16 @@ export class GameRoom extends DurableObject<Env> {
     return ev;
   }
 
-  /** 手動で選ぶための一覧（頼んだ本人にだけ） */
+  /**
+   * 手動で選ぶための一覧（頼んだ本人にだけ）。鬼はゲームの段階の間、逃走者は「捕まった」を長押しして選んでいる間だけ。
+   * それ以外のときに鬼の顔ぶれ（役）が分かってしまわないように
+   */
   private onRoster(ws: WebSocket, att: Attachment): void {
     const p = this.inRound(att.pid);
     const g = this.game;
-    if (!p || (g.stage !== 'timer' && g.stage !== 'result') || this.isCaught(p)) {
+    const now = Date.now();
+    const allowed = !!p && !this.isCaught(p) && (p.role === 'oni' ? this.pressOpen(now) : this.liveClaim(p.pid, now) !== null);
+    if (!p || !allowed || (g.stage !== 'timer' && g.stage !== 'result')) {
       this.send(ws, { t: 'roster', people: [] });
       return;
     }
@@ -882,7 +922,7 @@ export class GameRoom extends DurableObject<Env> {
     this.claims.delete(runner.pid);
     this.evidence.delete(runner.pid);
     // 捕まった人が押したまま記録されたら、その長押しはここで終わり
-    this.endHold(runner.pid, Date.now(), 'release');
+    this.endHold(runner.pid, Date.now(), 'capture');
     this.notify(runner.pid, 'caught', oni ?? undefined, via);
     if (oni) this.notify(oni.pid, 'captured', runner, via);
     this.broadcastNow();

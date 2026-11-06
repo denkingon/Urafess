@@ -47,8 +47,11 @@ export class SoundListener {
       return;
     }
     this.state = 'starting';
+    let stream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      // 音の部品を先に読み込む（失敗してもマイクを開けたままにしない）
+      const codec = await getCodec();
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
       });
       this.unlock();
@@ -59,7 +62,6 @@ export class SoundListener {
         return;
       }
       if (ctx.state === 'suspended') await ctx.resume().catch(() => undefined);
-      const codec = await getCodec();
       this.decoder?.free();
       this.decoder = codec.decoder(ctx.sampleRate);
       const source = ctx.createMediaStreamSource(stream);
@@ -76,6 +78,7 @@ export class SoundListener {
       this.sink = sink;
       this.state = 'ready';
     } catch (e) {
+      if (stream && this.stream !== stream) stream.getTracks().forEach((t) => t.stop());
       const name = (e as { name?: string }).name;
       this.state = name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'error';
     }

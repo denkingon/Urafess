@@ -67,8 +67,11 @@ export const NAME_MAX_LENGTH = 20;
 /** 長押しとみなすまでの時間。これより短く離したら何もしない（押し間違い・ポケットの中） */
 export const HOLD_MIN_MS = 500;
 
-/** 押しっぱなしのまま「離した」が届かなかったとき（電波切れ等）、この長さで離したとみなす */
-export const HOLD_MAX_MS = 60_000;
+/** 長押しの長さの上限。押しっぱなしのまま「離した」が届かない長押しも、ここで離したとみなす */
+export const HOLD_MAX_MS = 30_000;
+
+/** 離した瞬間が分からない長押し（切断・「離した」が届かなかった）は、押し始めからこの長さで離したとみなす */
+export const HOLD_UNKNOWN_END_MS = 8_000;
 
 /** 重なっていなくても、前後この時間に長押しした鬼は候補に出す */
 export const CLAIM_PAIR_WINDOW_MS = 20_000;

@@ -141,6 +141,7 @@ function sessionSet(k: string, v: string): void {
 
 function startPlayer(): void {
   const client = makeClient({ kind: 'player' });
+  startUpdateChecks(() => !(client.state.phase === 'ready' && inMatch(client.state.game?.stage)));
   const join = createJoin((name) => client.join(name));
   const phone = createPhone();
   // 捕獲：逃走者のスマホは長押しの間3桁を鳴らし、鬼のスマホはマイクで聞く
@@ -156,8 +157,8 @@ function startPlayer(): void {
   document.addEventListener('pointerup', unlock, { capture: true, passive: true });
   document.addEventListener('click', unlock, { capture: true, passive: true });
   let preparedCode: string | null = null;
-  // 試験用（?debug=1 のときだけ）：ヘッドレスのブラウザから音の波形を取り出して、もう一方の偽マイクに流すため
-  if (params.get('debug') === '1') {
+  // 試験用（?debug=1 で、本番の部屋 main 以外のときだけ）：ヘッドレスのブラウザから音の波形を取り出して、もう一方の偽マイクに流すため
+  if (params.get('debug') === '1' && (gameId !== 'main' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
     (window as unknown as { __urafess?: unknown }).__urafess = {
       client,
       emitter,
@@ -228,6 +229,7 @@ function startLab(): void {
 
 function startHost(token: string): void {
   const client = makeClient({ kind: 'host', token });
+  startUpdateChecks(() => !inMatch(client.state.game?.stage));
   const host = createHost({
     command: (op, extra) => client.command(op, extra),
     downloadLog: async () => {
@@ -316,6 +318,63 @@ function loop(render: () => void | false): void {
   };
   requestAnimationFrame(frame);
   // 画面が裏にある間は requestAnimationFrame が止まるが、戻った瞬間に正しい値で描き直す
+}
+
+/**
+ * 新しい版が公開されていたら、試合中でないときに読み込み直す。
+ * Service Worker は保存しておいた画面を先に返すので、何もしないと公開後に1回目に開いたときは古い版のまま動く。
+ * - 新しい Service Worker に切り替わったとき（sw.js が変わった公開）
+ * - 開いたとき・画面に戻ったとき（最大1分に1回）、保存していない最新の index.html と、今動いている画面の版を比べる
+ * 試合中（配役〜タイマー）は読み込み直さない。同じ版のために2回は読み込み直さない（読み込みが回り続けないように）
+ */
+function startUpdateChecks(idle: () => boolean): void {
+  if (!('serviceWorker' in navigator) || location.hostname === 'localhost') return;
+  const running = document.querySelector<HTMLScriptElement>('script[type="module"][src]')?.getAttribute('src') ?? null;
+  const reloadIfIdle = (version: string) => {
+    if (!idle()) return;
+    try {
+      if (sessionStorage.getItem('urafess:reloaded-for') === version) return;
+      sessionStorage.setItem('urafess:reloaded-for', version);
+    } catch {
+      // 保存できない端末でも読み込み直す
+    }
+    location.reload();
+  };
+  // 初めて開いたとき（まだ Service Worker が無かった）の切り替わりでは読み込み直さない。入室の途中で画面が消えないように
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) reloadIfIdle('sw');
+  });
+  let lastCheck = 0;
+  const check = async () => {
+    if (!running || !navigator.serviceWorker.controller || !navigator.onLine || Date.now() - lastCheck < 60_000) return;
+    lastCheck = Date.now();
+    try {
+      const res = await fetch('/index.html', { cache: 'no-store' });
+      if (!res.ok) return;
+      const html = await res.text();
+      const latest = /<script[^>]*type="module"[^>]*src="([^"]+)"/.exec(html)?.[1] ?? /<script[^>]*src="([^"]+)"[^>]*type="module"/.exec(html)?.[1];
+      if (!latest || latest === running) return;
+      // 保存してある画面を新しいものに差し替えてから読み込み直す（保存場所の名前は sw.js が版ごとに変えるので、名前を決め打ちしない）
+      const names = (await caches.keys()).filter((k) => k.startsWith('urafess-'));
+      await Promise.all(
+        names.map(async (n) =>
+          (await caches.open(n)).put('/index.html', new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })),
+        ),
+      );
+      reloadIfIdle(latest);
+    } catch {
+      // 通信が無い。次に画面に戻ったときにまた確かめる
+    }
+  };
+  window.addEventListener('load', () => void check());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void check();
+  });
+  // 待合室で開きっぱなしの画面も、ときどき確かめる
+  setInterval(() => {
+    if (idle()) void check();
+  }, 5 * 60_000);
 }
 
 function registerServiceWorker(): void {

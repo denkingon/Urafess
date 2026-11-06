@@ -31,12 +31,18 @@ let loading: Promise<GgwaveModule> | null = null;
 
 /** ggwave を読み込む（1回だけ）。encode のたびに出る printf は捨てる */
 export function loadGgwave(): Promise<GgwaveModule> {
-  loading ??= import('ggwave').then(async (m) => {
-    const factory = (m as unknown as { default?: typeof m.default }).default ?? (m as unknown as typeof m.default);
-    const g = await factory({ print: () => undefined, printErr: () => undefined });
-    g.disableLog();
-    return g;
-  });
+  loading ??= import('ggwave')
+    .then(async (m) => {
+      const factory = (m as unknown as { default?: typeof m.default }).default ?? (m as unknown as typeof m.default);
+      const g = await factory({ print: () => undefined, printErr: () => undefined });
+      g.disableLog();
+      return g;
+    })
+    .catch((e: unknown) => {
+      // 読み込みに失敗したら（配役の瞬間に全員が取りに来て通信が詰まった等）、次に呼ばれたときにまた取りに行く
+      loading = null;
+      throw e;
+    });
   return loading;
 }
 
@@ -44,7 +50,12 @@ let codecPromise: Promise<SoundCodec> | null = null;
 
 /** 画面から使う1つだけの SoundCodec（ggwave は1回だけ読み込む） */
 export function getCodec(): Promise<SoundCodec> {
-  codecPromise ??= loadGgwave().then((g) => new SoundCodec(g));
+  codecPromise ??= loadGgwave()
+    .then((g) => new SoundCodec(g))
+    .catch((e: unknown) => {
+      codecPromise = null;
+      throw e;
+    });
   return codecPromise;
 }
 
