@@ -290,13 +290,15 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
         nm.className = 'nm';
         const name = document.createElement('b');
         name.textContent = p.name;
-        const small = document.createElement('small');
+        // 番号は出さない（名前は名簿で1人1つ）
         const tags = p.tags ?? [];
-        small.innerHTML = sent([
-          [`${p.num}番`, ...tags].join('・'),
-          [`#${p.num}`, ...tags.map((t) => TAG_EN[t] ?? t)].join(' · '),
-        ]);
-        nm.append(name, small);
+        if (tags.length) {
+          const small = document.createElement('small');
+          small.innerHTML = sent([tags.join('・'), tags.map((t) => TAG_EN[t] ?? t).join(' · ')]);
+          nm.append(name, small);
+        } else {
+          nm.append(name);
+        }
         b.append(icon.firstElementChild ?? icon, nm);
         return b;
       }),
@@ -309,8 +311,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
     const n = state.notice;
     if (!n || n.seq === lastNotice) return;
     lastNotice = n.seq;
-    const who = n.other ? `${n.other.name}（${n.other.num}番）` : '';
-    const whoEn = n.other ? `${n.other.name} (#${n.other.num})` : '';
+    const who = n.other ? n.other.name : '';
     switch (n.kind) {
       case 'heard':
         (q('lockName') as HTMLElement).textContent = who;
@@ -322,15 +323,15 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
         return;
       case 'captured':
         lock.hidden = true;
-        showToast([`${who}を捕まえた`, `Caught ${whoEn}`]);
+        showToast([`${who}を捕まえた`, `Caught ${who}`]);
         vibrate([80, 60, 80]);
         return;
       case 'caught':
-        showToast(n.other ? [`${who}に捕まった`, `Caught by ${whoEn}`] : ['捕まった（主催者の記録）', 'Caught (recorded by the host)']);
+        showToast(n.other ? [`${who}に捕まった`, `Caught by ${who}`] : ['捕まった（主催者の記録）', 'Caught (recorded by the host)']);
         vibrate(200);
         return;
       case 'nominated':
-        showToast([`${who}に選んでもらう`, `Waiting for ${whoEn} to pick you`]);
+        showToast([`${who}に選んでもらう`, `Waiting for ${who} to pick you`]);
         return;
       case 'released':
         showToast(['主催者が捕獲を取り消した', 'The host undid the catch']);
@@ -339,7 +340,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
         showToast(['今は記録できない（ゲーム中だけ）', 'You can only record during the game']);
         return;
       case 'already':
-        showToast(n.other ? [`${who}はもう捕まっている`, `${whoEn} is already caught`] : ['もう捕まっている', 'Already caught']);
+        showToast(n.other ? [`${who}はもう捕まっている`, `${who} is already caught`] : ['もう捕まっている', 'Already caught']);
         return;
     }
   };

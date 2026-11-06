@@ -117,5 +117,17 @@ describe('夜を終える', () => {
     host.command('assign');
     await waitFor('再開', () => host.state.game?.stage === 'assigned' && players.every((p) => p.state.me?.role));
     expect(host.state.game?.round).toBe(2);
+
+    // 終えた夜から新しい夜を始める：名簿は残るので、全員に名前のボタン（known）が出て、押すと同じ人のまま入る
+    host.command('end');
+    await waitFor('もう一度終える', () => host.state.game?.stage === 'ended');
+    const before = players.map((p) => p.state.identity!.pid);
+    host.command('clear');
+    await waitFor('全員に名前のボタン', () => host.state.game?.stage === 'lobby' && players.every((p) => p.state.phase === 'known'));
+    expect(host.state.host?.total).toBe(0);
+    for (const p of players) p.enter();
+    await waitFor('名前のボタンで入る', () => players.every((p) => p.state.phase === 'ready') && host.state.host?.total === 3);
+    expect(players.map((p) => p.state.identity!.pid)).toEqual(before);
+    expect(players.every((p) => p.state.game?.stage === 'lobby')).toBe(true);
   }, 120_000);
 });
