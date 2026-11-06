@@ -173,13 +173,13 @@ export function createLightsBoard(listMax = 1, { bilingual = false }: BoardOptio
           const name = document.createElement('b');
           name.textContent = r.name;
           const where = document.createElement('em');
-          const pair: Pair =
+          // 方角（北が上の地図のときだけ）と距離。英語は日本語のすぐ後ろ、数字は1回だけ（北東 NE 60m）
+          where.innerHTML =
             d === null || b === null
-              ? ['場所は出ていない', 'NO LOCATION']
-              : heading === null
-                ? [`${compassName(b)} ${distanceText(d)}`, `${compassNameEn(b)} ${distanceTextEn(d)}`]
-                : [distanceText(d), distanceTextEn(d)];
-          where.innerHTML = inline(pair, lang);
+              ? inline(['場所は出ていない', 'NO LOCATION'], lang)
+              : [heading === null ? inline([compassName(b), compassNameEn(b)], lang) : '', inline([distanceText(d), distanceTextEn(d)], lang)]
+                  .filter(Boolean)
+                  .join(' ');
           li.append(arrow, name, where);
           return li;
         });
@@ -282,8 +282,8 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
         q('askSub'),
         sent(
           watcher
-            ? ['位置を使う。光った人の方角と距離が出る', 'Uses location to show where runners are']
-            : ['動きと位置を使う。ゲームの間、走ると全員の画面に光る', 'Uses motion and location. Run during the game and you glow on every screen'],
+            ? ['位置を使う（光った人の方角と距離）', 'Uses location']
+            : ['動きと位置を使う', 'Uses motion and location'],
         ),
       );
       const problem = senseProblem(sensors);

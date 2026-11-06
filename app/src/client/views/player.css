@@ -232,6 +232,8 @@
 /* オンにする：蓄光の点線の板（鬼のマイクと同じ形、色で分ける） */
 .player .glow-ask { min-height: 76px; border-radius: 18px; border: 3px dashed var(--chikko); background: transparent; color: var(--chikko); padding: 12px 16px; gap: 6px; }
 .player .glow-ask b { font-size: max(var(--min), 22px); line-height: 1.2; font-weight: 900; }
+/* もとの styles.css の、板の中の span を小さく灰色にする決まりを打ち消す */
+.player .glow-ask b span { font-size: inherit; color: inherit; font-weight: inherit; line-height: inherit; }
 .player .glow-ask b .en { font-size: max(calc(var(--min) * 1.2), .8em); }
 .player .glow-ask span[data-k="askSub"] { font-size: max(var(--min), 15px); line-height: 1.45; color: var(--tsuki); font-weight: 500; opacity: 1; }
 .player .glow-ask span[data-k="askSub"] span { font-size: inherit; color: inherit; }
