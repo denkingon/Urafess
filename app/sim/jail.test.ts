@@ -130,7 +130,7 @@ describe('牢屋と終わり方', () => {
     host.command('assign');
     await waitFor('配役', () => players.every((p) => p.state.me?.role));
     const oni = players.find((p) => p.state.me!.role === 'oni')!;
-    const [r1, r2] = players.filter((p) => p.state.me!.role === 'runner');
+    let [r1, r2] = players.filter((p) => p.state.me!.role === 'runner');
     expect(r1 && r2).toBeTruthy();
     // 助ける番号は、捕まったときの番号と別で、部屋の中で重ならない
     const codes = players.flatMap((p) => [p.state.me!.code, p.state.me!.rcode]).filter(Boolean);
@@ -170,9 +170,13 @@ describe('牢屋と終わり方', () => {
     await sleep(RESCUE_GAP_MS + 200);
     // 鬼のマイクが助ける番号を拾っても、捕獲の手がかりにならない
     oni.heard(r2.state.me!.rcode!);
+    // 助ける人は「助ける」を押している（押した瞬間から鳴る）。牢屋の人は押していない
+    r2.rescueStart(Date.now());
+    await sleep(300);
     const heardAt = Date.now();
     r1.heard(r2.state.me!.rcode!);
     await waitFor('音で r1 が出る', () => r1.state.me?.caught == null);
+    r2.rescueEnd(Date.now());
     expect(Date.now() - heardAt).toBeLessThan(2_000);
     expect(lastNotice(r1, 'freed')?.via).toBe('sound');
     const dbg = await debug();
@@ -183,13 +187,40 @@ describe('牢屋と終わり方', () => {
     await sleep(RESCUE_IMMUNE_MS);
     host.command('capture', { pid: r1.state.me!.pid });
     await waitFor('r1 がまた牢屋（3回目）', () => r1.state.me?.caught != null);
+    r2.rescueStart(Date.now());
+    await sleep(300);
     r1.heard(r2.state.me!.rcode!);
     await waitFor('出る', () => r1.state.me?.caught == null);
     host.command('capture', { pid: r1.state.me!.pid });
     await waitFor('r1 がまた牢屋（4回目）', () => r1.state.me?.caught != null);
+    // 同じ長押しのまま、もう1人は出せない（3秒たっても、押し直さなければ）
+    r1.heard(r2.state.me!.rcode!);
+    await sleep(RESCUE_GAP_MS + 300);
     r1.heard(r2.state.me!.rcode!);
     await sleep(800);
     expect(r1.state.me!.caught).not.toBeNull();
+    // 重なっていた「助けて」も、使い終わった長押しには合わない
+    r1.rescueStart(Date.now());
+    await sleep(800);
+    expect(r1.state.me!.caught).not.toBeNull();
+    r1.rescueEnd(Date.now());
+    r2.rescueEnd(Date.now());
+
+    // ---- 取り消し：主催者の取り消しで「全員が牢屋」も戻る ----
+    host.command('capture', { pid: r2.state.me!.pid });
+    await waitFor('全員が牢屋（間違い）', () => host.state.game?.allCaughtAt != null);
+    host.command('release', { pid: r2.state.me!.pid });
+    await waitFor('取り消しで戻る', () => host.state.game?.allCaughtAt === null && r2.state.me?.caught == null);
+    // ゲームの段階は2秒後に終わってしまうので、ここで次の配役からやり直す
+    await waitFor('結果まで待つ', () => host.state.game?.stage === 'result', 10_000);
+    host.command('assign');
+    await waitFor('配役し直し', () => players.every((p) => p.state.game?.stage === 'assigned' && p.state.me?.role));
+    const ro = players.filter((p) => p.state.me!.role === 'runner');
+    [r1, r2] = [ro[0], ro[1]];
+    host.command('start');
+    await waitFor('ゲームの段階', () => players.every((p) => phaseOf(p) === 2), 15_000);
+    host.command('capture', { pid: r1.state.me!.pid });
+    await waitFor('r1 が牢屋', () => r1.state.me?.caught != null);
 
     // ---- ミッション成功（1人） ----
     host.command('mission', { n: 1 });
@@ -220,9 +251,17 @@ describe('牢屋と終わり方', () => {
     expect(host.state.game!.resultAuto).toBe(true);
     await waitFor('全員に結果', () => players.every((p) => p.state.game?.stage === 'result' && p.state.game.result === 'oni'));
 
+    // やり直し：アプリが結果を出したあとも、配役済みに戻せる
+    host.command('reset');
+    await waitFor('やり直し', () => host.state.game?.stage === 'assigned' && host.state.game.result === null);
+
     // ---- 2ラウンド目：時間切れで1人でも外にいれば逃走者の勝ち ----
+    const prevAssign = host.state.game!.assignId;
     host.command('assign');
-    await waitFor('2回目の配役', () => players.every((p) => p.state.game?.stage === 'assigned' && p.state.me?.role));
+    await waitFor(
+      '2回目の配役',
+      () => host.state.game?.assignId === prevAssign + 1 && players.every((p) => p.state.me?.assignId === prevAssign + 1 && p.state.me.role),
+    );
     expect(players.every((p) => p.state.game!.allCaughtAt === null && p.state.me!.caught === null && !p.state.me!.freeUntil)).toBe(true);
     const runners2 = players.filter((p) => p.state.me!.role === 'runner');
     host.command('start');

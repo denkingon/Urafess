@@ -505,8 +505,10 @@ export class GameClient {
       // 押している途中でつなぎ直したら、同じ押し始めを送り直す（サーバーは同じ長押しとして扱う）。
       // 押していなければ「離した」を送る（切れている間に離して、その知らせが届かなかった分を閉じる。何も押していなければサーバーは何もしない）
       if (this.holding) this.send({ t: 'hold', on: true, at: this.holding.at });
-      if (this.rescuing) this.send({ t: 'rescue', on: true, at: this.rescuing.at });
       else this.send({ t: 'hold', on: false, at: this.toServer(now), resume: true });
+      // 「助けて」「助ける」も同じ：押していれば送り直し、押していなければ「離した」（切れている間に離した分を閉じる）
+      if (this.rescuing) this.send({ t: 'rescue', on: true, at: this.rescuing.at });
+      else this.send({ t: 'rescue', on: false, at: this.toServer(now) });
       // 選んだ・取り下げたが効いたかは、最初に届く状態を見てから決めて送り直す
       this.resendAfterSnap = this.pending !== null;
       // 名前のボタンを押したが、届いたか分からない（サーバーは2回入れない）

@@ -174,6 +174,8 @@ export function createJail({ client, emitter, listener }: JailDeps): JailScreen 
         listener.beep();
         return;
       case 'saved':
+        // 1回の長押しで1人：出せたら鳴らすのをやめる（そばの別の牢屋の人が、同じ音で続けて出ないように）
+        endPress();
         showToast(`${who}を牢屋から出した`);
         vibrate([80, 60, 80]);
         return;

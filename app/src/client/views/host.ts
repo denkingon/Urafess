@@ -341,7 +341,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       skipConfirm = phaseNow && phaseNow.index === GAME_PHASE ? `ゲームを終えて「${goTo}」へ進む。よいか？` : null;
       setEnabled(btn('skip'), !!phaseNow && phaseNow.remainingMs > START_LEAD_MS + 500, false);
       setEnabled(btn('end'), game.stage !== 'ended' && (game.stage !== 'timer' || done), game.stage === 'result');
-      setEnabled(btn('reset'), game.stage === 'timer', false);
+      setEnabled(btn('reset'), game.stage === 'timer' || (game.stage === 'result' && game.assignId > 0), false);
       // 新しい夜は、誰もいなくても始められる（前の夜のままなら目立たせる）
       setEnabled(btn('clear'), game.stage !== 'timer' || done, !old.hidden);
       const canResult = game.stage === 'result' || done;

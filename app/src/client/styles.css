@@ -211,7 +211,6 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .capture { display: flex; flex-direction: column; gap: 10px; }
 /* 牢屋：「助ける」は点線の枠（「捕まった」と見分ける）、牢屋の「助けて」は二重の枠 */
 .jail { display: flex; flex-direction: column; gap: 10px; }
-.jail[data-mode="none"] { display: none; }
 .jail[data-mode="save"] .hold { border-style: dashed; min-height: 88px; }
 .jail[data-mode="save"] .hold b { font-size: 24px; }
 .jail[data-mode="help"] .hold { border-style: double; border-width: 6px; }

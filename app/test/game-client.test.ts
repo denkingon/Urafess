@@ -101,7 +101,7 @@ beforeEach(() => {
 
 /** 送ったメッセージ（時計合わせは除く） */
 function sentOf(s: FakeSocket): { t: string; [k: string]: unknown }[] {
-  return s.sent.map((raw) => JSON.parse(raw) as { t: string }).filter((m) => m.t !== 'ping' && m.t !== 'sync' && m.t !== 'hold');
+  return s.sent.map((raw) => JSON.parse(raw) as { t: string }).filter((m) => m.t !== 'ping' && m.t !== 'sync' && m.t !== 'hold' && m.t !== 'rescue');
 }
 
 /** スマホが落ちて、新しい接続を張り直すまで進める */
