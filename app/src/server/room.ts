@@ -1017,7 +1017,7 @@ export class GameRoom extends DurableObject<Env> {
 
     switch (op) {
       case 'assign': {
-        if (!(g.stage === 'lobby' || g.stage === 'assigned' || g.stage === 'result' || timerDone)) {
+        if (!(g.stage === 'lobby' || g.stage === 'assigned' || g.stage === 'result' || g.stage === 'ended' || timerDone)) {
           return this.reject(ws, att, op, 'not-allowed');
         }
         const active = [...this.people.values()].filter((p) => !p.removed);
@@ -1124,6 +1124,17 @@ export class GameRoom extends DurableObject<Env> {
           }
         }
         this.commit({ stage: 'assigned', timer: null });
+        break;
+      }
+      case 'end': {
+        // 夜を終える：試合中はできない（時間が0になったあとは押せる）。すでに終わっていれば何もしない
+        if (g.stage === 'ended' || (g.stage === 'timer' && !timerDone)) return this.reject(ws, att, op, 'not-allowed');
+        // 答え待ちの「捕まった」も長押しも閉じる（最後の画面に捕獲の板が残らないように）
+        this.ctx.storage.transactionSync(() => {
+          this.log('end', { at: now, data: { round: g.round } });
+          this.dropClaims();
+        });
+        this.commit({ stage: 'ended', timer: null });
         break;
       }
       case 'result': {

@@ -11,7 +11,9 @@ export type Stage =
   /** タイマーが動いている／止まっている（終わったら各スマホが結果発表を出す） */
   | 'timer'
   /** 主催者が勝ちを押した */
-  | 'result';
+  | 'result'
+  /** 夜の最後。主催者が「夜を終える」を押した。全員の画面が SEE YOU AGAIN になる（配役で再開もできる） */
+  | 'ended';
 
 export type Winner = 'oni' | 'runner';
 
@@ -106,7 +108,9 @@ export type HostOp =
   /** 主催者が捕獲を取り消す（pid＝逃走者） */
   | 'release'
   /** 次に進む：走っているタイマーの、いまの段階を2秒後に終わらせて次の段階へ */
-  | 'skip';
+  | 'skip'
+  /** 夜を終える：全員の画面を SEE YOU AGAIN にする。試合中（時間が0になる前）はできない */
+  | 'end';
 
 export type ClientMsg =
   | { t: 'join'; name: string }
