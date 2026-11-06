@@ -1,4 +1,4 @@
-import { captureOpenAt } from './capture';
+import { CAPTURE_PHASE_INDEX, captureOpenAt } from './capture';
 import type { GameView, MeView, Winner } from './protocol';
 import { CLAIM_GRACE_MS, PHASES, ROLE_NAME } from './rules';
 import { formatClock, positionAt } from './schedule';
@@ -43,6 +43,13 @@ export interface PhoneView {
   paused: boolean;
   /** 夜が終わった（SEE YOU AGAIN の画面）。古い呼び出し側は省略できる */
   ended?: boolean;
+  /**
+   * 走ると光る：live＝ゲームの段階（光った人が地図に出る）、prep＝その前（配役〜追跡開始まで。センサーの準備をする）、none＝出さない。
+   * 見学の人・捕まった人にも出す（光らないが、光った人は見える）
+   */
+  glow: 'none' | 'prep' | 'live';
+  /** 走ると光る：いま走ったら光る（配役に入っていて、捕まっておらず、ゲームの段階が動いている） */
+  lightable: boolean;
 }
 
 /** 夜の最後の画面に出す言葉 */
@@ -126,6 +133,8 @@ export function participantView(
       : null,
     times: (game.timer?.durations ?? game.durations).map((d) => formatClock(d)),
     paused: false,
+    glow: 'none',
+    lightable: false,
   };
 
   // 夜の最後：入室している人にも、途中で外された人にも、同じ言葉を出す
@@ -154,9 +163,10 @@ export function participantView(
   }
 
   const step = stepOf(game, serverNow);
+  const glow = glowPhase(game, serverNow);
 
   if (!inRound) {
-    // 配役のあとに来た人は、このラウンドは見ているだけ
+    // 配役のあとに来た人は、このラウンドは見ているだけ（光った人は見える）
     return {
       ...base,
       step,
@@ -167,13 +177,14 @@ export function participantView(
       word: ['見学', 'WATCH'],
       note: ['次の配役から参加', 'You join from the next round'],
       time: game.timer && step >= 2 && step <= 5 ? bigClock(game, serverNow) : null,
+      glow,
     };
   }
 
   const role = me.role as 'oni' | 'runner';
 
   if (game.stage === 'assigned') {
-    return { ...base, step: 1, label: 'あなたの役', big: roleName, message: MESSAGES[role][0], ...SCENES[role][0] };
+    return { ...base, step: 1, label: 'あなたの役', big: roleName, message: MESSAGES[role][0], ...SCENES[role][0], glow };
   }
 
   if (game.stage === 'result') {
@@ -204,6 +215,8 @@ export function participantView(
       scene: 'gather', word: ['発表待ち', 'WAITING'],
     };
   }
+  // 光るのは、ゲームの段階が動いている間だけ（止めている間・始まる前の2秒は光らない）。捕まった人は光らない
+  const lightable = !caught && captureOpenAt(timer, serverNow);
   const paused = timer.status === 'paused';
   const message = paused
     ? '主催者の合図を待つ。'
@@ -229,6 +242,8 @@ export function participantView(
         : null,
     time: formatClock(pos.remainingMs),
     paused,
+    glow,
+    lightable,
   };
 }
 
@@ -238,8 +253,18 @@ export function connectingView(online: boolean): PhoneView {
     round: '—', role: 'なし', step: 0, label: online ? 'つないでいる' : '通信を待っている',
     big: '…', message: '', oni: '?', runners: '?', offline: !online, touch: 'none', caught: false,
     scene: 'gather', word: online ? ['つないでいる', 'CONNECTING'] : ['通信を待っている', 'OFFLINE'], note: null,
-    time: null, unit: null, outcome: null, counts: null, times: [], paused: false,
+    time: null, unit: null, outcome: null, counts: null, times: [], paused: false, glow: 'none', lightable: false,
   };
+}
+
+/** 走ると光る：配役〜追跡開始までは準備、ゲームの段階は光る（一時停止中も地図は出したまま。光る人はいなくなる） */
+export function glowPhase(game: GameView, serverNow: number): PhoneView['glow'] {
+  if (game.stage === 'assigned') return 'prep';
+  if (game.stage !== 'timer' || !game.timer) return 'none';
+  const pos = positionAt(game.timer, serverNow);
+  if (pos.kind === 'done') return 'none';
+  if (pos.index < CAPTURE_PHASE_INDEX) return 'prep';
+  return pos.index === CAPTURE_PHASE_INDEX ? 'live' : 'none';
 }
 
 function stepOf(game: GameView, serverNow: number): number {
@@ -265,7 +290,7 @@ export function hostStatus(game: GameView, serverNow: number): { title: string; 
     case 'assigned':
       return { title: '1 配役済み', big: `${game.counts.oni}/${game.counts.runner}`, next: '次：開始で「逃走開始まで」' };
     case 'ended':
-      return { title: '夜は終わった', big: FAREWELL, next: '次：配役で再開／部屋を空にする' };
+      return { title: '夜は終わった', big: FAREWELL, next: '次：配役で再開／新しい夜を始める' };
     case 'result':
       return {
         title: '6 結果発表',

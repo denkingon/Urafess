@@ -72,7 +72,8 @@ async function stopServer(): Promise<void> {
 }
 
 type Debug = {
-  people: { pid: string; num: number; name: string; removed: boolean }[];
+  game: { nightAt?: number };
+  people: { pid: string; num: number; name: string; removed: boolean; joinedAt: number }[];
   members?: { pid: string; num: number; name: string; nights: number }[];
 };
 
@@ -130,6 +131,12 @@ describe.skipIf(!OLD)('前の版から名簿の版へ入れ替える', () => {
     const d = await debug();
     // 外された人は名簿へ移さない。番号は前の版のまま
     expect(d.members?.map((m) => [m.pid, m.num]).sort()).toEqual(before.map((b) => [b.pid, b.num]).sort());
+    // 夜の始まりは、前の版で最初に入った人の時刻とみなして保存する（入れ替えのたびに「今」に戻らない）
+    const firstJoin = Math.min(...d.people.map((p) => p.joinedAt));
+    expect(d.game.nightAt).toBe(firstJoin);
+    await stopServer();
+    await startServer(process.cwd());
+    expect((await debug()).game.nightAt).toBe(firstJoin);
 
     // --- 新しい夜を始める：3人は名前のボタン、外された人は入室画面へ ---
     await waitFor('主催者がつなぎ直す', () => host.state.online && host.state.host?.registry === 3, 60_000);

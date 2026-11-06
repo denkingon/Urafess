@@ -95,6 +95,26 @@
 /* もとの styles.css の、中の span を小さく灰色にする決まりを打ち消す（字は最低ラインより小さくしない） */
 .player .hold span, .player .cap-mic span, .player .cap-title span, .player .cap-cand span, .player .cap-prep span { font-size: inherit; color: inherit; opacity: 1; font-weight: inherit; }
 .player .slot { margin: 12px 0 0; }
+/* 走ると光る：配役〜追跡開始までは「オンにする」の板（ひとことの下）。ゲームの段階は、絵の代わりに光の地図 */
+.player .p-stage { flex: 0 0 auto; display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.player .p-stage:has(> .glow[hidden]) { display: none; }
+.player.is-glow .p-pic { display: none; }
+.player.is-glow .p-stage { flex: 1 1 0; min-height: 0; overflow: hidden; }
+.player.is-glow .p-time { margin-top: 8px; font-size: clamp(calc(var(--min) * 1.2), 8dvh, 64px); }
+.player.is-glow .p-note { display: none; }
+.player:has(.cap-cands:not([hidden])) .p-stage { display: none; }
+.player.is-ended .p-stage { display: none; }
+/* 光っている間：時計の下に「光っている」 */
+.player .p-lit { display: none; }
+.player.is-lit .p-lit {
+  display: block; align-self: center; margin-top: 6px; border-radius: 999px; background: var(--tsuki); color: var(--yami);
+  padding: 2px 16px; font-size: max(var(--min), 18px); letter-spacing: .04em; white-space: nowrap;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .player.is-lit .p-lit { animation: glow-me-pulse 1.2s ease-in-out infinite; }
+}
+.player .glow-ask { border-color: var(--tsuki); color: var(--tsuki); }
+.player .glow-ask span, .player .glow-note { color: var(--tsuki-muted); }
 
 /* ---------- 捕獲 ---------- */
 .player .capture { gap: 12px; }
@@ -115,11 +135,15 @@
 .player .is-holding .hold span { color: inherit; }
 .player .hold .waves { display: none; width: 42px; height: 60px; }
 .player .is-holding .hold .waves { display: block; }
+.player .capture.is-passive[data-mode="oni"]:not(.is-holding) .hold .waves { display: block; opacity: .5; }
 @media (prefers-reduced-motion: no-preference) {
   .player .capture[data-mode="runner"].is-holding .waves path { animation: p-wave-out 1.2s ease-out infinite; }
   .player .capture[data-mode="oni"].is-holding .waves path { animation: p-wave-in 1.2s ease-out infinite; }
   .player .is-holding .waves path:nth-child(2) { animation-delay: .2s; }
   .player .is-holding .waves path:nth-child(3) { animation-delay: .4s; }
+  .player .capture.is-passive[data-mode="oni"]:not(.is-holding) .waves path { animation: p-wave-in 2.4s ease-out infinite; }
+  .player .capture.is-passive[data-mode="oni"]:not(.is-holding) .waves path:nth-child(2) { animation-delay: .4s; }
+  .player .capture.is-passive[data-mode="oni"]:not(.is-holding) .waves path:nth-child(3) { animation-delay: .8s; }
 }
 @keyframes p-wave-out { 0% { opacity: 0; transform: translateX(-8px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateX(10px); } }
 @keyframes p-wave-in { 0% { opacity: 0; transform: translateX(10px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateX(-8px); } }

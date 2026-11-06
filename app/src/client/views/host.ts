@@ -10,10 +10,14 @@ import {
   RATIO_MAX,
   RATIO_MIN,
   ROLES,
+  RUN_STALE_MS,
   START_LEAD_MS,
 } from '../../shared/rules';
 import { isDone, positionAt } from '../../shared/schedule';
-import { hostStatus } from '../../shared/viewmodel';
+import { glowPhase, hostStatus } from '../../shared/viewmodel';
+import type { ClientState } from '../core/game-client';
+import type { Sensors } from '../sense';
+import { createLightsBoard } from './glow';
 import { bigFontSize } from './phone';
 
 /** 主催者画面の大きい数字・文字の上限（「逃走者の勝ち」など長いときは枠に収まるまで縮める） */
@@ -32,12 +36,23 @@ export interface HostInput {
   serverNow: number;
   online: boolean;
   lastReject: { op: HostOp; reason: string } | null;
+  /** 走ると光る：いま光っている全員 */
+  glow?: ClientState['glow'];
 }
 
 export interface HostActions {
   command(
     op: HostOp,
-    extra?: { winner?: Winner; durations?: number[]; ratio?: { oni: number; runner: number }; pid?: string; by?: string; rid?: string; ok?: boolean },
+    extra?: {
+      winner?: Winner;
+      durations?: number[];
+      ratio?: { oni: number; runner: number };
+      mic?: 'always' | 'hold';
+      pid?: string;
+      by?: string;
+      rid?: string;
+      ok?: boolean;
+    },
   ): void;
   /** 1イベント＝1行の記録を CSV で保存する */
   downloadLog(): Promise<void>;
@@ -56,7 +71,7 @@ const REASONS: Record<string, string> = {
   'not-found': 'その人は見つからない（もう待っていない・つながっていない）。',
 };
 
-export function createHost(actions: HostActions): HostScreen {
+export function createHost(actions: HostActions, sensors?: Sensors): HostScreen {
   const el = document.createElement('main');
   el.className = 'phone host';
   el.innerHTML = `
@@ -89,6 +104,14 @@ export function createHost(actions: HostActions): HostScreen {
       <button type="button" data-op="end" class="wide">夜を終える（全員の画面を SEE YOU AGAIN に）</button>
       <button type="button" data-op="clear" class="wide">新しい夜を始める（名簿は残す）</button>
     </div>
+    <div class="mic-mode">
+      <span>鬼のマイク</span>
+      <div class="seg" role="group" aria-label="鬼のマイクの聞き方">
+        <button type="button" data-mic="always" aria-pressed="false">ずっと聞く</button>
+        <button type="button" data-mic="hold" aria-pressed="false">押している間だけ</button>
+      </div>
+      <p class="note" data-k="micNote"></p>
+    </div>
     <details class="durations">
       <summary>時間の設定</summary>
       <form>
@@ -110,6 +133,12 @@ export function createHost(actions: HostActions): HostScreen {
       <p class="note">逃走者を押すと、手で「捕まった」にする・取り消す。黒＝捕まった、点線＝本人が選んでいる途中。</p>
       <div class="cap-host-grid" data-k="capRunners"></div>
       <p class="note" data-k="capOni"></p>
+    </section>
+    <section class="cap-host glow-host" data-k="glow" hidden>
+      <div class="cap-host-head"><b>走ると光る</b><span data-k="glowCount"></span></div>
+      <p class="note" data-k="glowReady"></p>
+      <button type="button" class="ghost" data-act="glow-map" hidden>地図の真ん中をこの画面の場所にする（位置を使う）</button>
+      <div data-k="glowBoard"></div>
     </section>
     <div class="dups" data-k="duplist"></div>
     <div class="spacer"></div>
@@ -148,6 +177,15 @@ export function createHost(actions: HostActions): HostScreen {
     const ratio = readRatio();
     if (isValidRatio(ratio)) actions.command('ratio', { ratio });
   });
+
+  // 鬼のマイクの聞き方：いつでも切り替えられる（試合中でも、そのときから全員に効く）。どちらで記録したかは CSV に残る
+  const micBtns = [...el.querySelectorAll('[data-mic]')] as HTMLButtonElement[];
+  micBtns.forEach((b) =>
+    b.addEventListener('click', () => {
+      if (b.getAttribute('aria-pressed') === 'true') return;
+      actions.command('mic', { mic: b.dataset.mic as 'always' | 'hold' });
+    }),
+  );
 
   btn('csv').addEventListener('click', () => {
     const b = btn('csv');
@@ -215,10 +253,16 @@ export function createHost(actions: HostActions): HostScreen {
   let lastDupKey = '';
   let lastCapKey = '';
   let lastAskKey = '';
+  // 走ると光る：主催者の画面にも光の地図（真ん中はこの画面の場所。たいてい広場）
+  const board = createLightsBoard(6);
+  q('glowBoard').append(board.el);
+  const glowMap = el.querySelector('[data-act="glow-map"]') as HTMLButtonElement;
+  glowMap.addEventListener('click', () => sensors?.request());
 
   return {
     el,
-    update({ game, host, serverNow, online, lastReject }) {
+    update(input) {
+      const { game, host, serverNow, online, lastReject } = input;
       if (!game || !host) return;
       const s = hostStatus(game, serverNow);
       q('round').textContent = `ラウンド ${Math.max(game.round, 1)}${online ? '' : '・切断中'}`;
@@ -238,6 +282,7 @@ export function createHost(actions: HostActions): HostScreen {
       q('foot').textContent =
         `時間：${PHASES.map((p, i) => `${p.label} ${fmt(game.durations[i])}`).join(' → ')}` +
         `　／　割合 鬼${(game.ratio ?? DEFAULT_RATIO).oni}：逃走者${(game.ratio ?? DEFAULT_RATIO).runner}` +
+        `　／　鬼のマイク ${(game.micMode ?? 'always') === 'always' ? 'ずっと聞く' : '押している間だけ'}` +
         (host.waiting ? `　／　次の配役を待っている人 ${host.waiting}人` : '') +
         (host.registry !== undefined ? `　／　名簿 ${host.registry}人` : '');
       // 前の夜のまま集め始めないように：待合室で、夜を始めてから半日以上たっていたら知らせる
@@ -319,6 +364,13 @@ export function createHost(actions: HostActions): HostScreen {
       });
       (form.querySelector('button') as HTMLButtonElement).disabled = !canEditDurations;
 
+      const mic = game.micMode ?? 'always';
+      micBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mic === mic)));
+      q('micNote').textContent =
+        mic === 'always'
+          ? 'マイクをオンにした鬼は、押さなくても聞いている。逃走者の長押しの間に拾えば記録される'
+          : '鬼は「捕まえた」を押している間だけ聞く（前の版と同じ）';
+
       const canEditRatio = canEditDurations;
       const ratio = game.ratio ?? DEFAULT_RATIO;
       totalNow = host.total;
@@ -351,6 +403,35 @@ export function createHost(actions: HostActions): HostScreen {
           q('capOni').textContent = cap.oni.length
             ? `鬼の捕まえた数：${cap.oni.map((o) => `${o.name} ${o.catches}`).join('　')}`
             : '';
+        }
+      }
+
+      // 走ると光る：配役〜ゲームの終わりは、センサーの使える人の数。ゲームの段階は光っている人と地図
+      const gp = glowPhase(game, serverNow);
+      sensors?.setActive(gp !== 'none');
+      q('glow').hidden = gp === 'none';
+      if (gp !== 'none') {
+        const g = host.glow;
+        // 光っている人の数は、届いている光の一覧から（集計は 0.5 秒ごとなので遅れる）
+        const litNow = (input.glow?.runs ?? []).filter((r) => serverNow - r.at <= RUN_STALE_MS).length;
+        q('glowCount').textContent = gp === 'live' ? `光っている ${litNow}人` : 'ゲームの段階で光る';
+        q('glowReady').textContent = g
+          ? `いまつながっている配役の人 ${g.total}人のうち、動きのセンサーが使える ${g.motion}人・位置が使える ${g.geo}人。` +
+            (g.total > 0 && (g.motion < g.total || g.geo < g.total) ? '足りない人は、画面の「走ると光るをオンにする」を押す。' : '')
+          : '';
+        glowMap.hidden = !sensors || !sensors.needsTap;
+        board.el.hidden = gp !== 'live';
+        if (gp === 'live') {
+          const now = Date.now();
+          const pos = sensors?.position(now) ?? null;
+          board.update({
+            glow: input.glow ?? null,
+            serverNow,
+            me: pos ? { lat: pos.lat, lon: pos.lon } : null,
+            heading: sensors?.heading(now) ?? null,
+            myNum: null,
+            meLit: false,
+          });
         }
       }
 

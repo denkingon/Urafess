@@ -13,6 +13,8 @@ export interface PhoneScreen {
   el: HTMLElement;
   /** 捕獲の画面などを差し込む場所（いちばん下。親指が届く） */
   slot: HTMLElement;
+  /** 走ると光るの地図などを差し込む場所（ひとことの下・長押しの上。ゲームの段階は絵の代わりに空いている高さを全部使う） */
+  stage: HTMLElement;
   update(view: PhoneView): void;
 }
 
@@ -38,7 +40,9 @@ export function createPhone(): PhoneScreen {
     <div class="p-time u" data-k="time" aria-live="polite"></div>
     <div class="p-counts" data-k="counts"></div>
     <div class="p-word" data-k="word"></div>
+    <div class="p-lit u" data-k="lit" aria-live="polite">光っている</div>
     <div class="p-note" data-k="note"></div>
+    <div class="p-stage" data-k="stage"></div>
     <div class="p-end u" data-k="end" hidden></div>
     <div class="slot" data-k="slot"></div>
   `;
@@ -61,6 +65,7 @@ export function createPhone(): PhoneScreen {
   return {
     el,
     slot: q('slot'),
+    stage: q('stage'),
     update(view) {
       const key = JSON.stringify(view);
       if (key === last) return;
@@ -74,6 +79,9 @@ export function createPhone(): PhoneScreen {
       el.style.setProperty('--ground', rc ? mix(COLOR.yami, rc, UI.tint) : COLOR.yami);
       el.style.setProperty('--min', `${UI.minText}px`);
       parts.offline.hidden = !view.offline;
+
+      // 走ると光る：ゲームの段階は、絵の場所を光の地図に譲る（地図は p-stage に入る）
+      el.classList.toggle('is-glow', view.glow === 'live');
 
       // 夜の最後：SEE YOU AGAIN だけを真ん中に出す（段階バー・絵・人数は隠す）
       el.classList.toggle('is-ended', view.ended === true);

@@ -118,4 +118,28 @@ describe('参加者の画面（キャンバスの Phone に渡す中身）', () 
     const t = startTimer([30_000, 90_000, 600_000, 60_000], 0);
     expect(participantView(game({ stage: 'timer', timer: t }), runner, 0, true).times).toEqual(['0:30', '1:30', '10:00', '1:00']);
   });
+
+  it('走ると光る：配役〜追跡開始までは準備、ゲームの段階は地図。光るのは、配役に入っていて捕まっていない人が、ゲームの段階が動いている間だけ', () => {
+    const t = startTimer(D, 0);
+    const g = game({ stage: 'timer', timer: t });
+    const at = (me: MeView, ms: number) => participantView(g, me, START_LEAD_MS + ms, true);
+    expect(participantView(game({ stage: 'lobby', assignId: 0 }), { ...oni, role: null, assignId: 0 }, 0, true).glow).toBe('none');
+    expect(participantView(game({}), runner, 0, true)).toMatchObject({ glow: 'prep', lightable: false });
+    expect(at(runner, 10_000)).toMatchObject({ glow: 'prep', lightable: false });
+    expect(at(runner, 30_000)).toMatchObject({ glow: 'prep', lightable: false });
+    expect(at(runner, 80_000)).toMatchObject({ glow: 'live', lightable: true });
+    expect(at(oni, 80_000)).toMatchObject({ glow: 'live', lightable: true });
+    // 捕獲と違い、終わった直後の猶予は無い
+    expect(at(oni, 380_500)).toMatchObject({ glow: 'none', lightable: false });
+    expect(at(oni, 500_000)).toMatchObject({ glow: 'none', lightable: false });
+    // 捕まった人・見学の人は、地図は見えるが光らない
+    const caught: MeView = { ...runner, caught: { byNum: 1, byName: 'あ', at: 0, via: 'sound' } };
+    expect(at(caught, 80_000)).toMatchObject({ glow: 'live', lightable: false });
+    const late: MeView = { ...runner, role: null, assignId: 0 };
+    expect(at(late, 80_000)).toMatchObject({ glow: 'live', lightable: false });
+    // 一時停止中は地図を出したまま、誰も光らない
+    const paused = game({ stage: 'timer', timer: pauseTimer(t, START_LEAD_MS + 100_000) });
+    expect(participantView(paused, runner, 9_999_999, true)).toMatchObject({ glow: 'live', lightable: false });
+    expect(participantView(game({ stage: 'result', result: 'oni' }), runner, 0, true).glow).toBe('none');
+  });
 });
