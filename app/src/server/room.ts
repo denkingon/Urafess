@@ -4,12 +4,14 @@ import { captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type C
 import type {
   ClientMsg,
   GameView,
+  GlowEntry,
   HostCapture,
   HostOp,
   HostSummary,
   MeView,
   NoticeKind,
   RosterEntry,
+  SenseState,
   ServerMsg,
   Stage,
   Winner,
@@ -30,10 +32,12 @@ import {
   NAME_MAX_LENGTH,
   PHASES,
   ROLES,
+  RUN_STALE_MS,
   SYNC_OK_MS,
   type Ratio,
   type RoleId,
 } from '../shared/rules';
+import { distanceM } from '../shared/run';
 import { elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
 import type { ProbeHub } from './probe';
@@ -104,6 +108,25 @@ interface Evidence {
   nominatedAt: number | null;
 }
 
+/**
+ * 走ると光る：いま光っている1人。保存しない（光は一瞬のもの。サーバーが入れ替わったら、次に届いた「走っている」から光り直す）。
+ * 光った・消えたは記録（events）に残す
+ */
+interface RunRec {
+  pid: string;
+  since: number;
+  at: number;
+  lat: number | null;
+  lon: number | null;
+  acc: number | null;
+  /** 記録用：ときどきの位置 [緯度, 経度, 光ってからの秒] と、走ったおおよその距離（m） */
+  path: [number, number, number][];
+  dist: number;
+  lastPathAt: number;
+}
+
+type RunEnd = 'stop' | 'stale' | 'closed' | 'caught' | 'out';
+
 /** WebSocket ごとに持つ情報。休止（hibernation）をまたいでも残る */
 interface Attachment {
   pid?: string;
@@ -112,6 +135,8 @@ interface Attachment {
   syncErr?: number;
   /** つないだ端末の User-Agent */
   ua?: string;
+  /** 走ると光る：このスマホで動きのセンサー・位置が使えるか（本人が知らせてくる） */
+  sense?: { motion: SenseState; geo: SenseState };
 }
 
 type ParticipantRow = {
@@ -140,6 +165,10 @@ const PRESS_MAX_DELAY_MS = 60_000;
 const HEARD_DEDUPE_MS = 5_000;
 /** 押している途中に届いた「押し始め」が、前の押し始めとこれだけしか違わなければ、つなぎ直しの送り直し（同じ長押し） */
 const HOLD_SAME_MS = 1_000;
+/** 走ると光る：光の知らせはまとめて配る（何人走っていても、全員へは最大でこの間隔に1回） */
+const GLOW_BROADCAST_MS = 250;
+/** 走ると光る：記録に残す位置の間隔 */
+const RUN_PATH_EVERY_MS = 2_000;
 
 /**
  * 1ゲーム＝1つの Durable Object。正解はここにしかない。
@@ -158,6 +187,9 @@ export class GameRoom extends DurableObject<Env> {
   private readonly evidence = new Map<string, Map<string, Evidence>>();
   private broadcastTimer: ReturnType<typeof setTimeout> | null = null;
   private hostTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 走ると光る：いま光っている人 */
+  private readonly runs = new Map<string, RunRec>();
+  private glowTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -461,6 +493,8 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    // 光っている人の位置が届かなくなった・ゲームの段階が終わった分を消す（合図のついで）
+    this.sweepRuns(Date.now());
     if (!this.heartbeatActive()) return;
     const sockets = this.ctx.getWebSockets();
     if (sockets.length === 0) return;
@@ -535,6 +569,12 @@ export class GameRoom extends DurableObject<Env> {
       case 'cancel':
         this.onCancel(att, now);
         return;
+      case 'run':
+        this.onRun(att, msg, now);
+        return;
+      case 'sense':
+        this.onSense(ws, att, msg.motion, msg.geo);
+        return;
     }
   }
 
@@ -602,6 +642,7 @@ export class GameRoom extends DurableObject<Env> {
     ws.serializeAttachment(att);
     this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name: p.name });
     this.sendSnap(ws, att);
+    this.sendGlowTo(ws, now);
     this.scheduleBroadcast();
   }
 
@@ -619,6 +660,7 @@ export class GameRoom extends DurableObject<Env> {
       this.sql.exec(`UPDATE participants SET ua = ? WHERE pid = ?`, p.ua, p.pid);
     }
     this.sendSnap(ws, att);
+    this.sendGlowTo(ws, Date.now());
     this.scheduleHostUpdate();
   }
 
@@ -930,9 +972,136 @@ export class GameRoom extends DurableObject<Env> {
     this.evidence.delete(runner.pid);
     // 捕まった人が押したまま記録されたら、その長押しはここで終わり
     this.endHold(runner.pid, Date.now(), 'capture');
+    // 捕まった人は光らない
+    this.endRun(runner.pid, Date.now(), 'caught');
     this.notify(runner.pid, 'caught', oni ?? undefined, via);
     if (oni) this.notify(oni.pid, 'captured', runner, via);
     this.broadcastNow();
+  }
+
+  // ---------- 走ると光る ----------
+
+  /** 光ってよいのは、ゲームの段階（追跡が始まってから終わるまで）が動いている間だけ。捕獲と同じ決まり（終了直後の猶予は無し） */
+  private glowOpen(at: number): boolean {
+    const g = this.game;
+    return g.stage === 'timer' && captureOpenAt(g.timer, at);
+  }
+
+  /** 走っている（位置つき）・止まった。光ってよい人・段階でなければ、光っている分を消して捨てる */
+  private onRun(att: Attachment, msg: Extract<ClientMsg, { t: 'run' }>, now: number): void {
+    const p = this.inRound(att.pid);
+    if (!p) return;
+    if (this.isCaught(p)) return this.endRun(p.pid, now, 'caught');
+    if (!this.glowOpen(now)) return this.endRun(p.pid, now, 'closed');
+    if (msg.on !== true) return this.endRun(p.pid, now, 'stop');
+    const pos = cleanPos(msg.lat, msg.lon, msg.acc);
+    let r = this.runs.get(p.pid);
+    if (!r) {
+      r = { pid: p.pid, since: now, at: now, lat: null, lon: null, acc: null, path: [], dist: 0, lastPathAt: -Infinity };
+      this.runs.set(p.pid, r);
+      this.log('run', { p, at: now, data: pos ? { lat: pos.lat, lon: pos.lon, acc: pos.acc } : { pos: false } });
+      // 新しく光った人は、待たずに配る（ほかの人の更新をまとめて待っている途中でも）
+      this.flushGlowSoon(true);
+    } else {
+      this.flushGlowSoon(false);
+    }
+    r.at = now;
+    if (pos) {
+      if (r.lat !== null && r.lon !== null) r.dist += distanceM({ lat: r.lat, lon: r.lon }, pos);
+      r.lat = pos.lat;
+      r.lon = pos.lon;
+      r.acc = pos.acc;
+      if (now - r.lastPathAt >= RUN_PATH_EVERY_MS) {
+        r.path.push([pos.lat, pos.lon, Math.round((now - r.since) / 100) / 10]);
+        r.lastPathAt = now;
+      }
+    }
+  }
+
+  /** 光っている人を消して、記録に残す。at は消えた時刻（位置が届かなくなったときは最後に届いた時刻） */
+  private endRun(pid: string, at: number, reason: RunEnd): void {
+    const r = this.runs.get(pid);
+    if (!r) return;
+    this.runs.delete(pid);
+    const end = reason === 'stale' ? r.at : at;
+    if (r.lat !== null && r.lon !== null && r.path[r.path.length - 1]?.[2] !== Math.round((r.at - r.since) / 100) / 10) {
+      r.path.push([r.lat, r.lon, Math.round((r.at - r.since) / 100) / 10]);
+    }
+    this.log('run-end', {
+      p: this.people.get(pid) ?? null,
+      at: end,
+      data: { reason, ms: Math.max(0, end - r.since), m: Math.round(r.dist), path: r.path },
+    });
+    this.flushGlowSoon(true);
+  }
+
+  /** 位置が届かなくなった人・光ってよくなくなった人を消す（合図・主催者の操作のたびに見る） */
+  private sweepRuns(now: number): void {
+    if (this.runs.size === 0) return;
+    const open = this.glowOpen(now);
+    for (const r of [...this.runs.values()]) {
+      const p = this.inRound(r.pid);
+      if (!open) this.endRun(r.pid, now, 'closed');
+      else if (!p) this.endRun(r.pid, now, 'out');
+      else if (this.isCaught(p)) this.endRun(r.pid, now, 'caught');
+      else if (now - r.at > RUN_STALE_MS) this.endRun(r.pid, now, 'stale');
+    }
+  }
+
+  /** 光の知らせを配る。urgent（光った・消えた）は次の一瞬で、位置の更新だけなら GLOW_BROADCAST_MS ごとにまとめて */
+  private flushGlowSoon(urgent: boolean): void {
+    if (this.glowTimer) {
+      if (!urgent) return;
+      clearTimeout(this.glowTimer);
+    }
+    this.glowTimer = setTimeout(
+      () => {
+        this.glowTimer = null;
+        this.broadcastGlow();
+      },
+      urgent ? 0 : GLOW_BROADCAST_MS,
+    );
+  }
+
+  private glowMsg(now: number): ServerMsg {
+    const runs: GlowEntry[] = [];
+    for (const r of [...this.runs.values()].sort((a, b) => a.since - b.since)) {
+      const p = this.people.get(r.pid);
+      if (!p) continue;
+      runs.push({ num: p.num, name: p.name, lat: r.lat, lon: r.lon, acc: r.acc, since: r.since, at: r.at });
+    }
+    return { t: 'glow', s: now, runs };
+  }
+
+  /** 全員（参加者・見学・主催者）に同じ1本を送る */
+  private broadcastGlow(): void {
+    const msg = JSON.stringify(this.glowMsg(Date.now()));
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as Attachment | null;
+      if (!att?.pid && !att?.host) continue;
+      try {
+        ws.send(msg);
+      } catch {
+        // 閉じかけの接続は、つなぎ直したときに送り直す
+      }
+    }
+    this.scheduleHostUpdate();
+  }
+
+  /** つないだ・つなぎ直した人に、いま光っている人を送る（ゲームの段階の間だけ。消えた光が画面に残らないよう、空でも送る） */
+  private sendGlowTo(ws: WebSocket, now: number): void {
+    if (this.runs.size === 0 && !this.glowOpen(now)) return;
+    this.send(ws, this.glowMsg(now));
+  }
+
+  /** このスマホで、動きのセンサー・位置が使えるか */
+  private onSense(ws: WebSocket, att: Attachment, motion: unknown, geo: unknown): void {
+    const ok = (v: unknown): v is SenseState => v === 'off' || v === 'ok' || v === 'denied' || v === 'unsupported' || v === 'error';
+    if (!ok(motion) || !ok(geo)) return;
+    if (att.sense?.motion === motion && att.sense?.geo === geo) return;
+    att.sense = { motion, geo };
+    ws.serializeAttachment(att);
+    this.scheduleHostUpdate();
   }
 
   // ---------- 主催者 ----------
@@ -951,6 +1120,7 @@ export class GameRoom extends DurableObject<Env> {
     delete att.pid;
     ws.serializeAttachment(att);
     this.sendSnap(ws, att);
+    this.sendGlowTo(ws, Date.now());
   }
 
   private reject(ws: WebSocket, att: Attachment, op: HostOp, reason: string): void {
@@ -972,6 +1142,7 @@ export class GameRoom extends DurableObject<Env> {
       p.removed = true;
       this.sql.exec(`UPDATE participants SET removed = 1 WHERE pid = ?`, p.pid);
       this.log('remove', { p, at: now });
+      this.endRun(p.pid, now, 'out');
       this.broadcastNow();
       return;
     }
@@ -1207,6 +1378,8 @@ export class GameRoom extends DurableObject<Env> {
       default:
         return this.reject(ws, att, op, 'bad-input');
     }
+    // 一時停止・やり直し・配役・部屋を空にする・次に進む → 光っている人は消す（ゲームの段階が動いている間だけ光る）
+    this.sweepRuns(now);
     this.broadcastNow();
   }
 
@@ -1320,11 +1493,20 @@ export class GameRoom extends DurableObject<Env> {
     const active = this.activePeople();
     const connected = new Set<string>();
     const synced = new Set<string>();
+    /** 走ると光る：今の配役に入っていてつながっている人のうち、動きのセンサー・位置が使える人 */
+    const glowIn = new Set<string>();
+    const motionOk = new Set<string>();
+    const geoOk = new Set<string>();
     for (const ws of this.ctx.getWebSockets()) {
       const a = ws.deserializeAttachment() as Attachment | null;
       if (!a?.pid) continue;
       connected.add(a.pid);
       if (typeof a.syncErr === 'number' && a.syncErr <= SYNC_OK_MS) synced.add(a.pid);
+      if (this.inRound(a.pid)) {
+        glowIn.add(a.pid);
+        if (a.sense?.motion === 'ok') motionOk.add(a.pid);
+        if (a.sense?.geo === 'ok') geoOk.add(a.pid);
+      }
     }
     const g = this.game;
     const inAssign = g.assignId > 0 ? active.filter((p) => p.assignId === g.assignId && p.role !== null) : [];
@@ -1344,6 +1526,7 @@ export class GameRoom extends DurableObject<Env> {
         .filter((ps) => ps.length > 1)
         .map((ps) => ({ name: ps[0].name, people: ps.map((p) => ({ pid: p.pid, num: p.num })) })),
       capture: this.hostCapture(),
+      glow: { total: glowIn.size, motion: motionOk.size, geo: geoOk.size, lit: this.runs.size },
     };
   }
 
@@ -1444,6 +1627,17 @@ function normalizeName(raw: unknown): string | null {
   const length = [...name].length;
   if (length < 1 || length > NAME_MAX_LENGTH) return null;
   return name;
+}
+
+/** 走ると光る：届いた位置を確かめて丸める（緯度・経度は小数5桁＝約1m、誤差は m の整数）。おかしければ null */
+function cleanPos(lat: unknown, lon: unknown, acc: unknown): { lat: number; lon: number; acc: number } | null {
+  const a = Number(lat);
+  const o = Number(lon);
+  const c = Number(acc);
+  if (!Number.isFinite(a) || !Number.isFinite(o) || Math.abs(a) > 90 || Math.abs(o) > 180) return null;
+  if (typeof lat !== 'number' || typeof lon !== 'number') return null;
+  const r5 = (v: number) => Math.round(v * 1e5) / 1e5;
+  return { lat: r5(a), lon: r5(o), acc: Number.isFinite(c) && c >= 0 ? Math.min(9_999, Math.round(c)) : 9_999 };
 }
 
 function randomKey(): string {

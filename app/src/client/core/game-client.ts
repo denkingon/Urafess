@@ -1,6 +1,6 @@
 import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
-import type { GameView, HostOp, HostSummary, MeView, NoticeKind, RosterEntry, ServerMsg, Winner } from '../../shared/protocol';
+import type { GameView, GlowEntry, HostOp, HostSummary, MeView, NoticeKind, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
 import { SILENCE_LIMIT_MS } from '../../shared/rules';
 
 /**
@@ -71,6 +71,8 @@ export interface ClientState {
   notice: Notice | null;
   /** 手動で選ぶための一覧（頼んだあとに届く）。seq は届くたびに増える */
   roster: { seq: number; people: RosterEntry[] } | null;
+  /** 走ると光る：いま光っている全員（届くたびに seq が増える）。s は送られた瞬間のサーバー時刻 */
+  glow: { seq: number; s: number; runs: GlowEntry[] } | null;
 }
 
 const CONNECTING = 0;
@@ -130,6 +132,9 @@ export class GameClient {
   private resendAfterSnap = false;
   private noticeSeq = 0;
   private rosterSeq = 0;
+  private glowSeq = 0;
+  /** 走ると光る：最後に知らせたセンサーの状態（つなぎ直したら送り直す） */
+  private senseState: { motion: SenseState; geo: SenseState } | null = null;
   private stopped = false;
   private readonly listeners = new Set<() => void>();
   private readonly storageKey: string;
@@ -150,6 +155,7 @@ export class GameClient {
       joinError: null,
       notice: null,
       roster: null,
+      glow: null,
     };
   }
 
@@ -248,6 +254,24 @@ export class GameClient {
   /** 手動で選ぶ一覧を頼む（届くと state.roster が変わる） */
   requestRoster(): void {
     this.send({ t: 'roster' });
+  }
+
+  // ---------- 走ると光る ----------
+
+  /** 走っている（光っている間、1秒ごとに位置つきで呼ぶ）・止まった。切れている間の分は捨てる（つながったら次の1回で光り直す） */
+  run(on: boolean, pos?: { lat: number; lon: number; acc: number } | null): void {
+    if (!on) {
+      this.send({ t: 'run', on: false });
+      return;
+    }
+    this.send(pos ? { t: 'run', on: true, lat: pos.lat, lon: pos.lon, acc: Math.round(pos.acc) } : { t: 'run', on: true });
+  }
+
+  /** このスマホで動きのセンサー・位置が使えるか。変わったときだけ送る */
+  sense(motion: SenseState, geo: SenseState): void {
+    if (this.senseState?.motion === motion && this.senseState?.geo === geo) return;
+    this.senseState = { motion, geo };
+    this.send({ t: 'sense', motion, geo });
   }
 
   /** 逃走者が「捕まった」を取り下げる */
@@ -414,8 +438,10 @@ export class GameClient {
       else this.send({ t: 'hold', on: false, at: this.toServer(now), resume: true });
       // 選んだ・取り下げたが効いたかは、最初に届く状態を見てから決めて送り直す
       this.resendAfterSnap = this.pending !== null;
+      if (this.senseState) this.send({ t: 'sense', ...this.senseState });
     } else if (this.pendingJoinName) {
       this.send({ t: 'join', name: this.pendingJoinName });
+      if (this.senseState) this.send({ t: 'sense', ...this.senseState });
     } else {
       this.state = { ...this.state, phase: 'need-name' };
     }
@@ -564,6 +590,9 @@ export class GameClient {
         break;
       case 'roster':
         this.state = { ...this.state, roster: { seq: ++this.rosterSeq, people: msg.people } };
+        break;
+      case 'glow':
+        this.state = { ...this.state, glow: { seq: ++this.glowSeq, s: msg.s, runs: Array.isArray(msg.runs) ? msg.runs : [] } };
         break;
     }
     this.emit();
