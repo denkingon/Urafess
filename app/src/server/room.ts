@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { assignRoles } from '../shared/allocate';
-import { captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
+import { CAPTURE_PHASE_INDEX, captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
 import type {
   ClientMsg,
   GameView,
@@ -38,7 +38,7 @@ import {
 } from '../shared/rules';
 import { nameKey, normalizeName } from '../shared/names';
 import { distanceM } from '../shared/run';
-import { elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
+import { boundaryTimes, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
 import type { ProbeHub } from './probe';
 
@@ -1333,9 +1333,16 @@ export class GameRoom extends DurableObject<Env> {
   private sweepRuns(now: number): void {
     if (this.runs.size === 0) return;
     const open = this.glowOpen(now);
+    // ゲームの段階が時間で終わったのなら、消えた時刻は段階の終わり（合図のついでに見るので、最大2秒遅れて気づく）
+    let closedAt = now;
+    const t = this.game.timer;
+    if (!open && this.game.stage === 'timer' && t?.status === 'running') {
+      const end = boundaryTimes(t)?.[CAPTURE_PHASE_INDEX + 1];
+      if (end !== undefined && end <= now) closedAt = end;
+    }
     for (const r of [...this.runs.values()]) {
       const p = this.inRound(r.pid);
-      if (!open) this.endRun(r.pid, now, 'closed');
+      if (!open) this.endRun(r.pid, Math.max(r.since, closedAt), 'closed');
       else if (!p) this.endRun(r.pid, now, 'out');
       else if (this.isCaught(p)) this.endRun(r.pid, now, 'caught');
       else if (now - r.at > RUN_STALE_MS) this.endRun(r.pid, now, 'stale');

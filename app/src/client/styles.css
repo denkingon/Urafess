@@ -311,16 +311,26 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .phone.is-ended .big { margin-top: 0; text-align: center; letter-spacing: 2px; }
 /* 走ると光る（参加者の画面の真ん中。時計と長押しの間の、空いている高さを全部使う） */
 .stage { flex: 1 1 auto; min-height: 24px; display: flex; flex-direction: column; justify-content: flex-end; gap: 10px; margin-bottom: 12px; }
-.label-inline { display: none; }
+.label-inline, .lit-chip { display: none; }
 .phone.is-glow { height: 100dvh; min-height: 0; }
 .phone.is-glow .badge-row { margin-top: 12px; min-height: 30px; gap: 12px; }
-.phone.is-glow .badge { padding: 3px 14px; font-size: 14px; }
-.phone.is-glow .label-inline { display: block; font-size: 14px; font-weight: 700; color: var(--quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.phone.is-glow .badge { padding: 2px 14px; font-size: 16px; }
+.phone.is-glow .label-inline { display: block; font-size: 16px; font-weight: 700; color: var(--quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .phone.is-glow .label { display: none; }
 .phone.is-glow .big { margin-top: 4px; }
-.phone.is-glow .message { margin-top: 2px; font-size: 15px; line-height: 1.5; }
+.phone.is-glow .message { margin-top: 2px; font-size: 16px; line-height: 1.5; }
 .phone.is-glow .stage { flex: 1 1 0; min-height: 0; margin: 8px 0 10px; overflow: hidden; gap: 8px; }
-.phone.is-glow .hold { min-height: 100px; }
+.phone.is-glow .hold { min-height: 84px; }
+/* 光っている間：役の札の横に「光っている」。時計の下の一言は隠す（走っている間は読まない） */
+.phone.is-lit .label-inline { display: none; }
+.phone.is-lit .lit-chip {
+  display: inline-flex; align-items: center; border-radius: 999px; background: var(--ink); color: var(--bg);
+  padding: 2px 14px; font-size: 18px; font-weight: 900; letter-spacing: 1px; white-space: nowrap;
+}
+.phone.is-lit .message { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .phone.is-lit .lit-chip { animation: glow-me-pulse 1.2s ease-in-out infinite; }
+}
 .phone.is-glow .foot { margin-top: 10px; padding-top: 8px; }
 .glow { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
 .glow[data-glow="live"] { flex: 1 1 0; }
@@ -334,15 +344,6 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .glow[data-glow="live"] .glow-ask b { font-size: 17px; }
 .glow[data-glow="live"] .glow-ask span { display: none; }
 .glow-note { margin: 0; font-size: 16px; line-height: 1.6; color: var(--quiet); }
-.glow-me {
-  border-radius: 12px; background: var(--ink); color: var(--bg); padding: 7px 14px;
-  display: flex; align-items: baseline; justify-content: center; gap: 12px; flex: none;
-}
-.glow-me b { font-size: 22px; font-weight: 900; letter-spacing: 2px; line-height: 1.2; }
-.glow-me span { font-size: 16px; line-height: 1.4; font-weight: 700; }
-@media (prefers-reduced-motion: no-preference) {
-  .glow-me { animation: glow-me-pulse 1.2s ease-in-out infinite; }
-}
 @keyframes glow-me-pulse { 50% { box-shadow: 0 0 0 3px rgba(242, 242, 242, 0.25), 0 0 14px 0 rgba(242, 242, 242, 0.35); } }
 .glow-board { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
 .glow-radar { position: relative; flex: 1 1 0; min-height: 0; display: flex; justify-content: center; container-type: size; }
@@ -354,24 +355,24 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 }
 .radar-bg { fill: #111; stroke: var(--line-strong); stroke-width: 1; }
 .radar-rings circle { fill: none; stroke: var(--line); stroke-width: 1; }
-.radar-ring-label { fill: #6a6a6a; font-size: 6.5px; font-family: inherit; }
-.radar-north { fill: var(--quiet); font-size: 11px; font-weight: 900; font-family: inherit; }
+.radar-ring-label { display: none; fill: #7a7a7a; font-size: 12px; font-family: inherit; }
+.radar.has-ring-labels .radar-ring-label { display: inline; }
+.radar-north { fill: var(--quiet); font-size: var(--radar-font, 12px); font-weight: 900; font-family: inherit; }
 .radar.is-north-up .radar-north { fill: var(--ink); }
 .radar-me-dot { fill: var(--bg); stroke: var(--ink); stroke-width: 1.6; }
 .radar-me-arrow { fill: var(--quiet); }
 .radar-me-halo { fill: var(--ink); opacity: 0; }
 .radar.is-lit .radar-me-dot { fill: var(--ink); }
 .radar.is-lit .radar-me-halo { opacity: 0.6; }
-.radar-trail { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; }
+.radar-trail { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .radar-halo { fill: var(--ink); opacity: 0.55; }
 .radar-dot { fill: var(--ink); }
-.radar-name { fill: var(--ink); font-size: 12px; font-weight: 900; font-family: inherit; paint-order: stroke; stroke: #111; stroke-width: 3px; }
+.radar-name { fill: var(--ink); font-size: var(--radar-font, 12px); font-weight: 900; font-family: inherit; paint-order: stroke; stroke: #111; stroke-width: calc(var(--radar-font, 12px) * 0.28); }
 .radar-ping { fill: none; stroke: var(--ink); stroke-width: 1.5; transform-box: fill-box; transform-origin: center; }
 @media (prefers-reduced-motion: no-preference) {
   .radar-ping { animation: radar-ping 0.9s ease-out infinite; }
 }
 @keyframes radar-ping { 0% { transform: scale(1); opacity: 0.9; } 100% { transform: scale(3.2); opacity: 0; } }
-.radar-wait { fill: var(--quiet); font-size: 9px; font-family: inherit; }
 .glow-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; flex: none; }
 .glow-list li { display: grid; grid-template-columns: 24px auto 1fr; align-items: center; gap: 8px; font-size: 17px; line-height: 1.4; }
 .glow-list b { font-weight: 900; max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

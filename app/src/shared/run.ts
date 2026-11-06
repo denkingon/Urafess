@@ -16,7 +16,8 @@ import {
  *
  * 動きのセンサー（重力込みの加速度の大きさ）を見て、強い揺れ1回＝1歩と数える。
  * ここ RUN_WINDOW_MS の1歩が RUN_STEPS_MIN 以上・テンポが RUN_CADENCE_MIN 以上・最後の1歩が今に近ければ「走り」。
- * 動きのセンサーが届いていないスマホは、位置の速さ（RUN_SPEED_MIN 以上が2回続く）で決める。
+ * 動きのセンサーが届いていないスマホは、スマホが出す速さ（RUN_SPEED_MIN 以上が2回続く）で決める。
+ * 位置の差から速さは出さない：止まっていても位置は 10m くらい飛ぶので、隠れている人が光ってしまう
  * 光る・消えるは RunLatch で少し待ってから切り替える（一瞬の跳ね・一瞬の止まりで点滅しない）。
  */
 
@@ -76,9 +77,8 @@ const STEP_RECENT_FACTOR = 1.5;
 const STEP_RECENT_MIN_MS = 600;
 /** 位置は最後のものが3秒以内なら使う */
 const FIX_FRESH_MS = 3_000;
-/** 速さを位置の差から出すときに使う、前の位置の古さ（短いと誤差に負ける） */
-const DERIVE_MIN_MS = 2_500;
-const DERIVE_MAX_MS = 6_000;
+/** 覚えておく位置の長さ */
+const FIX_KEEP_MS = 12_000;
 
 export class RunDetector {
   params: RunParams;
@@ -127,7 +127,7 @@ export class RunDetector {
     const last = this.fixes[this.fixes.length - 1];
     if (last && fix.t <= last.t) return;
     this.fixes.push({ ...fix, speed: fix.speed != null && Number.isFinite(fix.speed) && fix.speed >= 0 ? fix.speed : null });
-    while (this.fixes.length > 0 && fix.t - this.fixes[0].t > DERIVE_MAX_MS * 2) this.fixes.shift();
+    while (this.fixes.length > 0 && fix.t - this.fixes[0].t > FIX_KEEP_MS) this.fixes.shift();
   }
 
   /** 最後の位置（古くても返す） */
@@ -176,31 +176,18 @@ export class RunDetector {
     };
   }
 
-  /** 新しい順に2つまでの、位置ごとの速さ（最後の位置が古ければ空） */
+  /** 新しい順に2つまでの、スマホが出した速さ（最後の位置が古い・速さが無ければ空） */
   private speeds(now: number): { t: number; speed: number; acc: number }[] {
     const f = this.fixes;
     const last = f[f.length - 1];
     if (!last || now - last.t > FIX_FRESH_MS) return [];
     const out: { t: number; speed: number; acc: number }[] = [];
     for (let i = f.length - 1; i >= 0 && out.length < 2; i--) {
-      const s = this.speedOf(i);
-      if (s !== null) out.unshift({ t: f[i].t, speed: s.speed, acc: s.acc });
-      else if (out.length === 0) break;
+      const speed = f[i].speed;
+      if (speed === null) break;
+      out.unshift({ t: f[i].t, speed, acc: f[i].acc });
     }
     return out;
-  }
-
-  /** i 番目の位置での速さ：スマホが出した速さ、無ければ少し前の位置との差から */
-  private speedOf(i: number): { speed: number; acc: number } | null {
-    const f = this.fixes[i];
-    if (f.speed !== null) return { speed: f.speed, acc: f.acc };
-    for (let j = i - 1; j >= 0; j--) {
-      const dt = f.t - this.fixes[j].t;
-      if (dt < DERIVE_MIN_MS) continue;
-      if (dt > DERIVE_MAX_MS) break;
-      return { speed: distanceM(this.fixes[j], f) / (dt / 1000), acc: Math.max(f.acc, this.fixes[j].acc) };
-    }
-    return null;
   }
 
   private pushStep(s: { t: number; v: number }): void {

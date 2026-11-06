@@ -5,7 +5,7 @@
  * - ゲームの段階の外（逃走開始まで・追跡開始まで・止めている間・広場に戻るまで）は光らない
  * - 光った人は、名前と場所だけが全員（参加者・見学・主催者）に届く。役は入らない
  * - 止まった・位置が届かなくなった・捕まった・段階が終わった で消え、理由つきで記録に残る
- * - あとから来た人・つなぎ直した人にも、いま光っている人がすぐ届く
+ * - あとから来た人・開き直した人（同じスマホの合い鍵で戻る）にも、いま光っている人がすぐ届く
  * - 主催者には、動きのセンサー・位置が使える人の数が出る
  *
  * 実行：npx vitest run --config vitest.sim.config.ts sim/glow.test.ts
@@ -68,13 +68,16 @@ async function startServer(): Promise<void> {
   throw new Error('サーバーが立ち上がらない');
 }
 
-function client(kind: 'player' | 'host'): GameClient {
+const stores = new Map<GameClient, KeyValueStore>();
+
+function client(kind: 'player' | 'host', storage: KeyValueStore = memoryStore()): GameClient {
   const c = new GameClient(
-    { url: WS_URL, gameId: GAME, now: () => Date.now(), storage: memoryStore(), createSocket: (u) => new WebSocket(u) as never },
+    { url: WS_URL, gameId: GAME, now: () => Date.now(), storage, createSocket: (u) => new WebSocket(u) as never },
     kind === 'host' ? { kind: 'host', token: TOKEN } : { kind: 'player' },
   );
   c.start();
   clients.push(c);
+  stores.set(c, storage);
   return c;
 }
 
@@ -155,7 +158,8 @@ describe('走ると光る', () => {
     // ---- ゲームの段階：光った人が全員に届く（役は入らない） ----
     await waitFor('ゲームの段階', () => phaseOf(players[0]) === 2 && phaseOf(host) === 2, 10_000);
     await sleep(300);
-    const [a, b, c, d] = players;
+    const [a, b, , d] = players;
+    let c = players[2];
     const sentAt = Date.now();
     a.run(true, at(50, 0));
     await waitFor('あおが全員に光る', () => [...players.slice(1), host].every((x) => litNums(x).includes(a.state.me!.num)), 3_000);
@@ -181,10 +185,18 @@ describe('走ると光る', () => {
     await waitFor('2人とも光っている', () => litNums(c).length === 2, 2_000);
     const latest = litOf(c).find((r) => r.num === a.state.me!.num)!;
     expect(latest.lat).toBeCloseTo(at(66, 0).lat, 5);
-    // 8回の更新（＋1人が光った）に対して、知らせは多くても更新の数まで（250ms でまとめる）
+    // 同じ瞬間に届いた2人の更新は、まとめて1本で配る（4回×2人＝8回の更新に対して、知らせは4本ほど）
     const pushes = c.state.glow!.seq - seq0;
-    expect(pushes).toBeGreaterThan(2);
-    expect(pushes).toBeLessThanOrEqual(10);
+    expect(pushes).toBeGreaterThanOrEqual(3);
+    expect(pushes).toBeLessThanOrEqual(5);
+    // 1人が立て続けに送っても（4回を 100ms の間に）、知らせは 250ms に1本まで
+    const seq1 = c.state.glow!.seq;
+    for (let i = 0; i < 4; i++) {
+      a.run(true, at(70 + i, 0));
+      await sleep(25);
+    }
+    await sleep(600);
+    expect(c.state.glow!.seq - seq1).toBeLessThanOrEqual(2);
 
     // ---- 止まった：すぐ消える ----
     a.run(false);
@@ -198,9 +210,15 @@ describe('走ると光る', () => {
     expect(gone).toBeGreaterThan(RUN_STALE_MS - 1_500);
     expect(gone).toBeLessThan(RUN_STALE_MS + 3_500);
 
-    // ---- あとから来た人にも、いま光っている人がすぐ届く ----
+    // ---- あとから来た人・つなぎ直した人にも、いま光っている人がすぐ届く ----
     d.run(true, at(0, 80));
     await waitFor('しろが光る', () => litNums(c).includes(d.state.me!.num), 2_000);
+    // あかの画面を閉じて開き直す（同じスマホの合い鍵で戻る）
+    c.stop();
+    const c2 = client('player', stores.get(c)!);
+    await waitFor('開き直したあかに届く', () => c2.state.phase === 'ready' && c2.state.me?.num === c.state.me!.num && litNums(c2).includes(d.state.me!.num), 3_000);
+    players[2] = c2;
+    c = c2;
     const late = client('player');
     late.join('おそい');
     await waitFor('あとから来た人に届く', () => late.state.phase === 'ready' && litNums(late).includes(d.state.me!.num), 3_000);

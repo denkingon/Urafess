@@ -91,60 +91,112 @@ export function createRadar(): Radar {
   meG.append(meHalo, meDot, meArrow);
   el.append(meG);
 
+  /** 光っている人ごとの部品（描き直すたびに作り直さず、位置と濃さだけ変える。光った輪の動きが途切れないように） */
+  interface Node {
+    g: SVGGElement;
+    dot: SVGCircleElement;
+    ping: SVGCircleElement | null;
+    label: SVGTextElement;
+    trail: SVGPolylineElement;
+  }
+  const nodes = new Map<number, Node>();
+  const nodeOf = (num: number): Node => {
+    let n = nodes.get(num);
+    if (n) return n;
+    const g = svg('g', { class: 'radar-light' });
+    g.append(svg('circle', { r: 10, class: 'radar-halo', filter: `url(#${id}-blur)` }));
+    const dot = svg('circle', { r: 4.2, class: 'radar-dot' });
+    const label = svg('text', { class: 'radar-name', y: 4 });
+    g.append(dot, label);
+    const trail = svg('polyline', { class: 'radar-trail' });
+    trails.append(trail);
+    lights.append(g);
+    n = { g, dot, ping: null, label, trail };
+    nodes.set(num, n);
+    return n;
+  };
+  const drop = (num: number) => {
+    const n = nodes.get(num);
+    if (!n) return;
+    n.g.remove();
+    n.trail.remove();
+    nodes.delete(num);
+  };
+
+  // 地図の実際の大きさ（px）から、図の中の字の大きさを決める（画面の字の最低ライン 16px に合わせる）
+  let pxPerUnit = 1;
+  const resize = () => {
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) pxPerUnit = Math.min(r.width, r.height) / (2 * R + 24);
+  };
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(resize).observe(el);
+
   let lastKey = '';
 
   return {
     el,
     update({ me, heading, lights: ls, meLit }) {
-      const key = JSON.stringify([me && [me.lat.toFixed(6), me.lon.toFixed(6)], heading === null ? null : Math.round(heading), ls, meLit]);
+      resize();
+      const fontUnits = Math.max(11, 16 / Math.max(pxPerUnit, 0.01));
+      // 輪の距離は、字が 16px で入る大きさの地図のときだけ出す
+      const ringsLabelled = pxPerUnit * 12 >= 16;
+      const key = JSON.stringify([
+        me && [me.lat.toFixed(6), me.lon.toFixed(6)],
+        heading === null ? null : Math.round(heading),
+        ls.map((l) => [l.num, l.name, l.pos && [l.pos.lat, l.pos.lon], Math.round(l.fresh * 10), l.isNew, l.trail.length, l.trail[0]?.lat]),
+        meLit,
+        Math.round(fontUnits),
+        ringsLabelled,
+      ]);
       if (key === lastKey) return;
       lastKey = key;
       el.classList.toggle('is-lit', meLit);
       el.classList.toggle('is-north-up', heading === null);
+      el.classList.toggle('has-ring-labels', ringsLabelled);
+      el.style.setProperty('--radar-font', `${fontUnits.toFixed(1)}px`);
       meArrow.style.display = heading === null ? 'none' : '';
       // 北の印：方角が取れていれば回る
       const nRel = ((-(heading ?? 0)) * Math.PI) / 180;
-      north.setAttribute('x', String((R + 6) * Math.sin(nRel)));
-      north.setAttribute('y', String(-(R + 6) * Math.cos(nRel)));
+      const nR = R - fontUnits * 0.65;
+      north.setAttribute('x', (nR * Math.sin(nRel)).toFixed(1));
+      north.setAttribute('y', (-nR * Math.cos(nRel)).toFixed(1));
 
-      trails.replaceChildren();
-      lights.replaceChildren();
       const aria: string[] = [];
+      const placed = me
+        ? ls.filter((l) => l.pos).map((l) => ({ l, p: project(me, l.pos!, heading) }))
+        : [];
+      const keep = new Set(placed.map((x) => x.l.num));
+      for (const num of [...nodes.keys()]) if (!keep.has(num)) drop(num);
       if (!me) {
         el.setAttribute('aria-label', `光の地図：自分の位置を待っている。光っている ${ls.length}人`);
         return;
       }
-      const placed = ls
-        .filter((l) => l.pos)
-        .map((l) => ({ l, p: project(me, l.pos!, heading) }))
-        .sort((a, b) => b.p.d - a.p.d); // 近い人を上に重ねる
       const labelled = new Set([...placed].sort((a, b) => a.p.d - b.p.d).slice(0, LABEL_MAX).map((x) => x.l.num));
-      for (const { l, p } of placed) {
-        const opacity = 0.35 + 0.65 * Math.max(0, Math.min(1, l.fresh));
-        if (l.trail.length > 0) {
-          const pts = [...l.trail.map((t) => project(me, t, heading)), p];
-          for (let i = 1; i < pts.length; i++) {
-            const seg = svg('line', {
-              x1: pts[i - 1].x.toFixed(1),
-              y1: pts[i - 1].y.toFixed(1),
-              x2: pts[i].x.toFixed(1),
-              y2: pts[i].y.toFixed(1),
-              class: 'radar-trail',
-              opacity: ((i / pts.length) * opacity).toFixed(2),
-            });
-            trails.append(seg);
-          }
+      // 近い人ほど上に重ねる
+      for (const { l, p } of [...placed].sort((a, b) => b.p.d - a.p.d)) {
+        const n = nodeOf(l.num);
+        const opacity = (0.35 + 0.65 * Math.max(0, Math.min(1, l.fresh))).toFixed(2);
+        n.g.setAttribute('transform', `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})`);
+        n.g.setAttribute('opacity', opacity);
+        lights.append(n.g); // 重ねる順を近い順に合わせる（同じ要素を動かすだけ）
+        if (l.isNew && !n.ping) {
+          n.ping = svg('circle', { r: 6, class: 'radar-ping' });
+          n.g.insertBefore(n.ping, n.dot);
+        } else if (!l.isNew && n.ping) {
+          n.ping.remove();
+          n.ping = null;
         }
-        const g = svg('g', { transform: `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})`, opacity: opacity.toFixed(2), class: l.isNew ? 'radar-light is-new' : 'radar-light' });
-        g.append(svg('circle', { r: 10, class: 'radar-halo', filter: `url(#${id}-blur)` }));
-        if (l.isNew) g.append(svg('circle', { r: 6, class: 'radar-ping' }));
-        g.append(svg('circle', { r: 4.2, class: 'radar-dot' }));
-        if (labelled.has(l.num)) {
-          const t = svg('text', { x: p.x > R * 0.45 ? -8 : 8, y: 4, class: 'radar-name', 'text-anchor': p.x > R * 0.45 ? 'end' : 'start' });
-          t.textContent = l.name;
-          g.append(t);
+        const show = labelled.has(l.num);
+        n.label.style.display = show ? '' : 'none';
+        if (show) {
+          const right = p.x > R * 0.35;
+          n.label.setAttribute('x', String(right ? -9 : 9));
+          n.label.setAttribute('text-anchor', right ? 'end' : 'start');
+          if (n.label.textContent !== l.name) n.label.textContent = l.name;
         }
-        lights.append(g);
+        const pts = [...l.trail.map((t) => project(me, t, heading)), p];
+        n.trail.setAttribute('points', pts.length > 1 ? pts.map((q) => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ') : '');
+        n.trail.setAttribute('opacity', (Number(opacity) * 0.55).toFixed(2));
         aria.push(`${l.name} ${Math.round(p.d)}m`);
       }
       el.setAttribute('aria-label', `光の地図：光っている ${ls.length}人${aria.length ? `（${aria.join('、')}）` : ''}`);

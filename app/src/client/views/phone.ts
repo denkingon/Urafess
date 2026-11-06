@@ -25,7 +25,7 @@ export function createPhone(): PhoneScreen {
   el.innerHTML = `
     <div class="top"><span data-k="round"></span><span class="link"><span class="dot"></span><span data-k="link"></span></span></div>
     <div class="offline" data-k="offline" hidden>通信が切れている。タイマーはこのまま進む。</div>
-    <div class="badge-row"><span class="badge" data-k="badge"></span><span class="label-inline" data-k="label2"></span></div>
+    <div class="badge-row"><span class="badge" data-k="badge"></span><span class="label-inline" data-k="label2"></span><span class="lit-chip" data-k="lit" aria-live="polite">光っている</span></div>
     <div class="label" data-k="label"></div>
     <div class="big" data-k="big" aria-live="polite"></div>
     <div class="message" data-k="message"></div>

@@ -25,8 +25,8 @@ const MOTION_PROBE_MS = 3_000;
 const HEADING_STALE_MS = 2_000;
 /** 送る位置の古さの上限（光っている間は動いているので、位置は次々に届く） */
 const FIX_SEND_MAX_MS = 5_000;
-/** 地図の真ん中に使う位置の古さの上限（止まっているスマホは位置を出し直さないことがある） */
-const FIX_SHOW_MAX_MS = 60_000;
+/** 地図の真ん中に使う位置の古さの上限（止まっているスマホは位置を出し直さないことがある。止まっているなら古い位置のままで合っている） */
+const FIX_SHOW_MAX_MS = 5 * 60_000;
 /** 位置の誤差がこれより大きいときは送らない（場所が出ても意味がない） */
 const FIX_SEND_ACC_MAX = 100;
 
@@ -40,27 +40,48 @@ function requestPermissionOf(ctor: unknown): PermissionFn | null {
 const RAD = Math.PI / 180;
 
 /**
- * 方角（北から時計回りの度）。iPhone は webkitCompassHeading、Android は向きの絶対値（alpha・beta・gamma）から、
- * 画面の上の向きと背中の向きを水平に落として足したもの（寝かせても立てても、持っている人の前の方角になる）
+ * 磁北と真北のずれ（偏角）。スマホの方角は磁北から、地図（位置）の方角は真北から測るので、足して真北にそろえる。
+ * SFC のあたりは約 7.5° 西（磁北が真北より西）＝ -7.5
+ */
+export const MAGNETIC_DECLINATION_DEG = -7.5;
+
+/** 0〜1 になめらかに（a 以下は 0、b 以上は 1） */
+function smooth(a: number, b: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * 方角（真北から時計回りの度）。iPhone は webkitCompassHeading、Android は向きの絶対値（alpha・beta・gamma）から。
+ * Android：寝かせ気味（60° まで）は画面の上の向き、立てるほど（85° で全部）背中のカメラの向きにする。
+ * どちらも水平に落とした向きで、持っている人の前の方角になる（寝かせたまま左右に傾けても、画面の上の向きは動かない）。
+ * どちらも磁北から測った値なので、偏角を足して真北にそろえる
  */
 export function headingOf(e: { alpha: number | null; beta: number | null; gamma: number | null; absolute?: boolean; webkitCompassHeading?: number }): number | null {
   const ios = e.webkitCompassHeading;
-  if (typeof ios === 'number' && Number.isFinite(ios) && ios >= 0) return ios % 360;
-  if (!e.absolute || e.alpha == null || e.beta == null || e.gamma == null) return null;
-  const a = e.alpha * RAD;
-  const b = e.beta * RAD;
-  const g = e.gamma * RAD;
-  const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
-  // 画面の上の向き（東・北）
-  const topE = -sA * cB;
-  const topN = cA * cB;
-  // 背中（カメラ）の向き
-  const backE = -cA * sG - sA * sB * cG;
-  const backN = -sA * sG + cA * sB * cG;
-  const e2 = topE + backE;
-  const n2 = topN + backN;
-  if (Math.hypot(e2, n2) < 0.2) return null;
-  return (Math.atan2(e2, n2) / RAD + 360) % 360;
+  let magnetic: number | null = null;
+  if (typeof ios === 'number' && Number.isFinite(ios) && ios >= 0) {
+    magnetic = ios;
+  } else if (e.absolute && e.alpha != null && e.beta != null && e.gamma != null) {
+    const a = e.alpha * RAD;
+    const b = e.beta * RAD;
+    const g = e.gamma * RAD;
+    const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
+    // 画面の上の向き（東・北）と、背中（カメラ）の向き。水平に落とした長さで重みを決める
+    const topE = -sA * cB;
+    const topN = cA * cB;
+    const backE = -cA * sG - sA * sB * cG;
+    const backN = -sA * sG + cA * sB * cG;
+    // 画面が水平からどれだけ起きているか（0°＝寝かせた、90°＝立てた）
+    const tilt = Math.acos(Math.max(-1, Math.min(1, cB * cG))) / RAD;
+    const w = smooth(60, 85, tilt);
+    const e2 = (1 - w) * topE + w * backE;
+    const n2 = (1 - w) * topN + w * backN;
+    if (Math.hypot(e2, n2) < 0.15) return null;
+    magnetic = Math.atan2(e2, n2) / RAD;
+  }
+  if (magnetic === null) return null;
+  return (((magnetic + MAGNETIC_DECLINATION_DEG) % 360) + 360) % 360;
 }
 
 export class Sensors {

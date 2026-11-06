@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { headingOf } from '../src/client/sense';
+import { MAGNETIC_DECLINATION_DEG, headingOf } from '../src/client/sense';
 import { RUN_SEND_EVERY_MS, RUN_START_MS, RUN_STOP_MS } from '../src/shared/rules';
 import {
   RunDetector,
@@ -146,14 +146,14 @@ describe('走ると光る：揺れで決める', () => {
   });
 });
 
-describe('走ると光る：動きのセンサーが無いスマホは位置の速さで決める', () => {
+describe('走ると光る：動きのセンサーが無いスマホは、スマホが出す速さで決める', () => {
   const origin = { lat: 35.3881, lon: 139.4272 };
-  /** 北へ v m/s で、1秒ごとの位置（誤差 acc、速さはスマホが出さない） */
+  /** 北へ v m/s で、1秒ごとの位置（誤差 acc。speed はスマホが出す速さ、null なら出さない） */
   function fixes(d: RunDetector, v: number, n: number, opts: { acc?: number; speed?: number | null; from?: number } = {}): number {
     const from = opts.from ?? 0;
     for (let i = 0; i < n; i++) {
       const north = v * i;
-      d.addFix({ t: from + i * 1000, lat: origin.lat + north / 111_195, lon: origin.lon, acc: opts.acc ?? 8, speed: opts.speed ?? null });
+      d.addFix({ t: from + i * 1000, lat: origin.lat + north / 111_195, lon: origin.lon, acc: opts.acc ?? 8, speed: opts.speed === undefined ? v : opts.speed });
     }
     return from + (n - 1) * 1000;
   }
@@ -168,12 +168,14 @@ describe('走ると光る：動きのセンサーが無いスマホは位置の�
     expect(w.read(end2).running).toBe(false);
   });
 
-  it('スマホが速さを出すときはそれを使う（2回続けて速ければ走り）', () => {
+  it('2回続けて速ければ走り（1回だけでは走りでない）', () => {
     const d = new RunDetector();
     d.addFix({ t: 0, lat: origin.lat, lon: origin.lon, acc: 6, speed: 3.4 });
     expect(d.read(0).running).toBe(false);
     d.addFix({ t: 1000, lat: origin.lat, lon: origin.lon, acc: 6, speed: 3.5 });
     expect(d.read(1000).running).toBe(true);
+    d.addFix({ t: 2000, lat: origin.lat, lon: origin.lon, acc: 6, speed: 0.5 });
+    expect(d.read(2000).running).toBe(false);
   });
 
   it('位置の誤差が大きいとき・位置が古いときは使わない', () => {
@@ -185,18 +187,23 @@ describe('走ると光る：動きのセンサーが無いスマホは位置の�
     expect(d2.read(end2 + 4_000).running).toBe(false);
   });
 
-  it('位置が1回だけ飛んだ（はずれ値）くらいでは走りにならない', () => {
-    const d = new RunDetector();
-    let any = false;
-    for (let i = 0; i < 12; i++) {
-      const jump = i === 6 ? 30 : 0;
-      d.addFix({ t: i * 1000, lat: origin.lat + (1.0 * i + jump) / 111_195, lon: origin.lon, acc: 8, speed: null });
-      any ||= d.read(i * 1000).running;
+  it('速さを出さないスマホは、位置が動いて見えても走りにしない（止まったまま位置が 9m 飛んで戻らない・1回だけ 30m 飛ぶ）', () => {
+    for (const jump of [(i: number) => (i >= 6 ? 9 : 0), (i: number) => (i === 6 ? 30 : 0)]) {
+      const d = new RunDetector();
+      let any = false;
+      for (let i = 0; i < 14; i++) {
+        d.addFix({ t: i * 1000, lat: origin.lat + jump(i) / 111_195, lon: origin.lon, acc: 8, speed: null });
+        any ||= d.read(i * 1000).running;
+      }
+      expect(any).toBe(false);
     }
-    expect(any).toBe(false);
+    // 本当に走っていても、速さが出なければ光らない（取り逃がしのほうを選ぶ。隠れている人を光らせないため）
+    const d = new RunDetector();
+    const end = fixes(d, 4, 8, { speed: null });
+    expect(d.read(end).running).toBe(false);
   });
 
-  it('動きのセンサーが届いている間は、位置の速さでは決めない（位置の飛びで光らない）', () => {
+  it('動きのセンサーが届いている間は、位置の速さでは決めない', () => {
     const d = new RunDetector();
     fixes(d, 5, 6, { speed: 5 });
     feed(d, still, 0, 5_100);
@@ -296,22 +303,38 @@ describe('走ると光る：位置の計算', () => {
 
 describe('走ると光る：方角', () => {
   const abs = (alpha: number, beta: number, gamma: number) => ({ alpha, beta, gamma, absolute: true });
+  /** 磁北から測った値を、真北にそろえたもの */
+  const trueOf = (magnetic: number) => (((magnetic + MAGNETIC_DECLINATION_DEG) % 360) + 360) % 360;
+  const near = (got: number | null, want: number, tol = 0.6) => {
+    expect(got).not.toBeNull();
+    const d = ((got! - want + 540) % 360) - 180;
+    expect(Math.abs(d)).toBeLessThan(tol);
+  };
 
-  it('iPhone は webkitCompassHeading をそのまま', () => {
-    expect(headingOf({ alpha: 10, beta: 0, gamma: 0, webkitCompassHeading: 123 })).toBe(123);
+  it('iPhone は webkitCompassHeading（磁北から）を真北にそろえる', () => {
+    near(headingOf({ alpha: 10, beta: 0, gamma: 0, webkitCompassHeading: 123 }), trueOf(123));
+    expect(MAGNETIC_DECLINATION_DEG).toBeLessThan(0);
   });
 
   it('Android：寝かせても立てても、持っている人の前の方角', () => {
     // 寝かせて、画面の上が北
-    expect(Math.round(headingOf(abs(0, 0, 0))!)).toBe(0);
+    near(headingOf(abs(0, 0, 0)), trueOf(0));
     // 寝かせて、左へ90°回す（画面の上が西）
-    expect(Math.round(headingOf(abs(90, 0, 0))!)).toBe(270);
+    near(headingOf(abs(90, 0, 0)), trueOf(270));
     // 45°起こして持つ（ふつうに見る持ち方）
-    expect(Math.round(headingOf(abs(0, 45, 0))!)).toBe(0);
-    expect(Math.round(headingOf(abs(270, 45, 0))!)).toBe(90);
+    near(headingOf(abs(0, 45, 0)), trueOf(0));
+    near(headingOf(abs(270, 45, 0)), trueOf(90));
     // 立てて持つ（背中のカメラの向き）
-    expect(Math.round(headingOf(abs(0, 90, 0))!) % 360).toBe(0);
-    expect(Math.round(headingOf(abs(180, 90, 0))!)).toBe(180);
+    near(headingOf(abs(0, 90, 0)), trueOf(0));
+    near(headingOf(abs(180, 90, 0)), trueOf(180));
+    // 起こしていく途中（60°〜85°）も向きは変わらない
+    for (const beta of [55, 65, 75, 85]) near(headingOf(abs(90, beta, 0)), trueOf(270));
+  });
+
+  it('寝かせたまま左右に傾けても、方角はずれない（45°までの持ち方）', () => {
+    for (const beta of [0, 20, 45]) {
+      for (const gamma of [-20, -10, 10, 20]) near(headingOf(abs(30, beta, gamma)), trueOf(330));
+    }
   });
 
   it('北を基準にしていない向き（absolute でない）は使わない', () => {

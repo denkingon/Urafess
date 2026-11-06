@@ -164,7 +164,7 @@ function startPlayer(): void {
   phone.slot.append(capture.el);
   // 走ると光る：走っているかはこのスマホが決め、光っている間だけ位置を送る
   const sensors = new Sensors();
-  const glow = createGlow({ sensors });
+  const glow = createGlow({ sensors, root: phone.el });
   phone.stage.append(glow.el);
   const reporter = new RunReporter();
   let lastView: PhoneView | null = null;

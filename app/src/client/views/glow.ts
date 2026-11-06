@@ -190,6 +190,8 @@ export function createLightsBoard(listMax = 1): LightsBoard {
 
 export interface GlowDeps {
   sensors: Sensors;
+  /** 参加者の画面の外枠。光っている間 is-lit を付ける（役の札の横に「光っている」が出る） */
+  root?: HTMLElement;
 }
 
 export interface GlowScreen {
@@ -208,7 +210,7 @@ function senseProblem(s: Sensors): string | null {
   return null;
 }
 
-export function createGlow({ sensors }: GlowDeps): GlowScreen {
+export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
   const el = document.createElement('section');
   el.className = 'glow';
   el.innerHTML = `
@@ -217,12 +219,11 @@ export function createGlow({ sensors }: GlowDeps): GlowScreen {
       <span data-k="askSub"></span>
     </button>
     <p class="glow-note" data-k="note" hidden></p>
-    <div class="glow-me" data-k="me" hidden aria-live="polite"><b>光っている</b><span data-k="meSub"></span></div>
   `;
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
   const ask = el.querySelector('.glow-ask') as HTMLButtonElement;
   const note = q('note');
-  const me = q('me');
+  const litChip = root?.querySelector('[data-k="lit"]') as HTMLElement | null;
   const board = createLightsBoard();
   el.append(board.el);
 
@@ -243,7 +244,10 @@ export function createGlow({ sensors }: GlowDeps): GlowScreen {
     update(view, state, serverNow) {
       if (el.dataset.glow !== view.glow) el.dataset.glow = view.glow;
       setHidden(el, view.glow === 'none');
-      if (view.glow === 'none') return;
+      if (view.glow === 'none') {
+        root?.classList.remove('is-lit');
+        return;
+      }
       const now = Date.now();
 
       // 光らない人（見学・捕まった）にも地図は出るので、位置だけは使ってほしい
@@ -274,9 +278,13 @@ export function createGlow({ sensors }: GlowDeps): GlowScreen {
         meLit: lit,
         message: pos ? null : sensors.geo === 'ok' || sensors.geo === 'asking' ? null : (problem ?? null),
       });
-      setHidden(me, !(view.glow === 'live' && lit));
-      if (lit) {
-        setText(q('meSub'), !view.offline && res.meListed ? (sensors.sendPos(now) ? '全員に見えている' : '全員に見えている（名前だけ）') : '届けている…');
+      // 光っている間は、役の札の横に「光っている」（全員の一覧に自分が入ったら「…」が取れる）
+      const shown = view.glow === 'live' && lit;
+      if (root && root.classList.contains('is-lit') !== shown) root.classList.toggle('is-lit', shown);
+      if (litChip && shown) {
+        const confirmed = !view.offline && res.meListed;
+        setText(litChip, confirmed ? '光っている' : '光っている…');
+        litChip.title = confirmed ? (sensors.sendPos(now) ? '全員の画面に、名前と場所が出ている' : '全員の画面に、名前が出ている（場所は取れていない）') : '全員に届けている';
       }
     },
   };

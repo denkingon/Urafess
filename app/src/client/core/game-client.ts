@@ -498,6 +498,7 @@ export class GameClient {
     } else if (this.pendingReclaimName) {
       // 「前の◯◯に戻る」の頼みは接続ごとなので、つなぎ直したら頼み直す
       this.send({ t: 'reclaim', name: this.pendingReclaimName });
+      if (this.senseState) this.send({ t: 'sense', ...this.senseState });
     } else if (this.pendingJoinName) {
       this.send({ t: 'join', name: this.pendingJoinName });
       if (this.senseState) this.send({ t: 'sense', ...this.senseState });
