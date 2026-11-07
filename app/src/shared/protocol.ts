@@ -97,6 +97,8 @@ export interface HostCapture {
 export interface HostSummary {
   /** 入室していて外されていない人 */
   total: number;
+  /** 配役の選択用。主催者だけに送る（合い鍵などは含めない） */
+  participants?: { pid: string; num: number; name: string; role: RoleId | null }[];
   /** 今つながっている人 */
   connected: number;
   /** 今の配役に入っている人 */
@@ -211,6 +213,8 @@ export type ClientMsg =
       t: 'cmd';
       op: HostOp;
       cv: number;
+      /** 指定した場合は全参加者の役をこの通りに確定する。省略時は自動抽選 */
+      roles?: { pid: string; role: RoleId }[];
       winner?: Winner;
       durations?: number[];
       ratio?: { oni: number; runner: number };

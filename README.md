@@ -1,5 +1,8 @@
 # Urafess
 
+> **最終更新日**: 2026-11-08
+> **更新者**: AI (Codex)
+
 計画書（正本はClaude Doc。Claude Docsコネクタで読み書き）
 
 - [urafess-vision](https://claude.ai/code/artifact/0a62c6ed-a3c1-4553-9bd2-ae93c4f60379)（全体の方針。旧 urafess-plan）
@@ -15,3 +18,13 @@
 
 - [app/](app/)：アプリの土台（入室・①配役・②同期タイマー）。使い方は app/README.md
 - [map-chat-prototype-2025-07/](map-chat-prototype-2025-07/)：2025年7月の地図チャット試作
+
+## 主催者の配役・操作
+
+親が参加者ごとに鬼／逃走者を指定できる。自動抽選も継続。進行操作を段階に応じて表示し、同じ機能のボタンをまとめた。手順と制約は [app/README.md](app/README.md) を参照。
+
+## フォルダ構成
+
+- `README.md` — リポジトリ案内
+- `app/` — 現行アプリ・テスト
+- `map-chat-prototype-2025-07/` — 旧地図チャット試作

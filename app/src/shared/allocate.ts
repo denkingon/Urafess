@@ -67,3 +67,17 @@ export function assignRoles(
   });
   return result;
 }
+
+/** 主催者が選んだ役。全員ちょうど1回・有効な役・2人以上なら両方の役が必要。 */
+export function manualRoles(pids: readonly string[], selections: unknown): Map<string, RoleId> | null {
+  if (!Array.isArray(selections) || selections.length !== pids.length || pids.length === 0) return null;
+  const active = new Set(pids);
+  const result = new Map<string, RoleId>();
+  for (const item of selections) {
+    if (!item || typeof item !== 'object' || typeof item.pid !== 'string' || !active.has(item.pid) || result.has(item.pid)) return null;
+    if (item.role !== 'oni' && item.role !== 'runner') return null;
+    result.set(item.pid, item.role);
+  }
+  if (pids.length >= 2 && new Set(result.values()).size !== 2) return null;
+  return result;
+}

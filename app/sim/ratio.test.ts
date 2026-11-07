@@ -117,11 +117,47 @@ describe('主催者が鬼と逃走者の割合を変える', () => {
       await sleep(200);
     }
 
+    // 親が選ぶ：割合と違う人数でも、指定した本人へその役が届く。
+    const roster = host.state.host!.participants!;
+    expect(roster).toHaveLength(10);
+    const manual = players.map((p, i) => ({ pid: p.state.me!.pid, role: i === 0 ? 'oni' as const : 'runner' as const }));
+    const beforeAssign = host.state.game!.assignId;
+    host.command('assign', { roles: manual });
+    await waitFor('指定した役が全員に届く', () => host.state.game?.assignId === beforeAssign + 1 && players.every((p, i) =>
+      p.state.me?.assignId === beforeAssign + 1 && p.state.me.role === manual[i].role));
+    expect(host.state.game!.counts).toMatchObject({ oni: 1, runner: 9 });
+    expect(players.every((p) => p.state.host === null)).toBe(true);
+    expect(Object.keys(roster[0]).sort()).toEqual(['name', 'num', 'pid', 'role']);
+
+    // 二重指定・退室した人・片方の役だけ・不足などは、配役を変えずに拒否する。
+    for (const bad of [manual.slice(1), [...manual.slice(0, 9), manual[0]],
+      [...manual.slice(0, 9), { pid: 'unknown', role: 'runner' as const }],
+      manual.map((p) => ({ ...p, role: 'runner' as const }))]) {
+      host.command('assign', { roles: bad });
+      await waitFor('不正な手動配役は断る', () => host.state.lastReject?.reason === 'bad-roles');
+      expect(host.state.game!.assignId).toBe(beforeAssign + 1);
+    }
+
+    // 選択後に入室した人も取りこぼさない。古い一覧は拒否し、新しい全員分で確定する。
+    const late = client('player');
+    late.join('あとから来た人');
+    await waitFor('追加の入室', () => host.state.host?.participants?.length === 11 && late.state.me !== null);
+    host.command('assign', { roles: manual });
+    await waitFor('古い一覧を拒否', () => host.state.lastReject?.reason === 'bad-roles');
+    const full = [...manual, { pid: late.state.me!.pid, role: 'runner' as const }];
+    host.command('assign', { roles: full });
+    await waitFor('追加した人にも役が届く', () => late.state.me?.role === 'runner' && host.state.game?.assignId === beforeAssign + 2);
+    expect(host.state.host!.participants!.find((p) => p.pid === manual[0].pid)?.role).toBe('oni');
+
     // 試合中は変えられない
     host.command('start');
     await waitFor('開始', () => host.state.game?.stage === 'timer');
     host.command('ratio', { ratio: { oni: 1, runner: 9 } });
     await waitFor('試合中は断られる', () => host.state.lastReject?.op === 'ratio' && host.state.lastReject.reason === 'not-allowed');
     expect(host.state.game!.ratio).toEqual({ oni: 1, runner: 1 });
+    const runningAssign = host.state.game!.assignId;
+    host.command('assign', { roles: full });
+    await waitFor('試合中の手動配役は断る', () => host.state.lastReject?.op === 'assign' && host.state.lastReject.reason === 'not-allowed');
+    expect(host.state.game!.assignId).toBe(runningAssign);
   });
 });

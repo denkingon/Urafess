@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allocateCounts, assignRoles } from '../src/shared/allocate';
+import { allocateCounts, assignRoles, manualRoles } from '../src/shared/allocate';
 import { ROLES } from '../src/shared/rules';
 
 /** 計画書の規則を素直に書いたもの：人数×0.3に一番近い整数、ちょうど半分なら鬼を少なく、2人以上なら両方1人以上 */
@@ -72,5 +72,34 @@ describe('くじ', () => {
     const pids = Array.from({ length: 300 }, (_, i) => `p${i}`);
     const roles = assignRoles(pids, ROLES);
     expect([...roles.values()].filter((r) => r === 'oni').length).toBe(90);
+  });
+});
+
+describe('親が選ぶ配役', () => {
+  const people = ['a', 'b', 'c'];
+  const chosen = [{ pid: 'c', role: 'oni' }, { pid: 'a', role: 'runner' }, { pid: 'b', role: 'runner' }];
+  it('人数比と並び順に左右されず、指定した本人に指定した役を割り当てる', () => {
+    expect(manualRoles(people, chosen)).toEqual(new Map([['c', 'oni'], ['a', 'runner'], ['b', 'runner']]));
+  });
+  it.each([
+    undefined, null, {}, [], chosen.slice(0, 2), [...chosen, chosen[0]],
+    [chosen[0], chosen[1], chosen[1]],
+    [chosen[0], chosen[1], { pid: 'unknown', role: 'runner' }],
+    [chosen[0], chosen[1], { pid: 'b', role: 'host' }],
+    [null, chosen[1], chosen[2]],
+    people.map((pid) => ({ pid, role: 'runner' })),
+    people.map((pid) => ({ pid, role: 'oni' })),
+  ].map((input) => ({ input })))('不足・重複・知らない人・不正な役・片方だけの配役を拒否する: $input', ({ input }) => {
+    expect(manualRoles(people, input)).toBeNull();
+  });
+  it('参加者0人は不可、1人なら片方だけで試せる', () => {
+    expect(manualRoles([], [])).toBeNull();
+    expect(manualRoles(['a'], [{ pid: 'a', role: 'oni' }])?.get('a')).toBe('oni');
+  });
+  it('300人にも指定通りに割り当てる', () => {
+    const pids = Array.from({ length: 300 }, (_, i) => `p${i}`);
+    const roles = manualRoles(pids, pids.map((pid, i) => ({ pid, role: i < 42 ? 'oni' : 'runner' })));
+    expect(roles?.size).toBe(300);
+    expect([...roles!.values()].filter((r) => r === 'oni')).toHaveLength(42);
   });
 });

@@ -47,6 +47,7 @@ export interface HostActions {
   command(
     op: HostOp,
     extra?: {
+      roles?: { pid: string; role: 'oni' | 'runner' }[];
       winner?: Winner;
       durations?: number[];
       ratio?: { oni: number; runner: number };
@@ -73,6 +74,7 @@ const REASONS: Record<string, string> = {
   'no-participants': 'まだ誰も入室していない。',
   'nobody-jailed': '牢屋に誰もいない。',
   'bad-input': '入力が正しくない。',
+  'bad-roles': '参加者全員の役を選び直す。2人以上のときは鬼と逃走者が両方必要。',
   'not-found': 'その人は見つからない（もう待っていない・つながっていない）。',
 };
 
@@ -97,24 +99,44 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     <p class="reject" data-k="reject" hidden></p>
     <p class="note" data-k="old" hidden></p>
     <section class="asks" data-k="asklist" hidden></section>
-    <div class="buttons">
-      <button type="button" data-op="assign"></button>
+    <section class="role-picker" data-k="rolePicker">
+      <label class="host-field">配役の方法
+        <select data-k="roleMode" aria-label="配役の方法">
+          <option value="manual">親が選ぶ</option>
+          <option value="auto">自動で抽選</option>
+        </select>
+      </label>
+      <div class="role-list" data-k="roleList"></div>
+      <p class="note" data-k="roleNote" aria-live="polite"></p>
+      <button type="button" class="wide" data-op="assign">配役を確定</button>
+    </section>
+    <div class="buttons" data-k="progress">
       <button type="button" data-op="start">開始</button>
-      <button type="button" data-op="pause">一時停止</button>
-      <button type="button" data-op="resume">再開</button>
+      <button type="button" data-op="playback">一時停止</button>
       <button type="button" data-op="skip" class="wide">次に進む</button>
-      <button type="button" data-op="win-oni">鬼の勝ち</button>
-      <button type="button" data-op="win-runner">逃走者の勝ち</button>
-      <button type="button" data-op="reset" class="wide">リセット（配役済みに戻す）</button>
-      <button type="button" data-op="end" class="wide">夜を終える（全員の画面を SEE YOU AGAIN に）</button>
-      <button type="button" data-op="clear" class="wide">新しい夜を始める（名簿は残す）</button>
     </div>
+    <details class="host-settings">
+      <summary>設定・その他の操作</summary>
+      <div class="host-settings-body">
+        <form class="result-form" data-k="resultForm">
+          <label class="host-field">勝敗を修正
+            <select data-k="winner" aria-label="勝敗を修正">
+              <option value="oni">鬼の勝ち</option>
+              <option value="runner">逃走者の勝ち</option>
+            </select>
+          </label>
+          <button type="submit" data-op="result">勝敗を反映</button>
+        </form>
+        <button type="button" data-op="reset" class="wide">同じ配役でやり直す</button>
+        <button type="button" data-op="end" class="wide">夜を終える</button>
+        <button type="button" data-op="clear" class="wide">新しい夜を始める（名簿は残す）</button>
     <div class="mic-mode">
-      <span>鬼のマイク</span>
-      <div class="seg" role="group" aria-label="鬼のマイクの聞き方">
-        <button type="button" data-mic="always" aria-pressed="false">ずっと聞く</button>
-        <button type="button" data-mic="hold" aria-pressed="false">押している間だけ</button>
-      </div>
+      <label class="host-field">鬼のマイク
+        <select data-k="micMode" aria-label="鬼のマイクの聞き方">
+          <option value="always">ずっと聞く</option>
+          <option value="hold">押している間だけ</option>
+        </select>
+      </label>
       <p class="note" data-k="micNote"></p>
     </div>
     <details class="durations">
@@ -133,16 +155,23 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         <button type="submit">割合を変える</button>
       </form>
     </details>
+        <button type="button" class="wide" data-op="csv">記録をCSVで保存</button>
+      </div>
+    </details>
     <section class="cap-host" data-k="cap" hidden>
       <div class="cap-host-head"><b>捕獲と牢屋</b><span data-k="capCount"></span></div>
       <p class="note">逃走者を押すと、手で「捕まった」にする・取り消す。黒＝牢屋、点線＝本人が選んでいる途中、二重線＝牢屋から出た直後（捕まらない）。</p>
       <div class="cap-host-grid" data-k="capRunners"></div>
       <div class="mission" data-k="mission">
         <b>ミッション成功</b>
-        <button type="button" data-mission="all">牢屋の全員を出す</button>
-        <button type="button" data-mission="1">1人出す</button>
-        <label><input type="number" min="1" max="999" step="1" value="2" inputmode="numeric" data-k="missionN">人出す</label>
-        <button type="button" data-mission="n">出す</button>
+        <label class="host-field">出す人数
+          <select data-k="missionMode" aria-label="牢屋から出す人数">
+            <option value="all">全員</option>
+            <option value="n">人数を指定</option>
+          </select>
+        </label>
+        <label data-k="missionNumber" hidden><input type="number" min="1" max="999" step="1" value="1" inputmode="numeric" data-k="missionN">人</label>
+        <button type="button" data-mission="free">牢屋から出す</button>
         <p class="note">牢屋に入ったのが古い順に出る。押した瞬間に全員の画面が切り替わる。ゲームの段階の間だけ。</p>
       </div>
       <p class="note" data-k="capOni"></p>
@@ -155,14 +184,75 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     </section>
     <div class="dups" data-k="duplist"></div>
     <div class="spacer"></div>
-    <button type="button" class="wide" data-op="csv">記録をCSVで保存（誰が・誰を・何分に）</button>
     <p class="note" data-k="foot"></p>
+    <dialog class="host-confirm" aria-labelledby="host-confirm-title">
+      <form method="dialog">
+        <h2 id="host-confirm-title">操作の確認</h2>
+        <p data-k="confirmText"></p>
+        <div class="buttons">
+          <button type="submit" value="cancel" autofocus>やめる</button>
+          <button type="submit" value="confirm" class="primary">実行する</button>
+        </div>
+      </form>
+    </dialog>
   `;
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
   const btn = (op: string) => el.querySelector(`[data-op="${op}"]`) as HTMLButtonElement;
+  const dialog = el.querySelector('.host-confirm') as HTMLDialogElement;
+  const ask = (message: string): Promise<boolean> => {
+    if (dialog.open) return Promise.resolve(false);
+    q('confirmText').textContent = message;
+    dialog.returnValue = 'cancel';
+    return new Promise((resolve) => {
+      dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
+      dialog.showModal();
+    });
+  };
+
   const inputs = [...el.querySelectorAll('.durations input')] as HTMLInputElement[];
   const form = el.querySelector('.durations form') as HTMLFormElement;
   let editingDurations = false;
+  const roleMode = q('roleMode') as HTMLSelectElement;
+  const draftRoles = new Map<string, 'oni' | 'runner'>();
+  let roster: NonNullable<HostSummary['participants']> = [];
+  let canAssignNow = false;
+  let assignedNow = false;
+  let draftChanged = false;
+  let currentOnline = false;
+  let roleKey = '';
+  let appliedAssignId = -1;
+  const updateRoleNote = () => {
+    const manual = roleMode.value === 'manual';
+    q('roleList').hidden = !manual;
+    const oni = roster.filter((p) => draftRoles.get(p.pid) === 'oni').length;
+    const valid = roster.length > 0 && (roster.length < 2 || (oni > 0 && oni < roster.length));
+    const supported = roster.length === totalNow;
+    draftChanged = manual && assignedNow && roster.some((p) => draftRoles.get(p.pid) !== p.role);
+    let hint = '確定すると本人の画面に役が届きます。';
+    if (roster.length === 0) hint = '入室を待っています。';
+    else if (!valid) hint = '鬼と逃走者を1人以上ずつ選んでください。';
+    else if (draftChanged) hint = '変更した役を確定してから開始してください。';
+    else if (assignedNow) hint = '配役済みです。役を変える場合は選び直して確定してください。';
+    q('roleNote').textContent = !manual ? '設定した割合で抽選します。'
+      : !supported ? '参加者一覧を取得できない。サーバーを更新してから選ぶ。'
+      : `鬼 ${oni}人・逃走者 ${roster.length - oni}人。${hint}`;
+    btn('assign').textContent = manual ? '配役を確定' : assignedNow ? 'もう一度抽選' : '自動で配役';
+    btn('assign').hidden = manual && assignedNow && !draftChanged;
+    setEnabled(btn('start'), currentOnline && assignedNow && !draftChanged, assignedNow && !draftChanged);
+    setEnabled(btn('assign'), currentOnline && canAssignNow && totalNow > 0 && (!manual || (valid && supported)), !assignedNow);
+  };
+  roleMode.addEventListener('change', updateRoleNote);
+  q('roleList').addEventListener('change', (event) => {
+    const select = event.target as HTMLSelectElement;
+    if (!select.dataset.pid || (select.value !== 'oni' && select.value !== 'runner')) return;
+    draftRoles.set(select.dataset.pid, select.value);
+    updateRoleNote();
+  });
+  const missionMode = q('missionMode') as HTMLSelectElement;
+  missionMode.addEventListener('change', () => { q('missionNumber').hidden = missionMode.value !== 'n'; });
+  let playbackOp: 'pause' | 'resume' = 'pause';
+  let shownResult: Winner | null = null;
+
   const ratioInputs = [...el.querySelectorAll('.ratio input')] as HTMLInputElement[];
   const ratioForm = el.querySelector('.ratio form') as HTMLFormElement;
   let editingRatio = false;
@@ -192,13 +282,10 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   });
 
   // 鬼のマイクの聞き方：いつでも切り替えられる（試合中でも、そのときから全員に効く）。どちらで記録したかは CSV に残る
-  const micBtns = [...el.querySelectorAll('[data-mic]')] as HTMLButtonElement[];
-  micBtns.forEach((b) =>
-    b.addEventListener('click', () => {
-      if (b.getAttribute('aria-pressed') === 'true') return;
-      actions.command('mic', { mic: b.dataset.mic as 'always' | 'hold' });
-    }),
-  );
+  const micSelect = q('micMode') as HTMLSelectElement;
+  micSelect.addEventListener('change', () => {
+    actions.command('mic', { mic: micSelect.value as 'always' | 'hold' });
+  });
 
   btn('csv').addEventListener('click', () => {
     const b = btn('csv');
@@ -208,13 +295,13 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       .catch(() => alert('記録を取り出せなかった。通信を確かめてもう一度押す。'))
       .finally(() => (b.disabled = false));
   });
-  q('capRunners').addEventListener('click', (e) => {
+  q('capRunners').addEventListener('click', async (e) => {
     const t = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
     if (!t?.dataset.pid) return;
     const label = t.dataset.label ?? '';
     if (t.dataset.state === 'caught') {
-      if (confirm(`${label} の捕獲を取り消す。よいか？`)) actions.command('release', { pid: t.dataset.pid });
-    } else if (confirm(`${label} を、手で「捕まった」にする（鬼は空欄）。よいか？`)) {
+      if (await ask(`${label} の捕獲を取り消す。よいか？`)) actions.command('release', { pid: t.dataset.pid });
+    } else if (await ask(`${label} を、手で「捕まった」にする（鬼は空欄）。よいか？`)) {
       actions.command('capture', { pid: t.dataset.pid });
     }
   });
@@ -222,39 +309,44 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   q('mission').addEventListener('click', (e) => {
     const t = (e.target as HTMLElement).closest('button[data-mission]') as HTMLButtonElement | null;
     if (!t) return;
-    const kind = t.dataset.mission;
-    const n = kind === 'all' ? undefined : kind === '1' ? 1 : Math.round(Number((q('missionN') as HTMLInputElement).value));
-    if (n !== undefined && !(Number.isInteger(n) && n >= 1)) return;
+    const n = missionMode.value === 'all' ? undefined : Number((q('missionN') as HTMLInputElement).value);
+    if (n !== undefined && !(Number.isInteger(n) && n >= 1 && n <= 999)) return;
     actions.command('mission-free', n === undefined ? {} : { n });
   });
-  btn('assign').addEventListener('click', () => actions.command('assign'));
+  btn('assign').addEventListener('click', () => {
+    if (btn('assign').disabled) return;
+    actions.command('assign', roleMode.value === 'manual'
+      ? { roles: roster.map((p) => ({ pid: p.pid, role: draftRoles.get(p.pid) ?? 'runner' })) }
+      : {});
+  });
   btn('start').addEventListener('click', () => actions.command('start'));
-  btn('pause').addEventListener('click', () => actions.command('pause'));
-  btn('resume').addEventListener('click', () => actions.command('resume'));
+  btn('playback').addEventListener('click', () => actions.command(playbackOp));
   // 次に進む：ゲームの段階を縮めるときだけ確かめる（ほかの段階は待ち時間なので、そのまま進める）
   let skipConfirm: string | null = null;
-  btn('skip').addEventListener('click', () => {
-    if (skipConfirm && !confirm(skipConfirm)) return;
+  btn('skip').addEventListener('click', async () => {
+    if (skipConfirm && !(await ask(skipConfirm))) return;
     actions.command('skip');
   });
-  btn('win-oni').addEventListener('click', () => actions.command('result', { winner: 'oni' }));
-  btn('win-runner').addEventListener('click', () => actions.command('result', { winner: 'runner' }));
-  btn('reset').addEventListener('click', () => {
-    if (confirm('タイマーを止めて、配役済みに戻す。役はそのまま。よいか？')) actions.command('reset');
+  q('resultForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!btn('result').disabled) actions.command('result', { winner: (q('winner') as HTMLSelectElement).value as Winner });
   });
-  btn('end').addEventListener('click', () => {
-    if (confirm('夜を終える。全員の画面が SEE YOU AGAIN になる。配役で再開もできる。よいか？')) actions.command('end');
+  btn('reset').addEventListener('click', async () => {
+    if (await ask('タイマーを止めて、配役済みに戻す。役はそのまま。よいか？')) actions.command('reset');
   });
-  btn('clear').addEventListener('click', () => {
-    if (confirm('今夜の参加者を全員外して、新しい夜にする（配役前に戻る）。名簿は残るので、スマホには名前のボタンが出て、押せば入れる。よいか？')) {
+  btn('end').addEventListener('click', async () => {
+    if (await ask('夜を終える。全員の画面が SEE YOU AGAIN になる。配役で再開もできる。よいか？')) actions.command('end');
+  });
+  btn('clear').addEventListener('click', async () => {
+    if (await ask('今夜の参加者を全員外して、新しい夜にする（配役前に戻る）。名簿は残るので、スマホには名前のボタンが出て、押せば入れる。よいか？')) {
       actions.command('clear');
     }
   });
-  q('asklist').addEventListener('click', (e) => {
+  q('asklist').addEventListener('click', async (e) => {
     const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
     if (!b?.dataset.rid) return;
     const ok = b.dataset.ok === '1';
-    if (ok && b.dataset.here === '1' && !confirm(`${b.dataset.name} はいまも別のスマホでつながっている。それでもつなぐか？`)) return;
+    if (ok && b.dataset.here === '1' && !(await ask(`${b.dataset.name} はいまも別のスマホでつながっている。それでもつなぐか？`))) return;
     actions.command('link', { rid: b.dataset.rid, ok });
   });
   inputs.forEach((i) => i.addEventListener('focus', () => (editingDurations = true)));
@@ -266,10 +358,10 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       actions.command('durations', { durations });
     }
   });
-  q('duplist').addEventListener('click', (e) => {
+  q('duplist').addEventListener('click', async (e) => {
     const target = e.target as HTMLElement;
     const pid = target.dataset.pid;
-    if (pid && confirm(`${target.dataset.label} を参加者から外す。よいか？`)) actions.command('remove', { pid });
+    if (pid && await ask(`${target.dataset.label} を参加者から外す。よいか？`)) actions.command('remove', { pid });
   });
 
   let lastDupKey = '';
@@ -350,34 +442,77 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       const timer = game.timer;
       const done = game.stage === 'timer' && timer !== null && isDone(timer, serverNow);
       const canAssign = game.stage === 'lobby' || game.stage === 'assigned' || game.stage === 'result' || game.stage === 'ended' || done;
-      btn('assign').textContent =
-        game.stage === 'assigned'
-          ? '引き直し'
-          : game.stage === 'ended'
-            ? '再開（次のラウンドの配役）'
-            : game.stage === 'result' || done
-              ? '次のラウンド（配役）'
-              : '配役';
-      setEnabled(btn('assign'), canAssign && host.total > 0, game.stage === 'lobby' || game.stage === 'result' || done);
-      setEnabled(btn('start'), game.stage === 'assigned', game.stage === 'assigned');
+      canAssignNow = canAssign;
+      assignedNow = game.stage === 'assigned';
+      currentOnline = online;
+      totalNow = host.total;
+      roster = host.participants ?? [];
+      const resetDraft = appliedAssignId !== game.assignId;
+      const activeIds = new Set(roster.map((p) => p.pid));
+      for (const pid of draftRoles.keys()) if (!activeIds.has(pid)) draftRoles.delete(pid);
+      for (const p of roster) {
+        if (resetDraft || !draftRoles.has(p.pid)) draftRoles.set(p.pid, p.role ?? 'runner');
+      }
+      appliedAssignId = game.assignId;
+      const nextRoleKey = JSON.stringify([roster, game.assignId]);
+      if (nextRoleKey !== roleKey) {
+        roleKey = nextRoleKey;
+        q('roleList').replaceChildren(...roster.map((p) => {
+          const row = document.createElement('label');
+          row.className = 'host-field role-row';
+          const name = document.createElement('span');
+          name.textContent = p.name;
+          const select = document.createElement('select');
+          select.dataset.pid = p.pid;
+          select.setAttribute('aria-label', `${p.name}の役`);
+          for (const [value, text] of [['runner', '逃走者'], ['oni', '鬼']] as const) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = text;
+            select.append(option);
+          }
+          select.value = draftRoles.get(p.pid) ?? 'runner';
+          row.append(name, select);
+          return row;
+        }));
+      }
+      q('rolePicker').hidden = !canAssign;
+      roleMode.disabled = !online || !canAssign;
+      for (const select of q('roleList').querySelectorAll('select')) select.disabled = !online || !canAssign;
+      updateRoleNote();
+      btn('start').hidden = !assignedNow;
+      setEnabled(btn('start'), online && assignedNow && !draftChanged, assignedNow && !draftChanged);
       const running = game.stage === 'timer' && timer?.status === 'running' && !done;
-      setEnabled(btn('pause'), running, running);
-      const paused = game.stage === 'timer' && timer?.status === 'paused';
-      setEnabled(btn('resume'), paused, paused);
+      const paused = game.stage === 'timer' && timer?.status === 'paused' && !done;
+      playbackOp = paused ? 'resume' : 'pause';
+      btn('playback').hidden = !running && !paused;
+      btn('playback').textContent = paused ? '再開' : '一時停止';
+      setEnabled(btn('playback'), online && (running || paused), paused);
+      btn('skip').hidden = !running;
+      q('progress').hidden = !assignedNow && !running && !paused;
       // 次に進む：いまの段階を2秒後に終わらせる。行き先をボタンに書く。あと2秒ほどで終わるときは押せない
       const pos = running && timer ? positionAt(timer, serverNow) : null;
       const phaseNow = pos && pos.kind === 'phase' ? pos : null;
       const goTo = phaseNow ? (SKIP_TO[phaseNow.index] ?? '結果発表') : null;
       btn('skip').textContent = goTo ? `次に進む → ${goTo}` : '次に進む';
       skipConfirm = phaseNow && phaseNow.index === GAME_PHASE ? `ゲームを終えて「${goTo}」へ進む。よいか？` : null;
-      setEnabled(btn('skip'), !!phaseNow && phaseNow.remainingMs > START_LEAD_MS + 500, false);
+      setEnabled(btn('skip'), online && !!phaseNow && phaseNow.remainingMs > START_LEAD_MS + 500, false);
       setEnabled(btn('end'), game.stage !== 'ended' && (game.stage !== 'timer' || done), game.stage === 'result');
       setEnabled(btn('reset'), game.stage === 'timer' || (game.stage === 'result' && game.assignId > 0), false);
       // 新しい夜は、誰もいなくても始められる（前の夜のままなら目立たせる）
       setEnabled(btn('clear'), game.stage !== 'timer' || done, !old.hidden);
       const canResult = game.stage === 'result' || done;
-      setEnabled(btn('win-oni'), canResult, canResult && !game.result);
-      setEnabled(btn('win-runner'), canResult, canResult && !game.result);
+      q('resultForm').hidden = !canResult;
+      setEnabled(btn('result'), online && canResult, false);
+      (q('winner') as HTMLSelectElement).disabled = !online || !canResult;
+      if (game.result !== shownResult) {
+        shownResult = game.result;
+        if (game.result) (q('winner') as HTMLSelectElement).value = game.result;
+      }
+      for (const op of ['reset', 'end', 'clear']) {
+        btn(op).hidden = btn(op).disabled;
+        btn(op).disabled ||= !online;
+      }
 
       const canEditDurations = game.stage === 'lobby' || game.stage === 'assigned' || game.stage === 'result';
       inputs.forEach((input, i) => {
@@ -387,7 +522,8 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       (form.querySelector('button') as HTMLButtonElement).disabled = !canEditDurations;
 
       const mic = game.micMode ?? 'always';
-      micBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mic === mic)));
+      micSelect.value = mic;
+      micSelect.disabled = !online;
       q('micNote').textContent =
         mic === 'always'
           ? 'マイクをオンにした鬼は、押さなくても聞いている。逃走者の長押しの間に拾えば記録される'
@@ -411,7 +547,8 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         // ミッション成功は、ゲームの段階の間で、牢屋に誰かいて、まだ全員は入っていないときだけ押せる
         const tm = game.stage === 'timer' && game.timer ? positionAt(game.timer, serverNow) : null;
         const missionOk = !!tm && tm.kind === 'phase' && tm.index === GAME_PHASE && caught > 0 && game.allCaughtAt == null;
-        for (const b of q('mission').querySelectorAll('button')) (b as HTMLButtonElement).disabled = !missionOk;
+        q('mission').hidden = !missionOk;
+        for (const control of q('mission').querySelectorAll('button, input, select')) (control as HTMLButtonElement).disabled = !online || !missionOk;
         const capKey = JSON.stringify(cap);
         if (capKey !== lastCapKey) {
           lastCapKey = capKey;

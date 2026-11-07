@@ -380,6 +380,7 @@ export class GameClient {
   command(
     op: HostOp,
     extra: {
+      roles?: { pid: string; role: 'oni' | 'runner' }[];
       winner?: Winner;
       durations?: number[];
       ratio?: { oni: number; runner: number };

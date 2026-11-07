@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { assignRoles } from '../shared/allocate';
+import { assignRoles, manualRoles } from '../shared/allocate';
 import { autoPick, CAPTURE_PHASE_INDEX, captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
 import type {
   ClientMsg,
@@ -2024,10 +2024,10 @@ export class GameRoom extends DurableObject<Env> {
         }
         const active = [...this.people.values()].filter((p) => !p.removed);
         if (active.length === 0) return this.reject(ws, att, op, 'no-participants');
-        const roles = assignRoles(
-          active.map((p) => p.pid),
-          ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] })),
-        );
+        const roles = msg.roles === undefined
+          ? assignRoles(active.map((p) => p.pid), ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] })))
+          : manualRoles(active.map((p) => p.pid), msg.roles);
+        if (!roles) return this.reject(ws, att, op, 'bad-roles');
         // 1人に2つ：捕まったとき鳴らす番号（code）と、牢屋の人を助けるとき鳴らす番号（rcode）。部屋の中で重ならない
         const codes = pickCodes(active.length * 2);
         const codeOf = new Map(active.map((p, i) => [p.pid, codes[i]] as const));
@@ -2072,7 +2072,7 @@ export class GameRoom extends DurableObject<Env> {
             const p = this.people.get(pid)!;
             this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid) } });
           }
-          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll } });
+          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll, manual: msg.roles !== undefined } });
         });
         for (const [pid, role] of roles) {
           const p = this.people.get(pid)!;
@@ -2421,6 +2421,10 @@ export class GameRoom extends DurableObject<Env> {
     }
     return {
       total: active.length,
+      participants: active.map((p) => ({
+        pid: p.pid, num: p.num, name: p.name,
+        role: p.assignId === g.assignId && g.assignId > 0 ? p.role : null,
+      })),
       connected: active.filter((p) => connected.has(p.pid)).length,
       assigned: inAssign.length,
       received: inAssign.filter((p) => p.ackId === g.assignId).length,

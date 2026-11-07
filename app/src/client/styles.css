@@ -459,3 +459,21 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .ov-name.is-me { fill: var(--chikko); }
 .ov-credit { position: absolute; right: 6px; bottom: 4px; font-size: 16px; color: #6f6f6f; text-decoration: none; line-height: 1.2; }
 .glow-host .glow-board[data-mode="all"] .glow-radar { height: min(120vw, 560px); }
+
+/* 主催者：配役と進行を手前に、設定・手直しは折りたたむ */
+.host [hidden] { display: none !important; }
+.role-picker { display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.host-field { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
+.host select { min-height: 44px; max-width: 100%; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--field); color: var(--ink); font: inherit; }
+.role-list { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
+.role-row span { min-width: 0; overflow-wrap: anywhere; }
+.role-row select { flex-shrink: 0; }
+.host-settings { border-top: 1px solid var(--line); padding-top: 16px; }
+.host-settings > summary { cursor: pointer; font-size: 14px; color: var(--quiet); min-height: 44px; }
+.host-settings-body { display: flex; flex-direction: column; gap: 16px; padding-top: 12px; }
+.result-form { display: flex; flex-direction: column; gap: 8px; }
+
+.host-confirm { width: min(90vw, 390px); padding: 24px; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--bg); color: var(--ink); }
+.host-confirm::backdrop { background: #000b; }
+.host-confirm h2 { margin: 0; font-size: 20px; }
+.host-confirm p { line-height: 1.8; overflow-wrap: anywhere; }
