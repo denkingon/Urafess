@@ -299,6 +299,32 @@
 @keyframes p-lit-edge { 0%, 100% { box-shadow: inset 0 0 0 3px var(--chikko); } 50% { box-shadow: inset 0 0 0 3px var(--chikko), inset 0 0 28px 0 rgba(184, 255, 90, .35); } }
 .player.is-ended .stage, .player.is-ended .p-lit { display: none; }
 
+/* 全体の地図（北が上の SFC）と、光の地図（近く）の切りかえ。参加者の画面では裏フェスの色で描く */
+.player .glow-tabs { gap: 8px; }
+.player .glow-tabs button { min-height: 44px; border-radius: 999px; border: 1.5px solid var(--sen); background: transparent; color: var(--tsuki-muted); font-size: max(var(--min), 16px); }
+.player .glow-tabs button b { font-size: max(var(--min), 17px); font-weight: 900; color: inherit; }
+.player .glow-tabs button span { font-family: "URAJI", "Hiragino Sans", system-ui, sans-serif; font-weight: 900; font-size: max(calc(var(--min) * 1.2), 1em); color: inherit; letter-spacing: .06em; opacity: 1; }
+.player .glow-tabs button[aria-selected="true"] { border-color: var(--tsuki); color: var(--tsuki); background: var(--raised); }
+.player .ov { background: var(--raised); border-color: var(--sen); }
+.player .ov-pt .ov-dot { stroke: var(--raised); }
+.player .ov-pt.is-runner .ov-dot { fill: var(--tsuki); }
+.player .ov-pt.is-oni .ov-dot, .player .ov-pt.is-oni .ov-horn { fill: var(--shu); }
+.player .ov-pt.is-oni .ov-horn { stroke: var(--raised); }
+.player .ov-pt.is-unknown .ov-dot { fill: var(--chikko); }
+.player .ov-halo { fill: var(--chikko); }
+.player .ov-ping { stroke: var(--chikko); }
+.player .ov-name { font-size: max(var(--min), 16px); fill: var(--tsuki); stroke: var(--raised); }
+.player .ov-name.is-oni { fill: var(--shu); }
+/* 自分の印は役の色の輪（光の地図と同じ）。自分が光ると蓄光 */
+.player .ov-acc-me { fill: var(--rc); fill-opacity: .08; stroke: var(--rc); stroke-opacity: .4; }
+.player .ov-me .ov-me-ring { stroke: var(--rc); }
+.player .ov-me .ov-me-dot { fill: var(--rc); }
+.player .ov-me.is-lit .ov-me-ring { stroke: var(--chikko); }
+.player .ov-me.is-lit .ov-me-dot { fill: var(--chikko); }
+.player .ov-name.is-me { fill: var(--rc); }
+.player.is-lit .ov-name.is-me { fill: var(--chikko); }
+.player .ov-credit { font-size: max(var(--min), 16px); color: var(--tsuki-muted); }
+
 /* ---------- 牢屋 ---------- */
 /* 「助ける」は蓄光（光る一か所）の点線の板、牢屋の「助けて」は月白の二重の板。マイクは月白の点線 */
 .player .jail { display: flex; flex-direction: column; gap: 12px; }

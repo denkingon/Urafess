@@ -1,6 +1,6 @@
 import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
-import type { GameView, RescueVia, GlowEntry, HostOp, HostSummary, MeView, NoticeKind, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
+import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
 import { SILENCE_LIMIT_MS } from '../../shared/rules';
 
 /**
@@ -79,6 +79,8 @@ export interface ClientState {
   roster: { seq: number; people: RosterEntry[] } | null;
   /** 走ると光る：いま光っている全員（届くたびに seq が増える）。s は送られた瞬間のサーバー時刻 */
   glow: { seq: number; s: number; runs: GlowEntry[] } | null;
+  /** 全体の地図：見えてよい人の位置（届くたびに seq が増える）。scope は誰の位置か（同じ役・全員・誰も） */
+  mates: { seq: number; s: number; scope: MatesScope; people: MateEntry[] } | null;
 }
 
 const CONNECTING = 0;
@@ -145,6 +147,7 @@ export class GameClient {
   private noticeSeq = 0;
   private rosterSeq = 0;
   private glowSeq = 0;
+  private matesSeq = 0;
   /** 走ると光る：最後に知らせたセンサーの状態（つなぎ直したら送り直す） */
   private senseState: { motion: SenseState; geo: SenseState } | null = null;
   private stopped = false;
@@ -169,6 +172,7 @@ export class GameClient {
       notice: null,
       roster: null,
       glow: null,
+      mates: null,
     };
   }
 
@@ -332,6 +336,11 @@ export class GameClient {
       return;
     }
     this.send(pos ? { t: 'run', on: true, lat: pos.lat, lon: pos.lon, acc: Math.round(pos.acc) } : { t: 'run', on: true });
+  }
+
+  /** 全体の地図：自分の位置を送る（ゲームの段階の間、MATES_SEND_EVERY_MS ごとに呼ぶ） */
+  pos(p: { lat: number; lon: number; acc: number }): void {
+    this.send({ t: 'pos', lat: p.lat, lon: p.lon, acc: Math.round(p.acc) });
   }
 
   /** このスマホで動きのセンサー・位置が使えるか。変わったときだけ送る */
@@ -722,6 +731,12 @@ export class GameClient {
         break;
       case 'glow':
         this.state = { ...this.state, glow: { seq: ++this.glowSeq, s: msg.s, runs: Array.isArray(msg.runs) ? msg.runs : [] } };
+        break;
+      case 'mates':
+        this.state = {
+          ...this.state,
+          mates: { seq: ++this.matesSeq, s: msg.s, scope: msg.scope ?? 'none', people: Array.isArray(msg.people) ? msg.people : [] },
+        };
         break;
     }
     this.emit();

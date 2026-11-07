@@ -10,6 +10,7 @@ import {
   RATIO_MAX,
   RATIO_MIN,
   ROLES,
+  MATES_STALE_MS,
   RUN_STALE_MS,
   START_LEAD_MS,
 } from '../../shared/rules';
@@ -38,6 +39,8 @@ export interface HostInput {
   lastReject: { op: HostOp; reason: string } | null;
   /** 走ると光る：いま光っている全員 */
   glow?: ClientState['glow'];
+  /** 全体の地図：全員の位置（主催者には役つきで届く） */
+  mates?: ClientState['mates'];
 }
 
 export interface HostActions {
@@ -145,7 +148,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       <p class="note" data-k="capOni"></p>
     </section>
     <section class="cap-host glow-host" data-k="glow" hidden>
-      <div class="cap-host-head"><b>走ると光る</b><span data-k="glowCount"></span></div>
+      <div class="cap-host-head"><b>全体の地図・走ると光る</b><span data-k="glowCount"></span></div>
       <p class="note" data-k="glowReady"></p>
       <button type="button" class="ghost" data-act="glow-map" hidden>地図の真ん中をこの画面の場所にする（位置を使う）</button>
       <div data-k="glowBoard"></div>
@@ -273,7 +276,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   let lastCapKey = '';
   let lastAskKey = '';
   // 走ると光る：主催者の画面にも光の地図（真ん中はこの画面の場所。たいてい広場）
-  const board = createLightsBoard(6);
+  const board = createLightsBoard({ listMax: 6, start: 'all', labelMax: 60 });
   q('glowBoard').append(board.el);
   const glowMap = el.querySelector('[data-act="glow-map"]') as HTMLButtonElement;
   glowMap.addEventListener('click', () => sensors?.request());
@@ -438,7 +441,10 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         const g = host.glow;
         // 光っている人の数は、届いている光の一覧から（集計は 0.5 秒ごとなので遅れる）
         const litNow = (input.glow?.runs ?? []).filter((r) => serverNow - r.at <= RUN_STALE_MS).length;
-        q('glowCount').textContent = gp === 'live' ? `光っている ${litNow}人` : 'ゲームの段階で光る';
+        const onMap = (input.mates?.people ?? []).filter((m) => serverNow - m.at <= MATES_STALE_MS);
+        const oniOn = onMap.filter((m) => m.role === 'oni').length;
+        q('glowCount').textContent =
+          gp === 'live' ? `地図に 鬼${oniOn}・逃走者${onMap.length - oniOn}　光っている ${litNow}人` : 'ゲームの段階で地図に出る・光る';
         q('glowReady').textContent = g
           ? `いまつながっている配役の人 ${g.total}人のうち、動きのセンサーが使える ${g.motion}人・位置が使える ${g.geo}人。` +
             (g.total > 0 && (g.motion < g.total || g.geo < g.total) ? '足りない人は、画面の「走ると光るをオンにする」を押す。' : '')
@@ -455,6 +461,9 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
             heading: sensors?.heading(now) ?? null,
             myNum: null,
             meLit: false,
+            mates: input.mates ?? null,
+            meAcc: pos?.acc ?? null,
+            myKind: 'unknown',
           });
         }
       }
