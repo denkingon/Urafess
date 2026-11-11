@@ -388,6 +388,8 @@ export class GameClient {
       by?: string;
       rid?: string;
       ok?: boolean;
+      title?: string;
+      photo?: string;
       n?: number;
     } = {},
   ): boolean {
