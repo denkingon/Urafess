@@ -542,3 +542,24 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .area-btns button { flex: 1 1 30%; min-height: 44px; font-size: 16px; }
 .area-btns button.primary { flex-basis: 100%; font-weight: 900; }
 .area-host.is-locked .area-map { opacity: 0.6; }
+/* 偽の群衆（/lab?k=crowd）。道具の色は無彩色 */
+.lab-crowd { max-width: 720px; }
+.crowd-links { display: flex; gap: 16px; font-size: 14px; font-weight: 700; }
+.crowd-links a { color: var(--ink); }
+.crowd-check { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 700; color: var(--quiet); }
+.crowd-check input { width: 22px; height: 22px; accent-color: var(--ink); }
+.lab-crowd .lab-mode button { min-height: 48px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--field); color: var(--ink); font-size: 14px; font-weight: 700; }
+.crowd-go { min-height: 64px; border: none; border-radius: 16px; background: var(--ink); color: var(--bg); font-size: 20px; font-weight: 900; }
+.lab-crowd { --shu: #ff6a3d; --chikko: #b8ff5a; }
+.crowd-sfc { width: 100%; aspect-ratio: 1; }
+/* 下地は道具なので無彩色のまま、参加者の画面より明るくして建物と道を読めるようにする。人（素材）だけ色 */
+.lab-crowd .ov-tiles img { filter: invert(1) hue-rotate(180deg) grayscale(1) brightness(0.95) contrast(1.1); }
+.lab-crowd .ov-halo { fill: var(--chikko); }
+.lab-crowd .ov-ping { stroke: var(--chikko); }
+.crowd-sfc[hidden], .crowd-map[hidden] { display: none; }
+.crowd-map { width: 100%; aspect-ratio: 1; border: 1px solid var(--line-strong); border-radius: 12px; background: #111; }
+.crowd-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--quiet); }
+.crowd-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.crowd-legend i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.crowd-legend i.hollow { border: 2px solid var(--ink); }
+.crowd-legend i.sq { border-radius: 0; border: 2px solid var(--ink); }
