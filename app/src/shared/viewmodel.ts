@@ -287,6 +287,18 @@ export function participantView(
 }
 
 /** つないでいる間（まだ部屋の様子が来ていない）の画面 */
+/** 開いてすぐ、サーバーの最初の返事を待つあいだ、何も描かずにいる長さ */
+export const BOOT_QUIET_MS = 1500;
+
+/**
+ * 開いてすぐの画面を闇のままにしておくか。
+ * 最初の返事が来る前に「通信を待っている」「つないでいる」を描くと、一瞬だけ別の画面が映ってから本当の画面に替わる。
+ * 返事が来るまで（長くて BOOT_QUIET_MS）は何も描かない。スマホが圏外だと分かっているとき・待っても来ないときは、いつもの知らせを出す。
+ */
+export function bootQuiet(answered: boolean, elapsedMs: number, deviceOnline: boolean): boolean {
+  return !answered && deviceOnline && elapsedMs < BOOT_QUIET_MS;
+}
+
 export function connectingView(online: boolean): PhoneView {
   return {
     round: '—', role: 'なし', step: 0, label: online ? 'つないでいる' : '通信を待っている',

@@ -1,7 +1,7 @@
 import './styles.css';
 import { RunReporter } from '../shared/run';
 import { MATES_SEND_EVERY_MS } from '../shared/rules';
-import { connectingView, participantView, type PhoneView } from '../shared/viewmodel';
+import { bootQuiet, connectingView, participantView, type PhoneView } from '../shared/viewmodel';
 import { GameClient, type KeyValueStore } from './core/game-client';
 import { detectInstall, lineEscapeUrl, type InstallPath } from './install/detect';
 import { getCodec } from './sound/codec';
@@ -238,9 +238,15 @@ function startPlayer(): void {
     }
   };
 
+  // 開いてすぐ：サーバーの最初の返事が来るまでは何も描かない（一瞬だけ別の画面が映らないように）
+  const bootAt = performance.now();
+  let answered = false;
+
   loop(() => {
     const s = client.state;
     screenKeeper.set(s.phase === 'ready' && inMatch(s.game?.stage));
+    if (s.phase !== 'connecting') answered = true;
+    phone.el.classList.toggle('is-booting', bootQuiet(answered, performance.now() - bootAt, navigator.onLine !== false));
     // 名簿に入ったら、このスマホの保存場所を消さないでほしいと頼む（iPhone はホーム画面のアプリだと通りやすい）
     if (s.identity && !askedPersist) {
       askedPersist = true;
