@@ -31,7 +31,9 @@ import type {
   Winner,
 } from '../shared/protocol';
 import { decideWinner, everyoneJailed } from '../shared/jail';
+import { cleanAreaPts, isValidAreaPts, type Area } from '../shared/area';
 import {
+  CAMPUS_CENTER,
   CLAIM_GRACE_MS,
   CLAIM_OPEN_MS,
   CLAIM_PAIR_WINDOW_MS,
@@ -88,6 +90,8 @@ interface GameState {
   ratio: Ratio;
   /** 鬼のマイクの聞き方（主催者が切り替える）。古い保存データには無いので load で補う */
   micMode: MicMode;
+  /** 遊ぶ範囲（主催者がゲームの前に描く）。新しい夜を始めても残る。古い保存データには無い */
+  area?: Area | null;
   /** 次に名簿に入る人の番号（名簿に入った順。画面には出さない。部屋を空にしても戻さない） */
   nextNum: number;
   counts: { oni: number; runner: number };
@@ -537,6 +541,7 @@ export class GameRoom extends DurableObject<Env> {
     if (this.game.mission === undefined) this.game.mission = null;
     this.loadPhotos();
     if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
+    if (this.game.area === undefined) this.game.area = null;
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -2325,6 +2330,21 @@ export class GameRoom extends DurableObject<Env> {
         this.log('mic', { at: now, data: { mic: msg.mic } });
         break;
       }
+      case 'area': {
+        // ゲームの前に決める。試合中（時間が0になる前）は変えない（走っている人の「外」が急に変わらないように）
+        if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        if (msg.area === null) {
+          if (!g.area) break;
+          this.commit({ area: null });
+          this.log('area', { at: now, data: { area: null } });
+          break;
+        }
+        if (!isValidAreaPts(msg.area, CAMPUS_CENTER)) return this.reject(ws, att, op, 'bad-input');
+        const area: Area = { pts: cleanAreaPts(msg.area), at: now };
+        this.commit({ area });
+        this.log('area', { at: now, data: { pts: area.pts } });
+        break;
+      }
       case 'clear': {
         // 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。
         // 名簿・時間の設定・名簿の番号は残す。試合中はできない
@@ -2657,6 +2677,7 @@ export class GameRoom extends DurableObject<Env> {
       allCaughtAt: g.allCaughtAt ?? null,
       resultAuto: g.resultAuto === true,
       micMode: g.micMode,
+      area: g.area ?? null,
     };
   }
 

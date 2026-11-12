@@ -1,3 +1,4 @@
+import type { Area } from './area';
 import type { Candidate, CaptureVia } from './capture';
 import type { PhotoStatus } from './mission';
 
@@ -52,6 +53,8 @@ export interface GameView {
   resultAuto?: boolean;
   /** 鬼のマイクの聞き方（always＝ずっと聞く／hold＝押している間だけ）。古いサーバーからは来ない（そのときは always） */
   micMode?: 'always' | 'hold';
+  /** 遊ぶ範囲（主催者がゲームの前に地図に描いた多角形）。null＝範囲なし。古いサーバーからは来ない */
+  area?: Area | null;
 }
 
 export interface MissionView {
@@ -221,6 +224,8 @@ export type HostOp =
   | 'ratio'
   /** 鬼のマイクの聞き方を切り替える（いつでも。試合中に変えても、そのときから全員に効く） */
   | 'mic'
+  /** 遊ぶ範囲を決める（area＝頂点の並び、null で範囲なし）。試合中（時間が0になる前）は変えられない */
+  | 'area'
   | 'remove'
   /** 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。名簿は残る */
   | 'clear'
@@ -269,6 +274,8 @@ export type ClientMsg =
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      /** 遊ぶ範囲の頂点（[緯度, 経度] の並び）。null で範囲なし */
+      area?: [number, number][] | null;
       pid?: string;
       by?: string;
       rid?: string;

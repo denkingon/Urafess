@@ -1,4 +1,4 @@
-import { CAMPUS_BOX, MATES_FAR_M } from '../../shared/rules';
+import { CAMPUS_BOX, CAMPUS_CENTER, MATES_FAR_M } from '../../shared/rules';
 import { distanceM, type LatLon } from '../../shared/run';
 
 /**
@@ -8,6 +8,8 @@ import { distanceM, type LatLon } from '../../shared/run';
  * - 鬼は朱の点に2本の角、逃走者は月白の点、役の分からない人（走って光った相手）は白い光だけ。役は色と形の両方で見分ける
  * - 光っている人は光の輪。自分は蓄光の輪と、位置の誤差の円
  * - 古い位置ほど薄く。名前は重ならない分だけ出す（16px）
+ * - 遊ぶ範囲：範囲の外を暗く沈め、線を引く。範囲があれば枠は範囲に合わせる。範囲の外にいる人は朱の輪で囲む
+ * - 描いている途中の範囲（主催者）：蓄光の点と線。onTap を渡すと、押した場所の緯度・経度が返る
  */
 
 export type OvKind = 'oni' | 'runner' | 'unknown';
@@ -23,6 +25,8 @@ export interface OvPoint {
   fresh: number;
   /** いま走って光っている */
   lit: boolean;
+  /** 遊ぶ範囲の外にいる */
+  out?: boolean;
 }
 
 export interface OvInput {
@@ -32,6 +36,19 @@ export interface OvInput {
   points: OvPoint[];
   /** 名前を出す最大の人数 */
   labelMax: number;
+  /** 遊ぶ範囲（決まっている形）。無ければ null */
+  area?: [number, number][] | null;
+  /** 描いている途中の範囲（主催者が地図を押して足していく点） */
+  draft?: [number, number][] | null;
+  /** 枠の決め方：area＝範囲があれば範囲に合わせる（既定）、campus＝いつもキャンパス全体から（範囲を描くとき） */
+  frameBase?: 'area' | 'campus';
+  /** 自分が範囲の外にいる */
+  meOut?: boolean;
+}
+
+export interface OverviewOptions {
+  /** 地図を押したとき（範囲を描く）。押した場所の緯度・経度 */
+  onTap?: (p: LatLon) => void;
 }
 
 export interface Overview {
@@ -59,16 +76,34 @@ export function toWorld(p: LatLon): { x: number; y: number } {
   return { x: (p.lon + 180) / 360, y: 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI) };
 }
 
-const CAMPUS_CENTER: LatLon = { lat: (CAMPUS_BOX.north + CAMPUS_BOX.south) / 2, lon: (CAMPUS_BOX.west + CAMPUS_BOX.east) / 2 };
+/** 世界の座標 → 緯度・経度 */
+export function fromWorld(x: number, y: number): LatLon {
+  return { lat: (Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180) / Math.PI, lon: x * 360 - 180 };
+}
 
-/** 地図の枠：キャンパスと、近くにいる人を全部入れる。返り値は世界の座標の矩形 */
-export function frameOf(points: LatLon[]): { x0: number; y0: number; x1: number; y1: number } {
-  const nw = toWorld({ lat: CAMPUS_BOX.north, lon: CAMPUS_BOX.west });
-  const se = toWorld({ lat: CAMPUS_BOX.south, lon: CAMPUS_BOX.east });
-  let x0 = nw.x;
-  let y0 = nw.y;
-  let x1 = se.x;
-  let y1 = se.y;
+/**
+ * 地図の枠：もとの枠（範囲があれば範囲、無ければキャンパス）と、近くにいる人を全部入れる。返り値は世界の座標の矩形。
+ * base に範囲の頂点を渡すと、範囲に合わせる
+ */
+export function frameOf(points: LatLon[], base?: LatLon[] | null): { x0: number; y0: number; x1: number; y1: number } {
+  let x0: number;
+  let y0: number;
+  let x1: number;
+  let y1: number;
+  if (base && base.length >= 3) {
+    const ws = base.map(toWorld);
+    x0 = Math.min(...ws.map((w) => w.x));
+    x1 = Math.max(...ws.map((w) => w.x));
+    y0 = Math.min(...ws.map((w) => w.y));
+    y1 = Math.max(...ws.map((w) => w.y));
+  } else {
+    const nw = toWorld({ lat: CAMPUS_BOX.north, lon: CAMPUS_BOX.west });
+    const se = toWorld({ lat: CAMPUS_BOX.south, lon: CAMPUS_BOX.east });
+    x0 = nw.x;
+    y0 = nw.y;
+    x1 = se.x;
+    y1 = se.y;
+  }
   for (const p of points) {
     if (distanceM(CAMPUS_CENTER, p) > MATES_FAR_M) continue;
     const w = toWorld(p);
@@ -82,16 +117,17 @@ export function frameOf(points: LatLon[]): { x0: number; y0: number; x1: number;
   return { x0: x0 - padX, y0: y0 - padY, x1: x1 + padX, y1: y1 + padY };
 }
 
-export function createOverview(): Overview {
+export function createOverview(opts: OverviewOptions = {}): Overview {
   const el = document.createElement('div');
   el.className = 'ov';
   const tiles = document.createElement('div');
   tiles.className = 'ov-tiles';
   const over = svg('svg', { class: 'ov-svg', role: 'img' });
+  const areaG = svg('g', { class: 'ov-area' });
   const accG = svg('g', { class: 'ov-acc' });
   const dotsG = svg('g', { class: 'ov-dots' });
   const labelsG = svg('g', { class: 'ov-labels' });
-  over.append(accG, dotsG, labelsG);
+  over.append(areaG, accG, dotsG, labelsG);
   const credit = document.createElement('a');
   credit.className = 'ov-credit';
   credit.href = 'https://www.openstreetmap.org/copyright';
@@ -102,6 +138,18 @@ export function createOverview(): Overview {
 
   const imgs = new Map<string, HTMLImageElement>();
   let size = { w: 0, h: 0 };
+  /** いまの描き方（押した場所を緯度・経度に戻すため） */
+  let view: { S: number; cx: number; cy: number; w: number; h: number } | null = null;
+  if (opts.onTap) {
+    el.classList.add('is-tappable');
+    el.addEventListener('click', (e) => {
+      if (!view) return;
+      const r = el.getBoundingClientRect();
+      const x = (e.clientX - r.left - view.w / 2) / view.S + view.cx;
+      const y = (e.clientY - r.top - view.h / 2) / view.S + view.cy;
+      opts.onTap!(fromWorld(x, y));
+    });
+  }
   let lastInput: OvInput | null = null;
   let lastKey = '';
   const measure = () => {
@@ -120,8 +168,12 @@ export function createOverview(): Overview {
     if (!size.w || !size.h) measure();
     const { w, h } = size;
     if (w < 40 || h < 40) return;
+    const areaPts = (input.area ?? []).map(([lat, lon]) => ({ lat, lon }));
+    const draftPts = (input.draft ?? []).map(([lat, lon]) => ({ lat, lon }));
     const all: LatLon[] = [...input.points.map((p) => p.pos), ...(input.me ? [input.me] : [])];
-    const f = frameOf(all);
+    const editing = input.frameBase === 'campus';
+    // 範囲を描くときは、キャンパスと描いた点が全部入る枠。遊ぶときは範囲に合わせる
+    const f = editing ? frameOf([...areaPts, ...draftPts]) : frameOf(all, areaPts.length >= 3 ? areaPts : null);
     const S = Math.min(w / (f.x1 - f.x0), h / (f.y1 - f.y0)); // 画面の px ／ 世界の 1
     const cx = (f.x0 + f.x1) / 2;
     const cy = (f.y0 + f.y1) / 2;
@@ -136,9 +188,15 @@ export function createOverview(): Overview {
       input.meLit,
       input.points.map((p) => [p.key, p.name, p.pos.lat, p.pos.lon, p.kind, Math.round(p.fresh * 5), p.lit]),
       input.labelMax,
+      input.area,
+      input.draft,
+      input.frameBase,
+      input.meOut,
+      input.points.map((p) => p.out),
     ]);
     if (!force && key === lastKey) return;
     lastKey = key;
+    view = { S, cx, cy, w, h };
     const px = (p: LatLon) => {
       const q = toWorld(p);
       return { x: (q.x - cx) * S + w / 2, y: (q.y - cy) * S + h / 2 };
@@ -188,6 +246,23 @@ export function createOverview(): Overview {
     over.setAttribute('height', String(h));
     const mPerPx = (lat: number) => (EARTH_CIRC_M * Math.cos((lat * Math.PI) / 180)) / S;
 
+    // 遊ぶ範囲：外を暗く（画面全体の四角から範囲をくりぬく）、線を引く
+    areaG.replaceChildren();
+    if (areaPts.length >= 3) {
+      const ring = areaPts.map((p) => px(p));
+      const d = ring.map((q, i) => `${i ? 'L' : 'M'}${q.x.toFixed(1)},${q.y.toFixed(1)}`).join('') + 'Z';
+      areaG.append(
+        svg('path', { d: `M-4,-4H${w + 4}V${h + 4}H-4Z${d}`, class: 'ov-area-shade', 'fill-rule': 'evenodd' }),
+        svg('path', { d, class: `ov-area-line${draftPts.length ? ' is-old' : ''}` }),
+      );
+    }
+    if (draftPts.length) {
+      const ring = draftPts.map((p) => px(p));
+      const d = ring.map((q, i) => `${i ? 'L' : 'M'}${q.x.toFixed(1)},${q.y.toFixed(1)}`).join('') + (ring.length >= 3 ? 'Z' : '');
+      areaG.append(svg('path', { d, class: 'ov-draft-line' }));
+      ring.forEach((q, i) => areaG.append(svg('circle', { cx: q.x.toFixed(1), cy: q.y.toFixed(1), r: i === ring.length - 1 ? 7 : 5, class: 'ov-draft-pt' })));
+    }
+
     accG.replaceChildren();
     dotsG.replaceChildren();
     labelsG.replaceChildren();
@@ -221,6 +296,7 @@ export function createOverview(): Overview {
       if (p.lit) {
         g.append(svg('circle', { r: 13, class: 'ov-halo' }), svg('circle', { r: 8, class: 'ov-ping' }));
       }
+      if (p.out) g.append(svg('circle', { r: 12, class: 'ov-out' }));
       if (p.kind === 'oni') {
         // 角2本（ピクトの追跡者と同じ印）
         g.append(svg('path', { d: 'M-5.5,-4 L-7.5,-12 L-1.5,-6 Z M5.5,-4 L7.5,-12 L1.5,-6 Z', class: 'ov-horn' }));
@@ -233,6 +309,7 @@ export function createOverview(): Overview {
       const q = px(input.me);
       const g = svg('g', { class: `ov-me is-${input.meKind}${input.meLit ? ' is-lit' : ''}`, transform: `translate(${q.x.toFixed(1)} ${q.y.toFixed(1)})` });
       if (input.meLit) g.append(svg('circle', { r: 13, class: 'ov-halo' }));
+      if (input.meOut) g.append(svg('circle', { r: 14, class: 'ov-out' }));
       g.append(svg('circle', { r: 9, class: 'ov-me-ring' }), svg('circle', { r: 4, class: 'ov-me-dot' }));
       dotsG.append(g);
     }
