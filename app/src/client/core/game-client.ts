@@ -243,6 +243,30 @@ export class GameClient {
     this.emit();
   }
 
+  /**
+   * 新しいスマホへ移した合い鍵を受け取る（自分のページの「前のスマホから移す」）。
+   * 覚えて、その合い鍵で戻る（名簿にいれば名前のボタン、今夜に入っていれば今の状態が届く）
+   */
+  adopt(identity: Identity): void {
+    this.saveIdentity(identity);
+    this.pendingJoinName = null;
+    this.pendingReclaimName = null;
+    this.pendingEnter = false;
+    this.state = { ...this.state, identity, me: null, phase: 'connecting', joinError: null, takenName: null };
+    this.emit();
+    if (this.isOpen()) this.send({ t: 'resume', pid: identity.pid, key: identity.key });
+  }
+
+  /** 自分のページで名前を変えた（サーバーからも届くが、切れていてもすぐ画面に出す） */
+  setName(name: string): void {
+    const identity = this.state.identity;
+    if (!identity || identity.name === name) return;
+    const next = { ...identity, name };
+    this.saveIdentity(next);
+    this.state = { ...this.state, identity: next };
+    this.emit();
+  }
+
   /** taken のとき「そう（前の自分に戻る）」：主催者がつなぐのを待つ */
   reclaim(): void {
     const name = this.state.takenName;

@@ -60,6 +60,18 @@ import {
   type Ratio,
   type RoleId,
 } from '../shared/rules';
+import {
+  GONE_NAME,
+  HANDOFF_DIGITS,
+  HANDOFF_FAIL_WINDOW_MS,
+  HANDOFF_MAX_FAILS,
+  HANDOFF_TTL_MS,
+  isHandoffCode,
+  summarizeAccount,
+  type AccountError,
+  type AccountEvent,
+  type AccountView,
+} from '../shared/account';
 import { nameKey, normalizeName } from '../shared/names';
 import { distanceM } from '../shared/run';
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
@@ -292,7 +304,7 @@ type ParticipantRow = {
  * /api/game/<ゲームID>/(ws|debug|log|photo|photos)。photo は後ろに写真の印が付くこともある（取り出す）。
  * worker.ts も同じ形で部屋へ渡す
  */
-export const GAME_PATH = /^\/api\/game\/([A-Za-z0-9_-]{1,40})\/(ws|debug|log|photo|photos)(?:\/([A-Za-z0-9_-]{1,40}))?$/;
+export const GAME_PATH = /^\/api\/game\/([A-Za-z0-9_-]{1,40})\/(ws|debug|log|photo|photos|me)(?:\/([A-Za-z0-9_-]{1,40}))?$/;
 /** 「助けて」「助ける」の長押し（保存しない。押している間の数秒だけのもの） */
 interface RescueHold {
   start: number;
@@ -443,6 +455,16 @@ export class GameRoom extends DurableObject<Env> {
       )`,
     );
     this.sql.exec(`CREATE INDEX IF NOT EXISTS members_name_key ON members (name_key)`);
+    // 新しいスマホへ移す合言葉（古いスマホに出し、新しいスマホで打つ）。休止をまたいでも残すため保存する
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS handoffs (
+        code TEXT PRIMARY KEY,
+        mid TEXT NOT NULL,
+        until INTEGER NOT NULL
+      )`,
+    );
+    // 合言葉の打ち間違い（当てずっぽうを止めるため、部屋全体で数える）
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS handoff_fails (at INTEGER NOT NULL)`);
     // ミッションと写真。新しい夜を始めても消さない（名簿と一緒にずっと残す）
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS missions (
@@ -773,6 +795,7 @@ export class GameRoom extends DurableObject<Env> {
 
     if (m[2] === 'photo') return this.onPhotoRequest(request, url, m[3] ?? null);
     if (m[2] === 'photos') return this.onAlbumRequest(request);
+    if (m[2] === 'me' && !m[3]) return this.onMeRequest(request);
     if (m[3]) return new Response('not found', { status: 404 });
 
     if (m[2] === 'debug') {
@@ -960,6 +983,213 @@ export class GameRoom extends DurableObject<Env> {
 
   async webSocketError(): Promise<void> {
     this.scheduleHostUpdate();
+  }
+
+  // ---------- 自分のページ（ステータスと設定） ----------
+
+  /**
+   * /api/game/<id>/me
+   * GET：本人の名前と記録（x-pid・x-key の合い鍵で本人を確かめる）
+   * POST：{op:'rename'|'handoff'|'leave'}（合い鍵つき）・{op:'take', code}（新しいスマホ。合い鍵なし）
+   */
+  private async onMeRequest(request: Request): Promise<Response> {
+    const now = Date.now();
+    const answer = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
+    const fail = (error: AccountError, status: number) => answer({ error }, status);
+    const who = (): Member | null => {
+      const m = this.members.get(request.headers.get('x-pid') ?? '');
+      return m && m.key === (request.headers.get('x-key') ?? '') ? m : null;
+    };
+
+    if (request.method === 'GET') {
+      const m = who();
+      return m ? answer(this.accountOf(m)) : fail('unknown', 403);
+    }
+    if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+    const buf = await readLimited(request, 2048);
+    let body: { op?: unknown; name?: unknown; code?: unknown } = {};
+    try {
+      body = buf ? (JSON.parse(new TextDecoder().decode(buf)) as typeof body) : {};
+    } catch {
+      return fail('bad-input', 400);
+    }
+    if (body.op === 'take') return this.onHandoffTake(body.code, now, answer, fail);
+    const m = who();
+    if (!m) return fail('unknown', 403);
+    switch (body.op) {
+      case 'rename':
+        return this.onRename(m, body.name, now, answer, fail);
+      case 'handoff':
+        return answer(this.newHandoff(m, now));
+      case 'leave':
+        return this.onLeave(m, now, answer, fail);
+      default:
+        return fail('bad-input', 400);
+    }
+  }
+
+  /** 試合中（配役〜タイマー）で、今夜に入っている */
+  private inMatchTonight(pid: string): boolean {
+    const p = this.people.get(pid);
+    return !!p && !p.removed && (this.game.stage === 'assigned' || this.game.stage === 'timer');
+  }
+
+  private accountOf(m: Member): AccountView {
+    const rows = this.sql
+      .exec<AccountEvent>(
+        `SELECT at, assign_id, kind, pid, other_pid, data FROM events
+         WHERE kind IN ('start', 'capture', 'release') OR pid = ? OR other_pid = ?
+         ORDER BY id`,
+        m.pid,
+        m.pid,
+      )
+      .toArray();
+    return { name: m.name, since: m.createdAt, stats: summarizeAccount(rows, m.pid), busy: this.inMatchTonight(m.pid) };
+  }
+
+  /** この人につながっている接続（今夜に入っている・名前のボタンを待っている） */
+  private socketsOf(pid: string): { ws: WebSocket; att: Attachment }[] {
+    const out: { ws: WebSocket; att: Attachment }[] = [];
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as Attachment | null;
+      if (att && (att.pid === pid || att.mid === pid)) out.push({ ws, att });
+    }
+    return out;
+  }
+
+  /** 名前を変える。名前は名簿の中で1人1つのまま。試合中で今夜に入っている人は変えられない */
+  private onRename(
+    m: Member,
+    raw: unknown,
+    now: number,
+    answer: (body: unknown, status?: number) => Response,
+    fail: (e: AccountError, status: number) => Response,
+  ): Response {
+    if (this.inMatchTonight(m.pid)) return fail('busy', 409);
+    const name = normalizeName(raw);
+    if (!name) return fail('invalid', 400);
+    const key = nameKey(name);
+    const owner = this.memberByName.get(key);
+    if (owner && owner.pid !== m.pid) return fail('taken', 409);
+    if (name === m.name) return answer({ name });
+    const from = m.name;
+    const p = this.people.get(m.pid);
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`UPDATE members SET name = ?, name_key = ? WHERE pid = ?`, name, key, m.pid);
+      if (p) this.sql.exec(`UPDATE participants SET name = ? WHERE pid = ?`, name, m.pid);
+      this.log('rename', { p: { pid: m.pid, num: m.num, name }, at: now, data: { from } });
+    });
+    if (this.memberByName.get(m.nameKey) === m) this.memberByName.delete(m.nameKey);
+    m.name = name;
+    m.nameKey = key;
+    this.memberByName.set(key, m);
+    if (p) p.name = name;
+    // 開いているスマホにも新しい名前を届ける（今夜に入っていれば合い鍵ごと、名前のボタンなら名前だけ）
+    for (const { ws, att } of this.socketsOf(m.pid)) {
+      if (att.pid && p) this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name });
+      else this.send(ws, { t: 'known', name });
+    }
+    this.scheduleBroadcast();
+    this.scheduleHostUpdate();
+    return answer({ name });
+  }
+
+  /** 新しいスマホへ移す合言葉を出す（前に出した合言葉は消える） */
+  private newHandoff(m: Member, now: number): { code: string; until: number } {
+    this.sql.exec(`DELETE FROM handoffs WHERE mid = ? OR until <= ?`, m.pid, now);
+    let code = '';
+    for (let i = 0; i < 20; i++) {
+      code = randomDigits(HANDOFF_DIGITS);
+      if (!this.sql.exec(`SELECT 1 FROM handoffs WHERE code = ?`, code).toArray().length) break;
+    }
+    const until = now + HANDOFF_TTL_MS;
+    this.sql.exec(`INSERT OR REPLACE INTO handoffs (code, mid, until) VALUES (?, ?, ?)`, code, m.pid, until);
+    return { code, until };
+  }
+
+  /**
+   * 新しいスマホで合言葉を打つ。合い鍵を作り直して新しいスマホに渡し、古いスマホは入室画面に戻す
+   * （同じ人が2台で入ったままにならないように）
+   */
+  private onHandoffTake(
+    raw: unknown,
+    now: number,
+    answer: (body: unknown, status?: number) => Response,
+    fail: (e: AccountError, status: number) => Response,
+  ): Response {
+    this.sql.exec(`DELETE FROM handoff_fails WHERE at <= ?`, now - HANDOFF_FAIL_WINDOW_MS);
+    const fails = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM handoff_fails`).toArray()[0]?.n ?? 0;
+    if (fails >= HANDOFF_MAX_FAILS) return fail('locked', 429);
+    const row = isHandoffCode(raw)
+      ? this.sql.exec<{ mid: string; until: number }>(`SELECT mid, until FROM handoffs WHERE code = ?`, raw).toArray()[0]
+      : undefined;
+    const m = row && row.until > now ? this.members.get(row.mid) : undefined;
+    if (!m) {
+      this.sql.exec(`INSERT INTO handoff_fails (at) VALUES (?)`, now);
+      return fail('bad-code', 400);
+    }
+    const key = randomKey();
+    const p = this.people.get(m.pid);
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`DELETE FROM handoffs WHERE mid = ?`, m.pid);
+      this.sql.exec(`UPDATE members SET key = ? WHERE pid = ?`, key, m.pid);
+      if (p) this.sql.exec(`UPDATE participants SET key = ? WHERE pid = ?`, key, m.pid);
+      this.log('handoff', { p: m, at: now });
+    });
+    m.key = key;
+    if (p) p.key = key;
+    for (const { ws, att } of this.socketsOf(m.pid)) {
+      delete att.pid;
+      delete att.mid;
+      delete att.syncErr;
+      ws.serializeAttachment(att);
+      this.send(ws, { t: 'unknown' });
+    }
+    this.scheduleHostUpdate();
+    return answer({ pid: m.pid, key, num: m.num, name: m.name });
+  }
+
+  /**
+   * 名簿から消える。名前は空き、記録に残っている名前は「消えた人」になる（数は残る）。
+   * 試合中で今夜に入っている人は消えられない
+   */
+  private onLeave(
+    m: Member,
+    now: number,
+    answer: (body: unknown, status?: number) => Response,
+    fail: (e: AccountError, status: number) => Response,
+  ): Response {
+    if (this.inMatchTonight(m.pid)) return fail('busy', 409);
+    const gone: Who = { pid: m.pid, num: m.num, name: GONE_NAME };
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`DELETE FROM members WHERE pid = ?`, m.pid);
+      this.sql.exec(`DELETE FROM participants WHERE pid = ?`, m.pid);
+      this.sql.exec(`DELETE FROM handoffs WHERE mid = ?`, m.pid);
+      this.sql.exec(`UPDATE events SET name = ? WHERE pid = ?`, GONE_NAME, m.pid);
+      this.sql.exec(`UPDATE events SET other_name = ? WHERE other_pid = ?`, GONE_NAME, m.pid);
+      this.log('leave', { p: gone, at: now });
+    });
+    this.members.delete(m.pid);
+    if (this.memberByName.get(m.nameKey) === m) this.memberByName.delete(m.nameKey);
+    this.people.delete(m.pid);
+    for (const { ws, att } of this.socketsOf(m.pid)) {
+      delete att.pid;
+      delete att.mid;
+      delete att.syncErr;
+      ws.serializeAttachment(att);
+      this.send(ws, { t: 'unknown' });
+    }
+    // 「前の◯◯に戻る」でこの人を待っていた接続は、名前の入力に戻す
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as Attachment | null;
+      if (att?.reclaim?.mid !== m.pid) continue;
+      delete att.reclaim;
+      ws.serializeAttachment(att);
+      this.send(ws, { t: 'reclaim', status: 'denied', name: m.name });
+    }
+    this.scheduleBroadcast();
+    this.scheduleHostUpdate();
+    return answer({ ok: true });
   }
 
   // ---------- 参加者 ----------
@@ -2931,6 +3161,12 @@ function photoOf(r: PhotoRow): PhotoMeta {
     bytes: r.bytes,
     freed: r.freed ?? 0,
   };
+}
+
+function randomDigits(n: number): string {
+  const bytes = new Uint32Array(n);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => String(b % 10)).join('');
 }
 
 function randomKey(): string {

@@ -8,6 +8,7 @@ import { getCodec } from './sound/codec';
 import { SoundEmitter } from './sound/emitter';
 import { SoundListener } from './sound/listener';
 import { Sensors } from './sense';
+import { callAccount, createAccount, errorText } from './views/account';
 import { createCapture } from './views/capture';
 import { createGlow } from './views/glow';
 import { createHost } from './views/host';
@@ -149,17 +150,44 @@ function sessionSet(k: string, v: string): void {
 function startPlayer(): void {
   const client = makeClient({ kind: 'player' });
   startUpdateChecks(() => !(client.state.phase === 'ready' && inMatch(client.state.game?.stage)));
+  // 自分のページ（ステータスと設定）。開いている間は、試合が始まるまでこちらを出す
+  let accountOpen = false;
+  const account = createAccount({
+    gameId,
+    identity: () => client.state.identity,
+    renamed: (name) => client.setName(name),
+    forget: () => {
+      accountOpen = false;
+      client.forget();
+    },
+    close: () => {
+      accountOpen = false;
+    },
+  });
+  const openAccount = () => {
+    if (!client.state.identity) return;
+    accountOpen = true;
+    account.open();
+  };
   const join = createJoin({
     join: (name) => client.join(name),
     enter: () => client.enter(),
     forget: () => client.forget(),
     reclaim: () => client.reclaim(),
     backToName: (message) => client.backToName(message),
+    openAccount,
+    take: async (code) => {
+      const r = await callAccount<{ pid: string; key: string; num: number; name: string }>(gameId, 'POST', null, { op: 'take', code });
+      if (!r.ok) return errorText(r.error);
+      client.adopt(r.value);
+      return null;
+    },
   });
   // 入室画面が最後に出していた姿（「入っている…」の間も、押した画面のまま待つ）
   let entryMode: EntryMode = 'name';
   let askedPersist = false;
   const phone = createPhone();
+  phone.mine.addEventListener('click', openAccount);
   // 捕獲：逃走者のスマホは長押しの間3桁を鳴らし、鬼のスマホはマイクで聞く
   const emitter = new SoundEmitter();
   const listener = new SoundListener();
@@ -246,6 +274,17 @@ function startPlayer(): void {
       askedPersist = true;
       void navigator.storage?.persist?.().catch(() => false);
     }
+    if (accountOpen) {
+      // 試合が始まった（今夜に入っている）・このスマホが名前を忘れた → 自分のページを閉じる
+      const inGame = s.phase === 'ready' && inMatch(s.game?.stage);
+      if (!s.identity || inGame) {
+        accountOpen = false;
+      } else {
+        show(account.el);
+        account.update(false);
+        return;
+      }
+    }
     const mode = entryModeOf(s.phase);
     if (mode || s.phase === 'joining') {
       if (mode) entryMode = mode;
@@ -262,12 +301,14 @@ function startPlayer(): void {
       show(phone.el);
       const waiting = connectingView(s.online);
       lastView = waiting;
+      phone.mine.hidden = true;
       phone.update(waiting);
       mission.update(null, null);
       glow.update(waiting, s, client.serverNow());
       return;
     }
     show(phone.el);
+    phone.mine.hidden = inMatch(s.game.stage);
     const view = participantView(s.game, s.me, client.serverNow() ?? Date.now(), s.online);
     lastView = view;
     phone.update(view);
