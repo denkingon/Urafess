@@ -10,7 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { GameClient, type KeyValueStore } from '../src/client/core/game-client';
-import { isDone } from '../src/shared/schedule';
+import { CAPTURE_PHASE_INDEX } from '../src/shared/capture';
+import { isDone, positionAt } from '../src/shared/schedule';
 
 const PORT = Number(process.env.MISSION_PORT ?? 8797);
 const TOKEN = 'missiontoken';
@@ -117,8 +118,8 @@ describe('ミッション（集合写真）', () => {
     await waitFor('3人が入室', () => players.every((p) => p.state.identity) && host.state.host?.total === 3);
 
     // 時間を短く（逃走・追跡・ゲーム・戻る＝1秒・1秒・4秒・1秒）
-    host.command('durations', { durations: [1000, 1000, 8000, 1000] });
-    await waitFor('時間', () => host.state.game?.durations[2] === 8000);
+    host.command('durations', { durations: [1000, 1000, 15000, 1000] });
+    await waitFor('時間', () => host.state.game?.durations[2] === 15000);
     host.command('assign');
     await waitFor('配役', () => players.every((p) => p.state.me?.role));
     host.command('start');
@@ -168,8 +169,33 @@ describe('ミッション（集合写真）', () => {
     host.command('judge', { photo: photoB, ok: false });
     await waitFor('みどりにやり直し', () => b.state.me?.sent?.[0]?.status === 'no');
 
-    // 主催者があおを「成功」 → 全員の画面に、あおの名前で成功が届く
-    host.command('judge', { photo: photoA, ok: true });
+    // 牢屋から出せるのはゲームの段階だけ。そこまで待つ
+    await waitFor('ゲームの段階', () => {
+      const g = host.state.game;
+      const pos = g?.timer ? positionAt(g.timer, host.serverNow() ?? Date.now()) : null;
+      return pos?.kind === 'phase' && pos.index === CAPTURE_PHASE_INDEX;
+    });
+    // 逃走者を1人、牢屋に入れておく（主催者の手で）
+    const jailedP = players.find((p) => p.state.me?.role === 'runner')!;
+    host.command('capture', { pid: jailedP.state.me!.pid });
+    await waitFor('牢屋に入る', () => jailedP.state.me?.caught != null);
+
+    // 主催者があおを「成功」（牢屋から全員を出す）→ 全員の画面に、あおの名前と出た人数が届き、牢屋の人が出る
+    host.command('judge', { photo: photoA, ok: true, free: true });
+    await waitFor('牢屋から出る', () => jailedP.state.me?.caught == null);
+    await waitFor('主催者に出た人数', () => host.state.host?.photos?.find((p) => p.id === photoA)?.freed === 1);
+    expect(a.state.game!.missionOk!.find((x) => x.id === photoA)?.freed ?? 1).toBe(1);
+    // やり直しにして成功に戻しても、2回は出さない（牢屋にもう一度入れて確かめる）
+    host.command('capture', { pid: jailedP.state.me!.pid });
+    await waitFor('もう一度牢屋に', () => jailedP.state.me?.caught != null);
+    host.command('judge', { photo: photoA, ok: false });
+    await waitFor('やり直しに', () => host.state.host?.photos?.find((p) => p.id === photoA)?.status === 'no');
+    host.command('judge', { photo: photoA, ok: true, free: true });
+    await waitFor('成功に戻る', () => host.state.host?.photos?.find((p) => p.id === photoA)?.status === 'ok');
+    await sleep(800);
+    expect(jailedP.state.me?.caught).not.toBeNull();
+    host.command('release', { pid: jailedP.state.me!.pid });
+    await waitFor('手で出す', () => jailedP.state.me?.caught == null);
     await waitFor('全員に成功', () => players.every((p) => p.state.game?.missionOk?.some((x) => x.id === photoA && x.name === 'あお')));
     expect(a.state.game!.missionOk!.length).toBe(1);
 
@@ -187,7 +213,7 @@ describe('ミッション（集合写真）', () => {
     await waitFor('時間が0', () => {
       const g = host.state.game;
       return !!g?.timer && isDone(g.timer, (host.serverNow() ?? Date.now()) - 300);
-    }, 20_000);
+    }, 40_000);
     const got = await getPhoto(c, photoA);
     expect(got.status).toBe(200);
     expect(got.headers.get('content-type')).toBe('image/jpeg');
@@ -237,5 +263,6 @@ describe('ミッション（集合写真）', () => {
     // 記録（CSV）に残る
     const csv = await (await fetch(`${BASE}/api/game/${GAME}/log`, { headers: { 'x-host-token': TOKEN } })).text();
     for (const w of ['ミッションを出した', '写真を送った', '写真：成功', '写真：やり直し', 'ミッションを締め切った']) expect(csv).toContain(w);
+    expect(csv).toContain(photoA);
   }, 180_000);
 });

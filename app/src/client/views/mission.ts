@@ -148,7 +148,7 @@ export interface MissionScreen {
 
 export function createMission(deps: MissionDeps): MissionScreen {
   const card = document.createElement('section');
-  card.className = 'mission';
+  card.className = 'mission-card';
   card.hidden = true;
   card.innerHTML = `
     <div class="mission-head"><span class="mission-tag">ミッション</span><span class="mission-state" data-k="state"></span></div>
@@ -272,7 +272,7 @@ export function createMission(deps: MissionDeps): MissionScreen {
 
       const mine = (me.sent ?? []).filter((x) => x.missionId === mission.id);
       const latest = mine[mine.length - 1] ?? null;
-      const key = JSON.stringify([mission, mine, okList.map((x) => x.name), sending, error, revealed]);
+      const key = JSON.stringify([mission, mine, okList.map((x) => [x.name, x.freed ?? 0]), sending, error, revealed]);
       if (key === last) return;
       last = key;
       q('title').textContent = mission.title;
@@ -295,8 +295,9 @@ export function createMission(deps: MissionDeps): MissionScreen {
       q('mine').textContent = mineText;
       q('mine').dataset.state = error ? 'error' : latest?.status ?? '';
       const names = [...new Set(okList.map((x) => x.name))];
+      const freed = okList.reduce((sum, x) => sum + (x.freed ?? 0), 0);
       q('ok').textContent = names.length
-        ? `成功：${names.join('・')}${revealed ? '' : '（写真は結果発表で出る）'}`
+        ? `成功：${names.join('・')}${freed ? `。牢屋から${freed}人出た` : ''}${revealed ? '' : '（写真は結果発表で出る）'}`
         : mission.open
           ? ''
           : 'まだ誰も成功していない。';

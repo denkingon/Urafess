@@ -58,6 +58,7 @@ export interface HostActions {
       ok?: boolean;
       title?: string;
       photo?: string;
+      free?: boolean;
       n?: number;
     },
   ): void;
@@ -165,14 +166,23 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       <button type="button" class="ghost" data-act="glow-map" hidden>地図の真ん中をこの画面の場所にする（位置を使う）</button>
       <div data-k="glowBoard"></div>
     </section>
-    <section class="cap-host mission-host" data-k="mission">
+    <section class="cap-host mission-host" data-k="missionPhoto">
       <div class="cap-host-head"><b>ミッション</b><span data-k="missionNow"></span></div>
       <form data-k="missionForm">
         <input type="text" maxlength="${MISSION_TITLE_MAX}" placeholder="${MISSION_DEFAULT_TITLE}" data-k="missionTitle" aria-label="ミッションの題">
         <button type="submit" data-k="missionGo">ミッションを出す</button>
       </form>
       <button type="button" class="ghost" data-k="missionClose" hidden>締め切る（成功した写真はそのまま）</button>
-      <p class="note">届いた写真を見て「成功」か「やり直し」を押す。成功は全員の画面に名前が出る。写真そのものは結果発表で全員の画面に出る。</p>
+      <label class="mission-free-pick">「成功」で牢屋から
+        <select data-k="missionFree" aria-label="成功で牢屋から出す人数">
+          <option value="all" selected>全員を出す</option>
+          <option value="1">1人出す</option>
+          <option value="2">2人出す</option>
+          <option value="3">3人出す</option>
+          <option value="0">出さない</option>
+        </select>
+      </label>
+      <p class="note">届いた写真を見て「成功」か「やり直し」を押す。成功は全員の画面に名前が出る。ゲームの段階なら、上で選んだ人数を牢屋から出す（入った順。1枚の写真で1回だけ）。写真そのものは結果発表で全員の画面に出る。</p>
       <div class="photo-grid" data-k="photoGrid"></div>
       <details class="album" data-k="album">
         <summary>写真（全部の夜）</summary>
@@ -317,7 +327,10 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     const t = e.target as HTMLElement;
     const b = t.closest('button') as HTMLButtonElement | null;
     if (b?.dataset.photo) {
-      actions.command('judge', { photo: b.dataset.photo, ok: b.dataset.ok === '1' });
+      const ok = b.dataset.ok === '1';
+      const pick = (q('missionFree') as HTMLSelectElement).value;
+      const free = ok && pick !== '0';
+      actions.command('judge', free ? { photo: b.dataset.photo, ok, free, ...(pick === 'all' ? {} : { n: Number(pick) }) } : { photo: b.dataset.photo, ok });
       return;
     }
     // 写真を押すと大きくする・戻す
@@ -622,13 +635,20 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       go.disabled = !canIssue;
       go.textContent = mission?.open ? '次のミッションを出す' : 'ミッションを出す';
       q('missionClose').hidden = !mission?.open;
-      const photoKey = JSON.stringify(roundPhotos.map((ph) => [ph.id, ph.status]));
+      const photoKey = JSON.stringify(roundPhotos.map((ph) => [ph.id, ph.status, ph.freed ?? 0]));
       if (photoKey !== lastPhotoKey) {
         lastPhotoKey = photoKey;
         // 見ていない写真を先に、そのあと新しい順
         const order = [...roundPhotos].sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1) || b.at - a.at);
         q('photoGrid').replaceChildren(
-          ...order.map((ph) => photoFigure(ph.id, `${ph.name}・${clock(ph.at)}・${PHOTO_STATUS_NAME[ph.status]}`, ph.status, { id: ph.id })),
+          ...order.map((ph) =>
+            photoFigure(
+              ph.id,
+              `${ph.name}・${clock(ph.at)}・${PHOTO_STATUS_NAME[ph.status]}${ph.freed ? `・牢屋から${ph.freed}人` : ''}`,
+              ph.status,
+              { id: ph.id },
+            ),
+          ),
         );
         // 全部の夜の一覧を開いている間に、写真が届いた・決めたら読み直す
         if (album.open) void showAlbum();

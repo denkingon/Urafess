@@ -390,6 +390,7 @@ export class GameClient {
       ok?: boolean;
       title?: string;
       photo?: string;
+      free?: boolean;
       n?: number;
     } = {},
   ): boolean {

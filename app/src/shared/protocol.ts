@@ -70,6 +70,8 @@ export interface MissionOk {
   name: string;
   /** 送ったサーバー時刻 */
   at: number;
+  /** この写真の成功で牢屋から出た人数（出していなければ 0）。古いサーバーからは来ない */
+  freed?: number;
 }
 
 /** 主催者が見る写真1枚 */
@@ -80,6 +82,8 @@ export interface HostPhoto {
   at: number;
   status: PhotoStatus;
   bytes: number;
+  /** この写真の成功で牢屋から出た人数 */
+  freed?: number;
 }
 
 /** 本人だけに送る部分 */
@@ -236,7 +240,10 @@ export type HostOp =
   | 'mission'
   /** ミッションを締め切る（写真をもう受け付けない。成功した写真はそのまま） */
   | 'mission-close'
-  /** 写真を見て決める（photo＝写真の印、ok=true で成功・false でやり直し）。決め直してもいい */
+  /**
+   * 写真を見て決める（photo＝写真の印、ok=true で成功・false でやり直し）。決め直してもいい。
+   * 成功のとき free=true なら牢屋の人も出す（n＝人数、省くと全員）。1枚の写真で出すのは最初の成功の1回だけ
+   */
   | 'judge';
 
 export type ClientMsg =
@@ -268,6 +275,7 @@ export type ClientMsg =
       ok?: boolean;
       title?: string;
       photo?: string;
+      free?: boolean;
       /** ミッション成功で出す人数（省くと全員） */
       n?: number;
     }
