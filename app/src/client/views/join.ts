@@ -34,10 +34,14 @@ export interface JoinScreen {
   update(state: EntryState): void;
 }
 
-export function createJoin(actions: EntryActions): JoinScreen {
+/**
+ * @param hostHref 主催者の入口（合言葉の画面）への道。ホーム画面のアプリには URL の欄が無いので、ここから行く
+ */
+export function createJoin(actions: EntryActions, hostHref = '/host'): JoinScreen {
   const el = document.createElement('main');
   el.className = 'phone join';
   el.innerHTML = `
+    <a class="door" href="${esc(hostHref)}">${say(['主催者', 'HOST'])}</a>
     <h1 class="u">Urafess</h1>
     <section data-mode="name">
       <p class="lead">${sent(['ニックネームを入れて参加する。一度入れたら、次からは名前を押すだけで入れる', 'Enter a nickname to join. Next time, just tap your name'])}</p>

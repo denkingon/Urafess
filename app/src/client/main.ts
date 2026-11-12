@@ -1,5 +1,6 @@
 import './styles.css';
 import { RunReporter } from '../shared/run';
+import { encodeHostKey } from '../shared/hostkey';
 import { MATES_SEND_EVERY_MS } from '../shared/rules';
 import { bootQuiet, connectingView, participantView, type PhoneView } from '../shared/viewmodel';
 import { GameClient, type KeyValueStore } from './core/game-client';
@@ -44,7 +45,7 @@ const inMatch = (stage: string | undefined) => stage === 'assigned' || stage ===
 if (isLab) {
   startLab();
 } else if (isHost) {
-  // 主催者用の合言葉は URL の ?token= で一度渡せば、この端末に覚えさせて URL からは消す
+  // 主催者用の合言葉は、合言葉の欄に打つ（一度通ればこの端末が覚える）。URL の ?token= で渡してもいい（URL からは消す）
   const fromUrl = params.get('token');
   if (fromUrl) {
     storage.set('urafess:host-token', fromUrl);
@@ -155,7 +156,7 @@ function startPlayer(): void {
     forget: () => client.forget(),
     reclaim: () => client.reclaim(),
     backToName: (message) => client.backToName(message),
-  });
+  }, `/host${gameId === 'main' ? '' : `?g=${gameId}`}`);
   // 入室画面が最後に出していた姿（「入っている…」の間も、押した画面のまま待つ）
   let entryMode: EntryMode = 'name';
   let askedPersist = false;
@@ -331,14 +332,16 @@ function startLab(): void {
 
 function startHost(token: string): void {
   const client = makeClient({ kind: 'host', token });
+  // 合言葉に日本語が入っていると、そのままではヘッダーに載せられない（記録の保存と写真が送る前に失敗する）
+  const hostHeaders = { 'x-host-token': encodeHostKey(token) };
   startUpdateChecks(() => !inMatch(client.state.game?.stage));
-  const photos = createPhotoLoader(gameId, () => ({ 'x-host-token': token }));
+  const photos = createPhotoLoader(gameId, () => hostHeaders);
   // 走ると光る：主催者の画面の地図の真ん中（位置）と向き。主催者は光らない
   const sensors = new Sensors();
   const host = createHost({
     command: (op, extra) => client.command(op, extra),
     downloadLog: async () => {
-      const res = await fetch(`/api/game/${gameId}/log`, { headers: { 'x-host-token': token }, cache: 'no-store' });
+      const res = await fetch(`/api/game/${gameId}/log`, { headers: hostHeaders, cache: 'no-store' });
       if (!res.ok) throw new Error(`log ${res.status}`);
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a');
@@ -351,7 +354,7 @@ function startHost(token: string): void {
     },
     photo: (id) => photos.get(id),
     album: async () => {
-      const res = await fetch(`/api/game/${gameId}/photos`, { headers: { 'x-host-token': token }, cache: 'no-store' });
+      const res = await fetch(`/api/game/${gameId}/photos`, { headers: hostHeaders, cache: 'no-store' });
       if (!res.ok) throw new Error(`photos ${res.status}`);
       return res.json();
     },
@@ -363,7 +366,7 @@ function startHost(token: string): void {
     if (s.phase === 'denied') {
       screenKeeper.set(false);
       storage.remove('urafess:host-token');
-      showTokenForm('合言葉が違う。');
+      showTokenForm(WRONG_KEY, token);
       return false;
     }
     host.update({
@@ -378,25 +381,74 @@ function startHost(token: string): void {
   });
 }
 
-function showTokenForm(error?: string): void {
+const WRONG_KEY = '合言葉が違う。打った字はそのまま残してある';
+
+/**
+ * 主催者の入口。合言葉は見える字で打つ（伏せ字の欄だと、スマホは日本語のキーボードに切り替えられない）。
+ * 空白・大文字小文字・全角半角はどう打っても合う。合っているのを確かめてから、この端末に覚えさせる
+ */
+function showTokenForm(error?: string, tried = ''): void {
   const el = document.createElement('main');
-  el.className = 'phone join';
+  el.className = 'phone join host-door';
   el.innerHTML = `
     <h1>主催者</h1>
     <form>
       <label for="token">主催者用の合言葉</label>
-      <input id="token" type="password" autocomplete="off" required>
-      <p class="error" ${error ? '' : 'hidden'}>${error ?? ''}</p>
+      <input id="token" name="token" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go" required>
+      <p class="note">空白・大文字小文字・全角半角は、どう打っても合う。一度入れば、このスマホが覚える</p>
+      <p class="error" role="alert" hidden></p>
       <button type="submit">入る</button>
-    </form>`;
-  el.querySelector('form')!.addEventListener('submit', (e) => {
+    </form>
+    <div class="spacer"></div>
+    <a class="quiet" href="/${gameId === 'main' ? '' : `?g=${gameId}`}">参加者の画面へ</a>`;
+  const input = el.querySelector('input')!;
+  const errorEl = el.querySelector('.error') as HTMLElement;
+  const submit = el.querySelector('button')!;
+  const showError = (message: string | null) => {
+    errorEl.hidden = !message;
+    errorEl.textContent = message ?? '';
+  };
+  input.value = tried;
+  showError(error ?? null);
+  let busy = false;
+  // 打ち直しはじめたら「違う」を消す
+  input.addEventListener('input', () => showError(null));
+  el.querySelector('form')!.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const value = (el.querySelector('input') as HTMLInputElement).value.trim();
-    if (!value) return;
-    storage.set('urafess:host-token', value);
-    location.reload();
+    const value = input.value.trim();
+    if (!value || busy) return;
+    busy = true;
+    submit.disabled = true;
+    submit.textContent = '確かめている…';
+    showError(null);
+    const verdict = await checkHostKey(value);
+    if (verdict === 'ok' || verdict === 'unknown') {
+      // unknown＝確かめる口が無いサーバー。前と同じく、つないでから決まる
+      storage.set('urafess:host-token', value);
+      location.reload();
+      return;
+    }
+    busy = false;
+    submit.disabled = false;
+    submit.textContent = '入る';
+    showError(verdict === 'wrong' ? WRONG_KEY : 'つながらない。電波を確かめて、もう一度「入る」を押す');
+    input.focus();
+    if (verdict === 'wrong') input.select();
   });
   root.replaceChildren(el);
+  setTimeout(() => input.focus(), 0);
+}
+
+/** 合言葉が合っているかをサーバーに聞く。覚える前に確かめるので、間違えても打った字が消えない */
+async function checkHostKey(value: string): Promise<'ok' | 'wrong' | 'offline' | 'unknown'> {
+  try {
+    const res = await fetch(`/api/game/${gameId}/key`, { headers: { 'x-host-token': encodeHostKey(value) }, cache: 'no-store' });
+    if (res.status === 204) return 'ok';
+    if (res.status === 403) return 'wrong';
+    return 'unknown';
+  } catch {
+    return 'offline';
+  }
 }
 
 // ---------- 共通 ----------
