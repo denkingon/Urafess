@@ -418,7 +418,7 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .glow-list li.has-more { grid-template-columns: 24px auto 1fr auto; }
 
 /* ミッション（集合写真）：参加者の札（長押しの上）と、結果発表の写真の並び */
-.mission { border: 1px solid var(--ink); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.mission-card { border: 1px solid var(--ink); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .mission-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .mission-tag { font-size: 13px; font-weight: 900; letter-spacing: 1px; padding: 2px 10px; border-radius: 999px; background: var(--ink); color: var(--bg); }
 .mission-state { font-size: 13px; color: var(--quiet); }
@@ -429,7 +429,7 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .mission-mine[data-state="ok"] { font-weight: 900; }
 .mission-mine[data-state="error"], .mission-mine[data-state="no"] { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .mission-ok { color: var(--quiet); }
-.phone.is-glow .mission { padding: 8px 12px; gap: 6px; }
+.phone.is-glow .mission-card { padding: 8px 12px; gap: 6px; }
 .phone.is-glow .mission-title { font-size: 16px; }
 .phone.is-glow .mission-shoot { min-height: 48px; font-size: 16px; }
 .mission-gallery { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
@@ -503,3 +503,6 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .ov-name.is-me { fill: var(--chikko); }
 .ov-credit { position: absolute; right: 6px; bottom: 4px; font-size: 16px; color: #6f6f6f; text-decoration: none; line-height: 1.2; }
 .glow-host .glow-board[data-mode="all"] .glow-radar { height: min(120vw, 560px); }
+
+.mission-free-pick { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--quiet); }
+.mission-free-pick select { min-height: 44px; font-size: 16px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--field); color: var(--ink); }

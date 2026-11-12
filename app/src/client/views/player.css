@@ -339,13 +339,13 @@
 .player .jail .cap-mic { border-color: var(--tsuki); color: var(--tsuki); }
 .player .jail .cap-status { margin: 0; text-align: center; }
 /* ミッションの札は、牢屋の板と同じ枠の中でも左寄せ・ボタンは横いっぱい */
-.phone.player .slot > .mission { align-items: stretch; text-align: left; }
-.phone.player .slot > .mission .mission-head { justify-content: space-between; }
-.phone.player .slot > .mission .mission-shoot { align-self: stretch; width: 100%; }
+.phone.player .slot > .mission-card { align-items: stretch; text-align: left; }
+.phone.player .slot > .mission-card .mission-head { justify-content: space-between; }
+.phone.player .slot > .mission-card .mission-shoot { align-self: stretch; width: 100%; }
 /* ゲームの段階（地図を出している間）は、ミッションの札を1行に畳んで地図に高さを譲る：題｜撮るボタン、下に状態の1行 */
-.phone.player.is-glow .slot > .mission { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 2px; padding: 8px 12px; }
-.phone.player.is-glow .slot > .mission .mission-head { display: none; }
-.phone.player.is-glow .slot > .mission .mission-title { font-size: max(var(--min), 16px); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.phone.player.is-glow .slot > .mission .mission-shoot { width: auto; min-height: 44px; padding: 0 16px; font-size: max(var(--min), 16px); align-self: center; }
-.phone.player.is-glow .slot > .mission .mission-mine, .phone.player.is-glow .slot > .mission .mission-ok { grid-column: 1 / -1; font-size: max(var(--min), 16px); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.phone.player.is-glow .slot > .mission .mission-mine:not(:empty) ~ .mission-ok { display: none; }
+.phone.player.is-glow .slot > .mission-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 2px; padding: 8px 12px; }
+.phone.player.is-glow .slot > .mission-card .mission-head { display: none; }
+.phone.player.is-glow .slot > .mission-card .mission-title { font-size: max(var(--min), 16px); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.phone.player.is-glow .slot > .mission-card .mission-shoot { width: auto; min-height: 44px; padding: 0 16px; font-size: max(var(--min), 16px); align-self: center; }
+.phone.player.is-glow .slot > .mission-card .mission-mine, .phone.player.is-glow .slot > .mission-card .mission-ok { grid-column: 1 / -1; font-size: max(var(--min), 16px); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.phone.player.is-glow .slot > .mission-card .mission-mine:not(:empty) ~ .mission-ok { display: none; }

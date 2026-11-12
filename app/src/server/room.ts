@@ -121,6 +121,8 @@ interface PhotoMeta {
   status: PhotoStatus;
   judgedAt: number | null;
   bytes: number;
+  /** この写真の成功で牢屋から出た人数（出したのは1回だけ） */
+  freed: number;
 }
 
 type PhotoRow = {
@@ -136,6 +138,7 @@ type PhotoRow = {
   status: string;
   judged_at: number | null;
   bytes: number;
+  freed?: number | null;
 };
 
 /**
@@ -470,6 +473,9 @@ export class GameRoom extends DurableObject<Env> {
       )`,
     );
     this.sql.exec(`CREATE INDEX IF NOT EXISTS photos_mission ON photos (mission_id)`);
+    // 成功で牢屋から出した人数（あとから足した列）
+    const photoCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(photos)`).toArray().map((r) => r.name));
+    if (!photoCols.has('freed')) this.sql.exec(`ALTER TABLE photos ADD COLUMN freed INTEGER NOT NULL DEFAULT 0`);
     // 1イベント＝1行。部屋を空にしても消さない（あとで人数比や流れを統計で見るため）
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS events (
@@ -642,7 +648,7 @@ export class GameRoom extends DurableObject<Env> {
   private loadPhotos(): void {
     this.photos.clear();
     for (const r of this.sql.exec<PhotoRow>(
-      `SELECT id, mission_id, night, round, assign_id, pid, num, name, at, status, judged_at, bytes FROM photos WHERE mission_id >= ? ORDER BY at`,
+      `SELECT id, mission_id, night, round, assign_id, pid, num, name, at, status, judged_at, bytes, freed FROM photos WHERE mission_id >= ? ORDER BY at`,
       this.game.missionFrom ?? 1,
     )) {
       this.photos.set(r.id, photoOf(r));
@@ -2276,19 +2282,8 @@ export class GameRoom extends DurableObject<Env> {
         // ミッション成功：牢屋の人を出す。ゲームの段階の間だけ（止めている間も押せる）。全員が入ったあとは出せない
         const n = msg.n === undefined || msg.n === null ? null : Number(msg.n);
         if (n !== null && !(Number.isInteger(n) && n >= 1 && n <= 999)) return this.reject(ws, att, op, 'bad-input');
-        const pos = g.stage === 'timer' && g.timer ? positionAt(g.timer, now) : null;
-        if (!pos || pos.kind !== 'phase' || pos.index !== CAPTURE_PHASE_INDEX || g.allCaughtAt != null) {
-          return this.reject(ws, att, op, 'not-allowed');
-        }
-        const jailed = [...this.people.values()]
-          .filter((q) => !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isCaught(q))
-          .sort((a, b) => (a.caughtAt ?? 0) - (b.caughtAt ?? 0) || a.num - b.num);
-        if (jailed.length === 0) return this.reject(ws, att, op, 'nobody-jailed');
-        const out = n === null ? jailed : jailed.slice(0, n);
-        // 二度押し（ほかの主催者画面の同時押し）で2回出さないよう、版番号を進める
-        this.commit({});
-        this.log('mission-free', { at: now, data: { n, released: out.length, jailed: jailed.length } });
-        for (const q of out) this.freeFromJail(q, null, 'mission', now, { mission: n ?? 'all' });
+        const res = this.missionFree(n, now, {});
+        if (typeof res === 'string') return this.reject(ws, att, op, res);
         break;
       }
       case 'result': {
@@ -2459,8 +2454,40 @@ export class GameRoom extends DurableObject<Env> {
     });
     ph.status = status;
     ph.judgedAt = now;
+    // 成功で牢屋から出す（主催者が選んだ人数）。1枚の写真で出すのは最初の成功の1回だけ。
+    // 牢屋に誰もいない・ゲームの段階の外なら、成功だけ記録する（断らない）
+    if (msg.ok && msg.free === true && ph.freed === 0) {
+      const n = msg.n === undefined || msg.n === null ? null : Number(msg.n);
+      if (n === null || (Number.isInteger(n) && n >= 1 && n <= 999)) {
+        const res = this.missionFree(n, now, { photo: ph.id, by: ph.name });
+        if (typeof res === 'number' && res > 0) {
+          ph.freed = res;
+          this.sql.exec(`UPDATE photos SET freed = ? WHERE id = ?`, res, ph.id);
+        }
+      }
+    }
     // 成功したかどうかは全員に見せる
     this.broadcastNow();
+  }
+
+  /**
+   * ミッション成功：牢屋の人を出す（入った順に n 人。null なら全員）。ゲームの段階の間だけ（止めている間も）。
+   * 全員が入ったあとは出せない。出せなければ理由を返す。from は記録に足す中身（どの写真の成功か など）
+   */
+  private missionFree(n: number | null, now: number, from: Record<string, unknown>): number | 'not-allowed' | 'nobody-jailed' {
+    const g = this.game;
+    const pos = g.stage === 'timer' && g.timer ? positionAt(g.timer, now) : null;
+    if (!pos || pos.kind !== 'phase' || pos.index !== CAPTURE_PHASE_INDEX || g.allCaughtAt != null) return 'not-allowed';
+    const jailed = [...this.people.values()]
+      .filter((q) => !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isCaught(q))
+      .sort((a, b) => (a.caughtAt ?? 0) - (b.caughtAt ?? 0) || a.num - b.num);
+    if (jailed.length === 0) return 'nobody-jailed';
+    const out = n === null ? jailed : jailed.slice(0, n);
+    // 二度押し（ほかの主催者画面の同時押し）で2回出さないよう、版番号を進める
+    this.commit({});
+    this.log('mission-free', { at: now, data: { n, released: out.length, jailed: jailed.length, ...from } });
+    for (const q of out) this.freeFromJail(q, null, 'mission', now, { mission: n ?? 'all', ...from });
+    return out.length;
   }
 
   /** 写真を受け取る（POST）・取り出す（GET /photo/<印>） */
@@ -2534,6 +2561,7 @@ export class GameRoom extends DurableObject<Env> {
       status: 'pending',
       judgedAt: null,
       bytes: buf.byteLength,
+      freed: 0,
     };
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
@@ -2567,7 +2595,7 @@ export class GameRoom extends DurableObject<Env> {
     }
     const rows = this.sql
       .exec<PhotoRow & { title: string | null }>(
-        `SELECT p.id, p.mission_id, p.night, p.round, p.assign_id, p.pid, p.num, p.name, p.at, p.status, p.judged_at, p.bytes, m.title
+        `SELECT p.id, p.mission_id, p.night, p.round, p.assign_id, p.pid, p.num, p.name, p.at, p.status, p.judged_at, p.bytes, p.freed, m.title
          FROM photos p LEFT JOIN missions m ON m.id = p.mission_id ORDER BY p.at`,
       )
       .toArray();
@@ -2625,7 +2653,7 @@ export class GameRoom extends DurableObject<Env> {
       mission: g.mission ?? null,
       missionOk: [...this.photos.values()]
         .filter((ph) => ph.status === 'ok')
-        .map((ph) => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at })),
+        .map((ph) => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, freed: ph.freed })),
       allCaughtAt: g.allCaughtAt ?? null,
       resultAuto: g.resultAuto === true,
       micMode: g.micMode,
@@ -2754,7 +2782,7 @@ export class GameRoom extends DurableObject<Env> {
       registry: this.members.size,
       glow: { total: glowIn.size, motion: motionOk.size, geo: geoOk.size, lit: this.runs.size },
       photos: [...this.photos.values()].map(
-        (ph): HostPhoto => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, status: ph.status, bytes: ph.bytes }),
+        (ph): HostPhoto => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, status: ph.status, bytes: ph.bytes, freed: ph.freed }),
       ),
       photoBytes: this.photoBytes,
     };
@@ -2901,6 +2929,7 @@ function photoOf(r: PhotoRow): PhotoMeta {
     status: r.status === 'ok' || r.status === 'no' ? r.status : 'pending',
     judgedAt: r.judged_at ?? null,
     bytes: r.bytes,
+    freed: r.freed ?? 0,
   };
 }
 
