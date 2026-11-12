@@ -38,6 +38,10 @@ const storage: KeyValueStore = {
 
 const root = document.getElementById('app')!;
 
+/** このスマホは主催者で入ったことがある（入室の右上に「主催者 HOST」を出す印。合言葉を変えても残る） */
+const HOST_DEVICE_KEY = 'urafess:host-device';
+const WRONG_KEY = '合言葉が違う。打った字はそのまま残してある';
+
 /** 試合中（配役〜タイマー）は画面を消さない */
 const screenKeeper = createScreenKeeper();
 const inMatch = (stage: string | undefined) => stage === 'assigned' || stage === 'timer';
@@ -156,7 +160,11 @@ function startPlayer(): void {
     forget: () => client.forget(),
     reclaim: () => client.reclaim(),
     backToName: (message) => client.backToName(message),
-  }, `/host${gameId === 'main' ? '' : `?g=${gameId}`}`);
+  }, {
+    href: `/host${gameId === 'main' ? '' : `?g=${gameId}`}`,
+    // 一度主催者で入ったスマホにだけ、右上に「主催者 HOST」を出す
+    visible: storage.get(HOST_DEVICE_KEY) === '1' || !!storage.get('urafess:host-token'),
+  });
   // 入室画面が最後に出していた姿（「入っている…」の間も、押した画面のまま待つ）
   let entryMode: EntryMode = 'name';
   let askedPersist = false;
@@ -369,6 +377,7 @@ function startHost(token: string): void {
       showTokenForm(WRONG_KEY, token);
       return false;
     }
+    if (s.host && storage.get(HOST_DEVICE_KEY) !== '1') storage.set(HOST_DEVICE_KEY, '1');
     host.update({
       game: s.game,
       host: s.host,
@@ -381,7 +390,6 @@ function startHost(token: string): void {
   });
 }
 
-const WRONG_KEY = '合言葉が違う。打った字はそのまま残してある';
 
 /**
  * 主催者の入口。合言葉は見える字で打つ（伏せ字の欄だと、スマホは日本語のキーボードに切り替えられない）。

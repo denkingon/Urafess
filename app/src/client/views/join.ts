@@ -34,14 +34,24 @@ export interface JoinScreen {
   update(state: EntryState): void;
 }
 
-/**
- * @param hostHref 主催者の入口（合言葉の画面）への道。ホーム画面のアプリには URL の欄が無いので、ここから行く
- */
-export function createJoin(actions: EntryActions, hostHref = '/host'): JoinScreen {
+/** 主催者の入口（合言葉の画面）への道。ホーム画面のアプリには URL の欄が無いので、入室から行く */
+export interface HostDoor {
+  href: string;
+  /**
+   * 右上に「主催者 HOST」を出すか。一度主催者で入ったスマホにだけ出す（参加者には見せない）。
+   * 出していないスマホでは、題「URAFESS」を長押しすると入口が開く
+   */
+  visible: boolean;
+}
+
+/** 題の長押しで主催者の入口が開くまで */
+const DOOR_HOLD_MS = 1500;
+
+export function createJoin(actions: EntryActions, door: HostDoor = { href: '/host', visible: false }): JoinScreen {
   const el = document.createElement('main');
   el.className = 'phone join';
   el.innerHTML = `
-    <a class="door" href="${esc(hostHref)}">${say(['主催者', 'HOST'])}</a>
+    ${door.visible ? `<a class="door" href="${esc(door.href)}">${say(['主催者', 'HOST'])}</a>` : ''}
     <h1 class="u">Urafess</h1>
     <section data-mode="name">
       <p class="lead">${sent(['ニックネームを入れて参加する。一度入れたら、次からは名前を押すだけで入れる', 'Enter a nickname to join. Next time, just tap your name'])}</p>
@@ -93,6 +103,19 @@ export function createJoin(actions: EntryActions, hostHref = '/host'): JoinScree
     const name = input.value.trim();
     if (name) actions.join(name);
   });
+  // 題の長押し：主催者の入口。画面には何も出さない（参加者には見せない道）
+  const title = el.querySelector('h1')!;
+  let hold: ReturnType<typeof setTimeout> | null = null;
+  const release = () => {
+    if (hold !== null) clearTimeout(hold);
+    hold = null;
+  };
+  title.addEventListener('pointerdown', () => {
+    release();
+    hold = setTimeout(() => location.assign(door.href), DOOR_HOLD_MS);
+  });
+  for (const type of ['pointerup', 'pointercancel', 'pointerleave'] as const) title.addEventListener(type, release);
+  title.addEventListener('contextmenu', (e) => e.preventDefault());
   el.addEventListener('click', (e) => {
     const a = (e.target as HTMLElement).closest('button')?.dataset.a;
     switch (a) {
