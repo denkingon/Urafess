@@ -1,3 +1,4 @@
+import { AREA_OUT_MARGIN_M, AreaWatch, isFarOutside } from '../../shared/area';
 import type { GlowEntry } from '../../shared/protocol';
 import { MATES_STALE_MS, RUN_STALE_MS } from '../../shared/rules';
 import { bearingDeg, compassName, compassNameEn, distanceM, distanceText, distanceTextEn, type LatLon } from '../../shared/run';
@@ -38,6 +39,10 @@ export interface BoardInput {
   meAcc?: number | null;
   /** 自分の役（全体の地図の自分の印と、仲間の色に使う） */
   myKind?: OvKind;
+  /** 遊ぶ範囲（全体の地図に線を引き、外を暗くする）。外にいる人は輪で囲む */
+  area?: [number, number][] | null;
+  /** 自分が範囲の外にいる（見張りが決めた） */
+  meOut?: boolean;
 }
 
 export interface BoardOptions {
@@ -132,7 +137,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
 
   return {
     el,
-    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind }) {
+    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, meOut }) {
       const now = serverNow ?? Date.now();
       const all: GlowEntry[] = (glow?.runs ?? []).filter((r) => now - r.at <= RUN_STALE_MS);
       const meListed = myNum !== null && all.some((r) => r.num === myNum);
@@ -215,7 +220,9 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
           if (seen.has(r.num) || r.lat === null || r.lon === null) continue;
           points.push({ key: `r${r.num}`, name: r.name, pos: { lat: r.lat, lon: r.lon }, acc: r.acc ?? 0, kind: 'unknown', fresh: 1 - (now - r.at) / RUN_STALE_MS, lit: true });
         }
-        ov.update({ me: me ? { ...me, acc: meAcc ?? 0 } : null, meKind: myKind ?? 'unknown', meLit, points, labelMax });
+        // 範囲の外にいる人（届いた位置だけで見る。光っている相手は数えない）
+        if (area) for (const p of points) if (p.kind !== 'unknown') p.out = isFarOutside(area, p.pos);
+        ov.update({ me: me ? { ...me, acc: meAcc ?? 0 } : null, meKind: myKind ?? 'unknown', meLit, points, labelMax, area: area ?? null, meOut });
       }
 
       // 一覧：近い順（自分の位置が分からなければ、光った順）
@@ -324,6 +331,10 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
       <span data-k="askSub"></span>
     </button>
     <p class="glow-note" data-k="note" hidden></p>
+    <div class="area-out" data-k="out" role="alert" hidden>
+      <svg class="area-out-arrow" viewBox="-20 -20 40 40" aria-hidden="true"><path d="M0,-15 L11,6 L3,3 L3,15 L-3,15 L-3,3 L-11,6 Z"/></svg>
+      <div class="area-out-text"><b data-k="outWord"></b><span data-k="outWhere"></span></div>
+    </div>
   `;
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
   const ask = el.querySelector('.glow-ask') as HTMLButtonElement;
@@ -331,6 +342,10 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
   const litChip = root?.querySelector('[data-k="lit"]') as HTMLElement | null;
   const board = createLightsBoard({ listMax: 1, start: 'all', labelMax: 8, bilingual: true });
   el.append(board.el);
+  const outBox = q('out');
+  const outArrow = el.querySelector('.area-out-arrow') as SVGElement;
+  const watch = new AreaWatch();
+  let lastOutBuzz = 0;
 
   ask.addEventListener('click', () => {
     // このタップの中で許可を聞く（iPhone はタップの直後でないと聞けない）
@@ -377,6 +392,27 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
       setHidden(board.el, view.glow !== 'live');
       const lit = view.lightable && sensors.lit;
       const pos = sensors.position(now);
+
+      // 遊ぶ範囲の見張り：逃げ始めてからゲームの終わりまで（止めている間・見学は見ない）。外なら戻る向きと距離
+      const area = state.game?.area?.pts ?? null;
+      const bounded = view.role !== 'なし' && (view.step === 3 || view.step === 4) && !view.paused;
+      const out = bounded && watch.feed(area, pos ? { lat: pos.lat, lon: pos.lon } : null, now);
+      if (!bounded) watch.reset();
+      setHidden(outBox, !out);
+      if (root && root.classList.contains('is-out') !== out) root.classList.toggle('is-out', out);
+      if (out && pos && watch.last) {
+        const to = watch.last.nearest;
+        const deg = bearingDeg(pos, to);
+        const head = sensors.heading(now);
+        outArrow.style.transform = `rotate(${(head === null ? deg : deg - head).toFixed(0)}deg)`;
+        const m = Math.max(watch.last.edgeM, AREA_OUT_MARGIN_M);
+        setHTML(q('outWord'), say(['範囲の外。戻れ', 'OUT OF BOUNDS. GO BACK']));
+        setHTML(q('outWhere'), say([`${compassName(deg)} ${distanceText(m)}`, `${compassNameEn(deg)} ${distanceTextEn(m)}`]));
+        if (now - lastOutBuzz > VIBRATE_EVERY_MS) {
+          lastOutBuzz = now;
+          vibrate([300, 120, 300]);
+        }
+      }
       const res = board.update({
         glow: state.glow,
         serverNow,
@@ -388,6 +424,8 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
         mates: state.mates,
         meAcc: pos?.acc ?? null,
         myKind: view.role === '鬼' ? 'oni' : view.role === '逃走者' ? 'runner' : 'unknown',
+        area,
+        meOut: out,
       });
       // 光っている間は、ひとことの場所に「光っている」（全員の一覧に自分が入ったら「…」が取れる）
       const shown = view.glow === 'live' && lit;

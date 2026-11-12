@@ -2,6 +2,7 @@ import { VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
 import { allocateCounts } from '../../shared/allocate';
 import {
+  CAMPUS_BOX,
   DEFAULT_RATIO,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
@@ -20,6 +21,9 @@ import { glowPhase, hostStatus } from '../../shared/viewmodel';
 import type { ClientState } from '../core/game-client';
 import type { Sensors } from '../sense';
 import { createLightsBoard } from './glow';
+import { createOverview } from './overview';
+import { AREA_MAX_PTS, AREA_MIN_PTS, isFarOutside } from '../../shared/area';
+import { distanceM } from '../../shared/run';
 import { bigFontSize } from './phone';
 
 /** 主催者画面の大きい数字・文字の上限（「逃走者の勝ち」など長いときは枠に収まるまで縮める） */
@@ -52,6 +56,7 @@ export interface HostActions {
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      area?: [number, number][] | null;
       pid?: string;
       by?: string;
       rid?: string;
@@ -88,6 +93,15 @@ const REASONS: Record<string, string> = {
   'bad-input': '入力が正しくない。',
   'not-found': 'その人は見つからない（もう待っていない・つながっていない）。',
 };
+
+/** 範囲のおおよその大きさ（東西 × 南北） */
+function areaSize(pts: [number, number][]): string {
+  const lats = pts.map((p) => p[0]);
+  const lons = pts.map((p) => p[1]);
+  const ns = distanceM({ lat: Math.min(...lats), lon: lons[0] }, { lat: Math.max(...lats), lon: lons[0] });
+  const ew = distanceM({ lat: lats[0], lon: Math.min(...lons) }, { lat: lats[0], lon: Math.max(...lons) });
+  return `東西 約${Math.round(ew / 10) * 10}m × 南北 約${Math.round(ns / 10) * 10}m`;
+}
 
 export function createHost(actions: HostActions, sensors?: Sensors): HostScreen {
   const el = document.createElement('main');
@@ -146,6 +160,18 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         <button type="submit">割合を変える</button>
       </form>
     </details>
+    <section class="cap-host area-host" data-k="area">
+      <div class="cap-host-head"><b>遊ぶ範囲</b><span data-k="areaNow"></span></div>
+      <p class="note" data-k="areaNote">地図を押して角を足していく（3つ以上）。「決める」で全員の地図に線が出る。逃げ始めてからゲームの終わりまで、範囲の外へ 15m 出て3秒たった人のスマホに「戻れ」と戻る向きが出る。</p>
+      <div class="area-map" data-k="areaMap"></div>
+      <div class="area-btns">
+        <button type="button" data-area="undo">1つ戻す</button>
+        <button type="button" data-area="redo">描き直す</button>
+        <button type="button" data-area="campus">キャンパスの四角</button>
+        <button type="button" data-area="save" class="primary">決める</button>
+        <button type="button" data-area="none" class="ghost">範囲なしにする</button>
+      </div>
+    </section>
     <section class="cap-host" data-k="cap" hidden>
       <div class="cap-host-head"><b>捕獲と牢屋</b><span data-k="capCount"></span></div>
       <p class="note">逃走者を押すと、手で「捕まった」にする・取り消す。黒＝牢屋、点線＝本人が選んでいる途中、二重線＝牢屋から出た直後（捕まらない）。</p>
@@ -431,11 +457,93 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   const glowMap = el.querySelector('[data-act="glow-map"]') as HTMLButtonElement;
   glowMap.addEventListener('click', () => sensors?.request());
 
+  // 遊ぶ範囲：地図を押して角を足す（下書き）→「決める」で送る。試合中は描けない
+  let draft: [number, number][] = [];
+  let areaLocked = false;
+  let savedArea: [number, number][] | null = null;
+  const drawArea = () =>
+    areaMap.update({
+      me: null,
+      meKind: 'unknown',
+      meLit: false,
+      points: [],
+      labelMax: 0,
+      area: savedArea,
+      draft: draft.length ? draft : null,
+      frameBase: 'campus',
+    });
+  const areaMap = createOverview({
+    onTap: (p) => {
+      if (areaLocked || draft.length >= AREA_MAX_PTS) return;
+      draft = [...draft, [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6]];
+      drawArea();
+      refreshAreaBtns();
+    },
+  });
+  q('areaMap').append(areaMap.el);
+  const areaBtn = (k: string) => el.querySelector(`[data-area="${k}"]`) as HTMLButtonElement;
+  const refreshAreaBtns = () => {
+    areaBtn('undo').disabled = areaLocked || draft.length === 0;
+    areaBtn('redo').disabled = areaLocked || draft.length === 0;
+    areaBtn('campus').disabled = areaLocked;
+    areaBtn('save').disabled = areaLocked || draft.length < AREA_MIN_PTS;
+    areaBtn('none').disabled = areaLocked || !savedArea;
+  };
+  areaBtn('undo').addEventListener('click', () => {
+    draft = draft.slice(0, -1);
+    drawArea();
+    refreshAreaBtns();
+  });
+  areaBtn('redo').addEventListener('click', () => {
+    draft = [];
+    drawArea();
+    refreshAreaBtns();
+  });
+  areaBtn('campus').addEventListener('click', () => {
+    draft = [
+      [CAMPUS_BOX.north, CAMPUS_BOX.west],
+      [CAMPUS_BOX.north, CAMPUS_BOX.east],
+      [CAMPUS_BOX.south, CAMPUS_BOX.east],
+      [CAMPUS_BOX.south, CAMPUS_BOX.west],
+    ];
+    drawArea();
+    refreshAreaBtns();
+  });
+  areaBtn('save').addEventListener('click', () => {
+    if (draft.length < AREA_MIN_PTS) return;
+    actions.command('area', { area: draft });
+    savedArea = draft;
+    draft = [];
+    drawArea();
+    refreshAreaBtns();
+  });
+  areaBtn('none').addEventListener('click', () => {
+    if (confirm('遊ぶ範囲をなくす（どこまで行っても「戻れ」は出ない）。よいか？')) actions.command('area', { area: null });
+  });
+
   return {
     el,
     update(input) {
       const { game, host, serverNow, online, lastReject } = input;
       if (!game || !host) return;
+      {
+        // 遊ぶ範囲
+        const pts = game.area?.pts ?? null;
+        // サーバーと同じ決まり：試合中（時間が0になる前）は変えられない
+        const locked = game.stage === 'timer' && !!game.timer && !isDone(game.timer, serverNow);
+        const changed = JSON.stringify(pts) !== JSON.stringify(savedArea) || locked !== areaLocked;
+        savedArea = pts;
+        areaLocked = locked;
+        if (changed) {
+          refreshAreaBtns();
+          q('areaNow').textContent = pts ? `決まっている（角 ${pts.length}・${areaSize(pts)}）` : '範囲なし';
+          q('area').classList.toggle('is-locked', locked);
+          q('areaNote').textContent = locked
+            ? '試合中は範囲を変えられない（走っている人の「外」が急に変わらないように）。時間が0になったら変えられる。'
+            : '地図を押して角を足していく（3つ以上）。「決める」で全員の地図に線が出る。逃げ始めてからゲームの終わりまで、範囲の外へ 15m 出て3秒たった人のスマホに「戻れ」と戻る向きが出る。';
+        }
+        drawArea();
+      }
       const s = hostStatus(game, serverNow);
       q('round').textContent = `ラウンド ${Math.max(game.round, 1)}${online ? '' : '・切断中'}`;
       q('title').textContent = s.title;
@@ -593,8 +701,13 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         const litNow = (input.glow?.runs ?? []).filter((r) => serverNow - r.at <= RUN_STALE_MS).length;
         const onMap = (input.mates?.people ?? []).filter((m) => serverNow - m.at <= MATES_STALE_MS);
         const oniOn = onMap.filter((m) => m.role === 'oni').length;
+        const areaPts = game.area?.pts ?? null;
+        const outside = areaPts ? onMap.filter((m) => isFarOutside(areaPts, m)) : [];
         q('glowCount').textContent =
-          gp === 'live' ? `地図に 鬼${oniOn}・逃走者${onMap.length - oniOn}　光っている ${litNow}人` : 'ゲームの段階で地図に出る・光る';
+          gp === 'live'
+            ? `地図に 鬼${oniOn}・逃走者${onMap.length - oniOn}　光っている ${litNow}人` +
+              (areaPts ? (outside.length ? `　範囲の外 ${outside.length}人（${outside.map((m) => m.name).join('・')}）` : '　範囲の外 0人') : '')
+            : 'ゲームの段階で地図に出る・光る';
         q('glowReady').textContent = g
           ? `いまつながっている配役の人 ${g.total}人のうち、動きのセンサーが使える ${g.motion}人・位置が使える ${g.geo}人。` +
             (g.total > 0 && (g.motion < g.total || g.geo < g.total) ? '足りない人は、画面の「走ると光るをオンにする」を押す。' : '')
@@ -614,6 +727,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
             mates: input.mates ?? null,
             meAcc: pos?.acc ?? null,
             myKind: 'unknown',
+            area: areaPts,
           });
         }
       }
