@@ -67,6 +67,7 @@ import { distanceM } from '../shared/run';
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
 import type { ProbeHub } from './probe';
+import { hostKeyCandidates, sameHostKey } from '../shared/hostkey';
 
 export interface Env {
   GAME: DurableObjectNamespace<GameRoom>;
@@ -296,7 +297,7 @@ type ParticipantRow = {
  * /api/game/<ゲームID>/(ws|debug|log|photo|photos)。photo は後ろに写真の印が付くこともある（取り出す）。
  * worker.ts も同じ形で部屋へ渡す
  */
-export const GAME_PATH = /^\/api\/game\/([A-Za-z0-9_-]{1,40})\/(ws|debug|log|photo|photos)(?:\/([A-Za-z0-9_-]{1,40}))?$/;
+export const GAME_PATH = /^\/api\/game\/([A-Za-z0-9_-]{1,40})\/(ws|debug|log|photo|photos|key)(?:\/([A-Za-z0-9_-]{1,40}))?$/;
 /** 「助けて」「助ける」の長押し（保存しない。押している間の数秒だけのもの） */
 interface RescueHold {
   start: number;
@@ -780,9 +781,14 @@ export class GameRoom extends DurableObject<Env> {
     if (m[2] === 'photos') return this.onAlbumRequest(request);
     if (m[3]) return new Response('not found', { status: 404 });
 
+    if (m[2] === 'key') {
+      // 主催者の合言葉が合っているかだけを答える（主催者の入口が、覚える前に確かめる）
+      return new Response(null, { status: this.isHostRequest(request) ? 204 : 403, headers: { 'cache-control': 'no-store' } });
+    }
+
     if (m[2] === 'debug') {
       // 主催者の合言葉があるときだけ、全員の役を含む中身を返す（テストと確認用）
-      if (!this.isHostToken(request.headers.get('x-host-token'))) return new Response('forbidden', { status: 403 });
+      if (!this.isHostRequest(request)) return new Response('forbidden', { status: 403 });
       return Response.json({
         now: Date.now(),
         game: this.game,
@@ -798,7 +804,7 @@ export class GameRoom extends DurableObject<Env> {
 
     if (m[2] === 'log') {
       // 主催者の合言葉があるときだけ、全部の記録を CSV（Excel で開ける）か JSON で返す
-      if (!this.isHostToken(request.headers.get('x-host-token') ?? url.searchParams.get('token'))) {
+      if (!this.isHostRequest(request) && !this.isHostToken(url.searchParams.get('token'))) {
         return new Response('forbidden', { status: 403 });
       }
       const rows = this.sql.exec<EventRow>(`SELECT * FROM events ORDER BY id`).toArray();
@@ -2025,9 +2031,14 @@ export class GameRoom extends DurableObject<Env> {
 
   // ---------- 主催者 ----------
 
+  /** 空白・大文字小文字・全角半角のちがいは同じ合言葉とみなす（スマホで打つため。shared/hostkey.ts） */
   private isHostToken(token: unknown): boolean {
-    const expected = this.env.HOST_TOKEN;
-    return typeof expected === 'string' && expected.length > 0 && token === expected;
+    return sameHostKey(token, this.env.HOST_TOKEN);
+  }
+
+  /** ヘッダー x-host-token の合言葉。日本語が入る合言葉は % の形で届く（前の版の画面はそのまま送ってくる） */
+  private isHostRequest(request: Request): boolean {
+    return hostKeyCandidates(request.headers.get('x-host-token')).some((t) => this.isHostToken(t));
   }
 
   private onHost(ws: WebSocket, att: Attachment, token: unknown): void {
@@ -2512,7 +2523,7 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 写真を受け取る（POST）・取り出す（GET /photo/<印>） */
   private async onPhotoRequest(request: Request, url: URL, photoId: string | null): Promise<Response> {
-    const host = this.isHostToken(request.headers.get('x-host-token'));
+    const host = this.isHostRequest(request);
     const pid = request.headers.get('x-pid') ?? '';
     const key = request.headers.get('x-key') ?? '';
     const member = this.members.get(pid);
@@ -2610,7 +2621,7 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 主催者：全部の夜の写真の一覧（名簿と一緒にずっと残る分） */
   private onAlbumRequest(request: Request): Response {
-    if (!this.isHostToken(request.headers.get('x-host-token'))) {
+    if (!this.isHostRequest(request)) {
       return new Response('forbidden', { status: 403 });
     }
     const rows = this.sql
