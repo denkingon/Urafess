@@ -38,6 +38,7 @@ const KIND_NAME: Record<string, string> = {
   'wish-mode': '配役の決め方',
   area: '遊ぶ範囲',
   dq: '範囲の外で失格',
+  'dq-ok': '失格のあと牢屋に出頭した',
   remove: '外す',
   clear: '新しい夜を始める',
   rename: '名前を変えた',

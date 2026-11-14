@@ -302,6 +302,8 @@ export interface GlowDeps {
   root?: HTMLElement;
   /** 範囲の外で失格になった（失格の画面が出ている間、10秒ごとに呼ばれる。サーバーへ伝える） */
   onDisqualified?: () => void;
+  /** 失格のあと牢屋に出頭した（長押しが終わった。サーバーへ伝える。サーバーが追いつくまで10秒ごとに呼ばれる） */
+  onReported?: () => void;
 }
 
 export interface GlowScreen {
@@ -324,7 +326,7 @@ function senseProblem(s: Sensors): Pair | null {
   return null;
 }
 
-export function createGlow({ sensors, root, onDisqualified }: GlowDeps): GlowScreen {
+export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDeps): GlowScreen {
   const el = document.createElement('section');
   el.className = 'glow';
   el.innerHTML = `
@@ -349,8 +351,41 @@ export function createGlow({ sensors, root, onDisqualified }: GlowDeps): GlowScr
     <svg class="dq-x" viewBox="-60 -60 120 120" aria-hidden="true"><circle r="52"/><path d="M-26,-26 L26,26 M26,-26 L-26,26"/></svg>
     <b class="dq-word u">${say(['失格', 'DISQUALIFIED'])}</b>
     <p class="dq-why">${sent([`範囲の外に${AREA_DQ_MS / 1000}秒いた`, `${AREA_DQ_MS / 1000} seconds out of bounds`])}</p>
+    <p class="dq-order">${sent(['牢屋へ出頭せよ', 'Report to the jail'])}</p>
+    <button type="button" class="dq-report" aria-label="牢屋に着いた（長押し）">
+      <i class="dq-report-fill"></i>
+      <span class="dq-report-text">${say(['牢屋に着いた', "I'M AT THE JAIL"])}</span>
+      <span class="dq-report-hint">${sent(['長押し', 'Hold'])}</span>
+    </button>
   `;
   (root ?? el).append(dq);
+  // 「牢屋に着いた」は長押し（押し間違いで失格が解けないように）。押し切ったら失格を解く
+  const REPORT_HOLD_MS = 1500;
+  const reportBtn = dq.querySelector('.dq-report') as HTMLButtonElement;
+  let holdTimer: number | undefined;
+  const endHold = () => {
+    if (holdTimer !== undefined) window.clearTimeout(holdTimer);
+    holdTimer = undefined;
+    reportBtn.classList.remove('is-holding');
+  };
+  reportBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (holdTimer !== undefined) return;
+    reportBtn.classList.add('is-holding');
+    holdTimer = window.setTimeout(() => {
+      endHold();
+      watch.forgive();
+      if (dqKey) writeDq(`${dqKey}:ok`);
+      lastReportSend = Date.now();
+      onReported?.();
+      dqShown = false;
+      dq.hidden = true;
+      root?.classList.remove('is-dq');
+      vibrate(120);
+    }, REPORT_HOLD_MS);
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) reportBtn.addEventListener(ev, endHold);
+  reportBtn.addEventListener('contextmenu', (e) => e.preventDefault());
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
   const ask = el.querySelector('.glow-ask') as HTMLButtonElement;
   const note = q('note');
@@ -367,6 +402,7 @@ export function createGlow({ sensors, root, onDisqualified }: GlowDeps): GlowScr
   let dqKey: string | null = null;
   let dqShown = false;
   let lastDqSend = 0;
+  let lastReportSend = 0;
   const DQ_STORE = 'urafess.dq';
   const readDq = (): string | null => {
     try {
@@ -388,7 +424,9 @@ export function createGlow({ sensors, root, onDisqualified }: GlowDeps): GlowScr
     if (gk && gk !== dqKey) {
       dqKey = gk;
       watch.clearDq();
-      if (readDq() === gk) watch.disqualified = true;
+      const saved = readDq();
+      if (saved === gk) watch.disqualified = true;
+      else if (saved === `${gk}:ok`) watch.forgive();
     }
     if (watch.disqualified && dqKey && readDq() !== dqKey) writeDq(dqKey);
     const show = watch.disqualified && view.step >= 3 && view.step <= 5 && view.ended !== true;
@@ -396,6 +434,11 @@ export function createGlow({ sensors, root, onDisqualified }: GlowDeps): GlowScr
     if (show && !view.offline && Date.now() - lastDqSend > 10_000) {
       lastDqSend = Date.now();
       onDisqualified?.();
+    }
+    // 出頭済みなのに、サーバーでは失格の牢屋のまま（送りそびれた）なら、10秒ごとに送り直す
+    if (watch.exempt && state.me?.caught?.via === 'out' && !view.offline && Date.now() - lastReportSend > 10_000) {
+      lastReportSend = Date.now();
+      onReported?.();
     }
     if (show === dqShown) return;
     dqShown = show;
@@ -465,6 +508,7 @@ export function createGlow({ sensors, root, onDisqualified }: GlowDeps): GlowScr
       const sec = left === null ? -1 : Math.ceil(left / 1000);
       const soon = left !== null && left <= 5_000;
       if (root && root.classList.contains('is-dq-soon') !== soon) root.classList.toggle('is-dq-soon', soon);
+      outBox.classList.toggle('no-dq', showOut && left === null);
       if (left !== null) {
         setHTML(q('dqSec'), esc(String(sec)));
         setHTML(q('dqLbl'), say(['失格まで', 'DQ IN']));

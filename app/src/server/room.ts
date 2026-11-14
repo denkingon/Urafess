@@ -380,6 +380,8 @@ export class GameRoom extends DurableObject<Env> {
   private readonly catches = new Map<string, number>();
   /** 範囲の外で失格を数えた人（配役の番号つき。同じ配役のうちは1回だけ） */
   private readonly dqSeen = new Map<string, number>();
+  /** 失格のあと牢屋に出頭した人（配役の番号つき。記録を1回にするための印） */
+  private readonly dqDone = new Map<string, number>();
   /** 今の配役で、逃走者 → 牢屋から出した人数 */
   private readonly rescues = new Map<string, number>();
   /** 「助けて」「助ける」の長押し（人 → 最近の分） */
@@ -1013,6 +1015,9 @@ export class GameRoom extends DurableObject<Env> {
         return;
       case 'dq':
         this.onDq(att, now);
+        return;
+      case 'dq-ok':
+        this.onDqReport(att, now);
         return;
       case 'wish':
         this.onWish(ws, att, msg.role, now);
@@ -2343,7 +2348,8 @@ export class GameRoom extends DurableObject<Env> {
     const p = this.inRound(att.pid);
     if (!p || !this.dqOpen(now)) return;
     const assignId = this.game.assignId;
-    if (this.dqSeen.get(p.pid) === assignId) return;
+    // 出頭済みなら、遅れて届いた失格の送り直しは捨てる（サーバーを入れ替えて印が消えたあとも、牢屋の状態で分かる）
+    if (this.dqSeen.get(p.pid) === assignId || this.dqDone.get(p.pid) === assignId || p.caughtVia === 'reported') return;
     this.dqSeen.set(p.pid, assignId);
     this.log('dq', { p, at: now, data: { role: p.role, wasCaught: this.isCaught(p) } });
     if (p.role !== 'runner') return;
@@ -2356,6 +2362,29 @@ export class GameRoom extends DurableObject<Env> {
       this.rescueHolds.delete(p.pid);
       this.claims.delete(p.pid);
       this.broadcastNow();
+    }
+  }
+
+  /**
+   * 失格のあと、牢屋に出頭した（本人が長押しで伝える）。逃走者は「捕まった」のまま、ふつうの牢屋の人になる（仲間の助けで出られる）。
+   * 鬼は記録だけ。何度届いても1回だけ。スマホが先に解いて、サーバーはあとから揃える（つなぎ直しの送り直し）
+   */
+  private onDqReport(att: Attachment, now: number): void {
+    const p = this.inRound(att.pid);
+    if (!p) return;
+    const assignId = this.game.assignId;
+    const first = this.dqDone.get(p.pid) !== assignId;
+    if (p.role === 'runner' && this.isCaught(p) && p.caughtVia === 'out') {
+      this.dqDone.set(p.pid, assignId);
+      this.log('dq-ok', { p, at: now, data: { role: p.role } });
+      this.sql.exec(`UPDATE participants SET caught_via = 'reported' WHERE pid = ?`, p.pid);
+      p.caughtVia = 'reported';
+      this.broadcastNow();
+      return;
+    }
+    if (p.role === 'oni' && first && this.dqSeen.get(p.pid) === assignId) {
+      this.dqDone.set(p.pid, assignId);
+      this.log('dq-ok', { p, at: now, data: { role: p.role } });
     }
   }
 

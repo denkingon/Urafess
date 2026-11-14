@@ -165,8 +165,10 @@ describe('範囲の外で失格', () => {
     await sleep(600);
     host.command('durations', { durations: [2_000, 2_000, 120_000, 3_000] });
     await sleep(600);
+    const prevAssign = ps[0].state.me!.assignId;
     host.command('assign');
-    await waitFor('配役2', () => ps.every((p) => !!p.state.me?.role));
+    // 前の配役の役が残っているので、配役の番号が進むのを待つ
+    await waitFor('配役2', () => ps.every((p) => !!p.state.me?.role && p.state.me.assignId > prevAssign));
     const rs = ps.filter((p) => p.state.me!.role === 'runner');
     const os = ps.filter((p) => p.state.me!.role === 'oni');
     const [a, b] = rs;
@@ -216,9 +218,28 @@ describe('範囲の外で失格', () => {
     expect(b.state.me!.caught).not.toBeNull();
     expect(a.state.me!.caught).not.toBeNull();
 
+    // 牢屋に出頭した（長押しが終わった）：失格が解け、ふつうの牢屋の人になる＝仲間の助けで出られる
+    a.reportedToJail();
+    await waitFor('a が出頭済みの扱いに', () => a.state.me?.caught?.via === 'reported');
+    a.reportedToJail(); // 送り直しても1回だけ
+    // 遅れて届いた失格の送り直しは捨てる（また失格の牢屋に戻らない）
+    a.disqualified();
+    await sleep(500);
+    expect(a.state.me!.caught!.via).toBe('reported');
+    // 出頭していない b は、まだ助けでは出られない
+    host.command('mission-free', { n: 5 });
+    await waitFor('出頭した a だけ出る', () => a.state.me?.caught == null);
+    expect(b.state.me!.caught).not.toBeNull();
+    expect(b.state.me!.caught!.via).toBe('out');
+    // 鬼の出頭は記録だけ
+    o.reportedToJail();
+    await sleep(500);
+    expect(o.state.me!.caught ?? null).toBeNull();
+
     // 記録
     const rows = await log();
     expect(rows.filter((r) => r.kind === 'dq').length).toBe(3);
+    expect(rows.filter((r) => r.kind === 'dq-ok').length).toBe(2); // a（逃走者）と o（鬼）
     const cap = rows.filter((r) => r.kind === 'capture' && r.via === 'out');
     expect(cap.length).toBe(1);
   }, 180_000);

@@ -114,6 +114,8 @@ export class AreaWatch {
    * reset（一時停止・範囲なし・位置が取れない）では消えない：一時停止で失格が取り消されないように
    */
   disqualified = false;
+  /** 牢屋に出頭して失格が解けた。このラウンドはもう失格にしない（clearDq で戻る） */
+  exempt = false;
   private since: number | null = null;
   private outSince: number | null = null;
   last: AreaCheck | null = null;
@@ -140,7 +142,7 @@ export class AreaWatch {
     // 「外」が続いた長さ。中に戻れば数え直し
     if (this.out) {
       this.outSince ??= now;
-      if (now - this.outSince >= AREA_DQ_MS) this.disqualified = true;
+      if (now - this.outSince >= AREA_DQ_MS && !this.exempt) this.disqualified = true;
     } else {
       this.outSince = null;
     }
@@ -150,6 +152,7 @@ export class AreaWatch {
   /** 失格まで残り（ms）。外にいないときは null。失格済みは 0 */
   dqLeftMs(now: number): number | null {
     if (this.disqualified) return 0;
+    if (this.exempt) return null;
     if (!this.out || this.outSince === null) return null;
     return Math.max(0, AREA_DQ_MS - (now - this.outSince));
   }
@@ -162,8 +165,15 @@ export class AreaWatch {
     this.last = null;
   }
 
-  /** 失格を消す（新しいラウンド） */
+  /** 牢屋に出頭した：失格を解き、このラウンドはもう失格にしない */
+  forgive(): void {
+    this.disqualified = false;
+    this.exempt = true;
+  }
+
+  /** 失格を全部消す（新しいラウンド） */
   clearDq(): void {
     this.disqualified = false;
+    this.exempt = false;
   }
 }

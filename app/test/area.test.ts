@@ -121,4 +121,26 @@ describe('遊ぶ範囲', () => {
     expect(w.disqualified).toBe(false);
     expect(w.dqLeftMs(t)).toBeNull();
   });
+  it('牢屋に出頭したら失格が解け、そのラウンドはもう失格にならない（clearDq で戻る）', () => {
+    const w = new AreaWatch();
+    let t = 0;
+    w.feed(sq, at(0, 230), t);
+    w.feed(sq, at(0, 230), (t += AREA_OUT_CONFIRM_MS));
+    w.feed(sq, at(0, 230), (t += AREA_DQ_MS));
+    expect(w.disqualified).toBe(true);
+    w.forgive();
+    expect(w.disqualified).toBe(false);
+    // 外にいる間は「戻れ」は続くが、数えは無く、何秒いても失格にならない
+    w.feed(sq, at(0, 230), (t += 1000));
+    expect(w.out).toBe(true);
+    expect(w.dqLeftMs(t)).toBeNull();
+    w.feed(sq, at(0, 230), (t += AREA_DQ_MS * 3));
+    expect(w.disqualified).toBe(false);
+    // 新しいラウンドで元に戻る
+    w.clearDq();
+    w.reset();
+    w.feed(sq, at(0, 230), (t += 1000));
+    w.feed(sq, at(0, 230), (t += AREA_OUT_CONFIRM_MS));
+    expect(w.dqLeftMs(t)).toBe(AREA_DQ_MS);
+  });
 });

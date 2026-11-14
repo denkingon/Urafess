@@ -379,6 +379,11 @@ export class GameClient {
     this.send({ t: 'dq' });
   }
 
+  /** 失格のあと牢屋に出頭したことを伝える（何度送ってもサーバーが1回だけ数える） */
+  reportedToJail(): void {
+    this.send({ t: 'dq-ok' });
+  }
+
   /**
    * 配役の希望：次の配役でなりたい役を送る（null＝どちらでも）。届いたかどうかは、返ってくる状態（me.wish）で分かる。
    * 切れている間は送れない（false を返す。画面の板は押せなくしてある）

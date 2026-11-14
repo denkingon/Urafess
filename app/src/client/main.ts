@@ -221,7 +221,7 @@ function startPlayer(): void {
   phone.stage.prepend(mission.gallery);
   // 走ると光る：走っているかはこのスマホが決め、光っている間だけ位置を送る
   const sensors = new Sensors();
-  const glow = createGlow({ sensors, root: phone.el, onDisqualified: () => client.disqualified() });
+  const glow = createGlow({ sensors, root: phone.el, onDisqualified: () => client.disqualified(), onReported: () => client.reportedToJail() });
   phone.stage.append(glow.el);
   const reporter = new RunReporter();
   let lastView: PhoneView | null = null;
