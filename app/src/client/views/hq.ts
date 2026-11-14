@@ -250,8 +250,27 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       });
       const cur = game.stage === 'lobby' ? -1 : game.stage === 'assigned' ? 0 : game.stage === 'result' || done ? 5 : game.stage === 'ended' ? 6 : phase ? phase.index + 1 : 0;
       const progress = phase ? 1 - phase.remainingMs / Math.max(1, game.durations[phase.index]) : 1;
+      // 時間の段階の幅は、時間の長さの比そのまま（0:20 と 1:00 なら 1：3）。配役と結果は字の幅だけ
+      // 幅が字より狭い段階は、字を左にそろえて、続くときは上の段と下の段に互い違いに置く（重ねない）
+      const railKey = `${game.durations.join(',')}|${rail.clientWidth}`;
+      once('railShape', railKey, () => {
+        const total = game.durations.reduce((a, b) => a + b, 0) || 1;
+        const inner = Math.max(0, rail.clientWidth - steps[0].li.offsetWidth - steps[steps.length - 1].li.offsetWidth - 4 * (steps.length - 1));
+        let up = false;
+        let prevNarrow = false;
+        steps.forEach((s, i) => {
+          if (i < 1 || i > PHASES.length) return;
+          const d = game.durations[i - 1];
+          s.lbl.textContent = formatClock(d);
+          s.li.style.flexGrow = String(d);
+          const narrow = (inner * d) / total < s.lbl.offsetWidth + 4;
+          up = narrow && prevNarrow ? !up : false;
+          s.li.dataset.fit = narrow ? (up ? 'up' : 'left') : 'in';
+          prevNarrow = narrow;
+        });
+        rail.toggleAttribute('data-two', steps.some((s) => s.li.dataset.fit === 'up'));
+      });
       steps.forEach((s, i) => {
-        if (i >= 1 && i <= PHASES.length) once(`rl:${i}`, String(game.durations[i - 1]), () => (s.lbl.textContent = formatClock(game.durations[i - 1])));
         const state = i === cur ? 'now' : i < cur ? 'done' : 'later';
         once(`rs:${i}`, state, () => {
           s.li.dataset.state = state;

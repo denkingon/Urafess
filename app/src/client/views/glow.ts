@@ -1,4 +1,4 @@
-import { AREA_OUT_MARGIN_M, AreaWatch, isFarOutside } from '../../shared/area';
+import { AREA_OUT_MARGIN_M, AreaWatch, checkArea, isFarOutside, JAIL_ARRIVE_M } from '../../shared/area';
 import type { GlowEntry } from '../../shared/protocol';
 import { MATES_STALE_MS, RUN_STALE_MS } from '../../shared/rules';
 import { bearingDeg, compassName, compassNameEn, distanceM, distanceText, distanceTextEn, type LatLon } from '../../shared/run';
@@ -41,6 +41,8 @@ export interface BoardInput {
   myKind?: OvKind;
   /** 遊ぶ範囲（全体の地図に線を引き、外を暗くする）。外にいる人は輪で囲む */
   area?: [number, number][] | null;
+  /** 牢屋の場所（全体の地図に「牢屋」を出す） */
+  jail?: [number, number][] | null;
   /** 自分が範囲の外にいる（見張りが決めた） */
   meOut?: boolean;
 }
@@ -137,7 +139,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
 
   return {
     el,
-    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, meOut }) {
+    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, jail, meOut }) {
       const now = serverNow ?? Date.now();
       const all: GlowEntry[] = (glow?.runs ?? []).filter((r) => now - r.at <= RUN_STALE_MS);
       const meListed = myNum !== null && all.some((r) => r.num === myNum);
@@ -222,7 +224,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
         }
         // 範囲の外にいる人（届いた位置だけで見る。光っている相手は数えない）
         if (area) for (const p of points) if (p.kind !== 'unknown') p.out = isFarOutside(area, p.pos);
-        ov.update({ me: me ? { ...me, acc: meAcc ?? 0 } : null, meKind: myKind ?? 'unknown', meLit, points, labelMax, area: area ?? null, meOut });
+        ov.update({ me: me ? { ...me, acc: meAcc ?? 0 } : null, meKind: myKind ?? 'unknown', meLit, points, labelMax, area: area ?? null, jail: jail ?? null, meOut });
       }
 
       // 一覧：近い順（自分の位置が分からなければ、光った順）
@@ -335,6 +337,10 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
       <svg class="area-out-arrow" viewBox="-20 -20 40 40" aria-hidden="true"><path d="M0,-15 L11,6 L3,3 L3,15 L-3,15 L-3,3 L-11,6 Z"/></svg>
       <div class="area-out-text"><b data-k="outWord"></b><span data-k="outWhere"></span></div>
     </div>
+    <div class="area-out jail-go" data-k="jailGo" role="status" hidden>
+      <svg class="area-out-arrow" viewBox="-20 -20 40 40" aria-hidden="true"><path d="M0,-15 L11,6 L3,3 L3,15 L-3,15 L-3,3 L-11,6 Z"/></svg>
+      <div class="area-out-text"><b data-k="jailWord"></b><span data-k="jailWhere"></span></div>
+    </div>
   `;
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
   const ask = el.querySelector('.glow-ask') as HTMLButtonElement;
@@ -345,6 +351,8 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
   const outBox = q('out');
   const outArrow = el.querySelector('.area-out-arrow') as SVGElement;
   const watch = new AreaWatch();
+  const jailBox = q('jailGo');
+  const jailArrow = jailBox.querySelector('.area-out-arrow') as SVGElement;
   let lastOutBuzz = 0;
 
   ask.addEventListener('click', () => {
@@ -396,8 +404,31 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
       // 遊ぶ範囲の見張り：逃げ始めてからゲームの終わりまで（止めている間・見学は見ない）。外なら戻る向きと距離
       const area = state.game?.area?.pts ?? null;
       const bounded = view.role !== 'なし' && (view.step === 3 || view.step === 4) && !view.paused;
-      const out = bounded && watch.feed(area, pos ? { lat: pos.lat, lon: pos.lon } : null, now);
-      if (!bounded) watch.reset();
+      // 牢屋の場所：捕まった人には、範囲の外の「戻れ」の代わりに牢屋への向きと距離（着いたら「牢屋に着いた」）
+      const jail = state.game?.jail?.pts ?? null;
+      const toJail = view.caught && !!jail && view.role !== 'なし';
+      setHidden(jailBox, !toJail);
+      if (toJail) {
+        const c = pos ? checkArea(jail, { lat: pos.lat, lon: pos.lon }) : null;
+        const arrived = !!c && (c.inside || c.edgeM <= JAIL_ARRIVE_M);
+        jailBox.classList.toggle('is-arrived', arrived);
+        jailArrow.style.display = !c || arrived ? 'none' : '';
+        if (!c || !pos) {
+          setHTML(q('jailWord'), say(['牢屋へ行く', 'GO TO JAIL']));
+          setHTML(q('jailWhere'), say(['地図の「牢屋」へ。位置を待っている…', 'Follow the map. Waiting for your location…']));
+        } else if (arrived) {
+          setHTML(q('jailWord'), say(['牢屋に着いた', 'YOU ARE IN JAIL']));
+          setHTML(q('jailWhere'), say(['ここで仲間の助けを待つ', 'Wait here for a teammate']));
+        } else {
+          const deg = bearingDeg(pos, c.nearest);
+          const head = sensors.heading(now);
+          jailArrow.style.transform = `rotate(${(head === null ? deg : deg - head).toFixed(0)}deg)`;
+          setHTML(q('jailWord'), say(['牢屋へ行く', 'GO TO JAIL']));
+          setHTML(q('jailWhere'), say([`${compassName(deg)} ${distanceText(c.edgeM)}`, `${compassNameEn(deg)} ${distanceTextEn(c.edgeM)}`]));
+        }
+      }
+      const out = bounded && !toJail && watch.feed(area, pos ? { lat: pos.lat, lon: pos.lon } : null, now);
+      if (!bounded || toJail) watch.reset();
       setHidden(outBox, !out);
       if (root && root.classList.contains('is-out') !== out) root.classList.toggle('is-out', out);
       if (out && pos && watch.last) {
@@ -425,6 +456,7 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
         meAcc: pos?.acc ?? null,
         myKind: view.role === '鬼' ? 'oni' : view.role === '逃走者' ? 'runner' : 'unknown',
         area,
+        jail,
         meOut: out,
       });
       // 光っている間は、ひとことの場所に「光っている」（全員の一覧に自分が入ったら「…」が取れる）

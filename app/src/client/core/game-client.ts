@@ -426,6 +426,7 @@ export class GameClient {
       mic?: 'always' | 'hold';
       wishMode?: WishMode;
       area?: [number, number][] | null;
+      layer?: 'area' | 'jail';
       pid?: string;
       by?: string;
       rid?: string;
