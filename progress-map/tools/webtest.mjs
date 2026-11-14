@@ -23,6 +23,8 @@ const info = async (page) => page.evaluate(() => ({
   sx: document.documentElement.scrollWidth > window.innerWidth,
 }));
 console.log('clock', JSON.stringify(await info(p)));
+// ねじりのつまみ：0 にすると字の場所が変わる
+{ const q = () => p.evaluate(() => document.querySelector('#board svg path').getAttribute('d').slice(0, 60)); const a = await q(); await p.fill('#twist', '0'); await p.dispatchEvent('#twist', 'input'); await p.waitForTimeout(100); const b = await q(); await p.screenshot({ path: (process.env.SHOTS || '/tmp/webshots') + '/d-clock-twist0.png', fullPage: true }); await p.fill('#twist', '0.6'); await p.dispatchEvent('#twist', 'input'); await p.waitForTimeout(100); console.log('twist knob moves arms', a !== b); }
 await p.screenshot({ path: (process.env.SHOTS || '/tmp/webshots') + '/d-clock-top.png' });
 await p.screenshot({ path: (process.env.SHOTS || '/tmp/webshots') + '/d-clock-full.png', fullPage: true });
 // 前の動きへ → 11/11、再生ボタン、帯
