@@ -1,5 +1,6 @@
 import type { Area } from './area';
 import type { Candidate, CaptureVia } from './capture';
+import type { CastStat } from './cast';
 import type { PhotoStatus } from './mission';
 
 /** 牢屋からどうやって出たか。sound＝助ける人の音を拾った、together＝同時に長押し、mission＝ミッション成功、host＝主催者が手で */
@@ -57,8 +58,16 @@ export interface GameView {
   area?: Area | null;
   /** 配役の決め方（wish＝希望を聞く／lot＝くじだけ）。古いサーバーからは来ない（そのときは希望の板を出さない） */
   wishMode?: WishMode;
-  /** 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（誰かは送らない）。古いサーバーからは来ない */
+  /**
+   * 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（誰かは送らない）。
+   * 主催者が指名した人は数えない（その人の役は希望と関係なく決まるため）。古いサーバーからは来ない
+   */
   wishes?: { oni: number; runner: number };
+  /**
+   * 配役の希望：いまの人数と割合での、それぞれの役の「開いている枠」（主催者の指名の分を引いたあと）。
+   * 古いサーバーからは来ない（そのときは、人数と割合からスマホが出す）
+   */
+  wishSlots?: { oni: number; runner: number };
 }
 
 export interface MissionView {
@@ -123,8 +132,13 @@ export interface MeView {
   wish?: RoleId | null;
   /** 配役の希望：続けて希望が通らなかった回数（1以上なら、次の配役で先に通る） */
   wishMiss?: number;
-  /** 配役の希望：いまの配役で、希望を出したのに通らなかった（希望が枠より多かった） */
+  /** 配役の希望：いまの配役で、希望を出したのに通らなかった（希望が枠より多かった・主催者が決めた） */
   wishMissed?: boolean;
+  /**
+   * 主催者がこの人の役を決めている（配役の前の指名、または配役のあとに主催者が動かした）。開始で消える。
+   * 本人の画面の文を合わせるために送る（配役の前は、板のひとことを「配役を待つ」にする。配役のあとは「主催者が決めた」）
+   */
+  hostCast?: boolean;
 }
 
 /** 主催者が見る、今の配役の捕獲 */
@@ -188,6 +202,32 @@ export interface HostSummary {
   wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
   /** 配役の希望：次の配役で先に通る人（前に外れた人）の数 */
   wishPrio?: number;
+  /**
+   * 配役をいじる：今夜の参加者の1人ずつ（名簿に入った順）。主催者が指名する・配役のあとに動かすための一覧。
+   * 古いサーバーは送らない
+   */
+  cast?: HostCastEntry[];
+}
+
+/** 主催者が配役をいじるための1人 */
+export interface HostCastEntry {
+  pid: string;
+  num: number;
+  name: string;
+  /** 本人の希望（null＝どちらでも） */
+  wish: RoleId | null;
+  /** 主催者の指名（null＝指名していない。開始で消える） */
+  pin: RoleId | null;
+  /** いまの配役での役（配役前・途中で来た人は null） */
+  role: RoleId | null;
+  /** 前に希望が外れていて、次の配役で優先される */
+  prio: boolean;
+  /** いまつながっている */
+  on: boolean;
+  /** 主催者が付けた印（男・女・速い…）。名簿に残る */
+  tags?: string[];
+  /** 今までの記録から出した数字（記録が無い人には付かない） */
+  stat?: CastStat;
 }
 
 /**
@@ -243,6 +283,12 @@ export type HostOp =
   | 'mic'
   /** 配役の決め方を切り替える（wish＝希望を聞く／lot＝くじだけ）。次の配役から効く */
   | 'wish-mode'
+  /**
+   * 配役をいじる：pids の人たちをまとめて role に指名する（role=null で指名を外す＝くじ・希望に戻す）。
+   * 配役の前は指名だけ。配役済み（開始の前）なら、役がちがう人をその場で動かす。試合中はできない。指名は開始で消える
+   */
+  | 'cast'
+  | 'tag'
   /** 遊ぶ範囲を決める（area＝頂点の並び、null で範囲なし）。試合中（時間が0になる前）は変えられない */
   | 'area'
   | 'remove'
@@ -294,6 +340,13 @@ export type ClientMsg =
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
       wishMode?: WishMode;
+      /** 配役をいじる：動かす人たち */
+      pids?: string[];
+      /** 配役をいじる：指名する役（null で指名を外す） */
+      role?: RoleId | null;
+      /** 印を付ける・外す（op: 'tag'。pids の人たちに） */
+      tag?: string;
+      on?: boolean;
       /** 遊ぶ範囲の頂点（[緯度, 経度] の並び）。null で範囲なし */
       area?: [number, number][] | null;
       pid?: string;

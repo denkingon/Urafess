@@ -1,6 +1,7 @@
 import { VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
-import { allocateCounts } from '../../shared/allocate';
+import { allocateCounts, castCounts } from '../../shared/allocate';
+import { CAST_SORTS, castStatText, DEFAULT_TAGS, sortCast, TAG_MAX_LEN, TAGS_MAX, type CastSort } from '../../shared/cast';
 import {
   CAMPUS_BOX,
   DEFAULT_RATIO,
@@ -14,6 +15,7 @@ import {
   MATES_STALE_MS,
   RUN_STALE_MS,
   START_LEAD_MS,
+  type RoleId,
   type WishMode,
 } from '../../shared/rules';
 import { isDone, positionAt } from '../../shared/schedule';
@@ -58,6 +60,10 @@ export interface HostActions {
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
       wishMode?: WishMode;
+      pids?: string[];
+      role?: RoleId | null;
+      tag?: string;
+      on?: boolean;
       area?: [number, number][] | null;
       pid?: string;
       by?: string;
@@ -87,12 +93,16 @@ export interface HostScreen {
   update(input: HostInput): void;
 }
 
+const ROLE_LABEL: Record<RoleId, string> = { oni: '鬼', runner: '逃走者' };
+
 const REASONS: Record<string, string> = {
   stale: '別の主催者画面が先に操作した。今の状態に更新したので、もう一度確かめて押す。',
   'not-allowed': '今の段階ではできない操作。',
   'no-participants': 'まだ誰も入室していない。',
   'nobody-jailed': '牢屋に誰もいない。',
   'bad-input': '入力が正しくない。',
+  'empty-role': 'その決め方だと、鬼か逃走者が0人になる。',
+  'too-many-tags': `印は1人に${TAGS_MAX}つまで。`,
   'not-found': 'その人は見つからない（もう待っていない・つながっていない）。',
 };
 
@@ -154,6 +164,33 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       </div>
       <p class="note" data-k="wishNote"></p>
     </div>
+    <section class="cap-host cast-host" data-k="cast" hidden>
+      <div class="cap-host-head"><b>配役をいじる</b><span data-k="castNow"></span></div>
+      <p class="note" data-k="castNote"></p>
+      <div class="cast-sort" role="group" aria-label="並べ方">
+        ${CAST_SORTS.map((x) => `<button type="button" data-sort="${x.id}" aria-pressed="false">${x.label}</button>`).join('')}
+      </div>
+      <div class="cast-pick">
+        <label>上から<input type="number" min="1" max="999" step="1" value="3" inputmode="numeric" data-k="castTop" aria-label="上から選ぶ人数">人</label>
+        <button type="button" data-cast="top">選ぶ</button>
+        <button type="button" data-cast="all">全員</button>
+        <button type="button" data-cast="none">選ばない</button>
+      </div>
+      <div class="cast-list" data-k="castList"></div>
+      <div class="cast-act" data-k="castAct">
+        <b data-k="castSel"></b>
+        <div class="cast-roles">
+          <button type="button" data-cast="oni"></button>
+          <button type="button" data-cast="runner"></button>
+          <button type="button" data-cast="lot" class="ghost">指名を外す</button>
+        </div>
+        <div class="cast-tags" data-k="castTags"></div>
+        <form data-k="castTagForm">
+          <input type="text" maxlength="${TAG_MAX_LEN}" placeholder="新しい印（${TAG_MAX_LEN}文字まで）" aria-label="新しい印">
+          <button type="submit">付ける</button>
+        </form>
+      </div>
+    </section>
     <details class="durations">
       <summary>時間の設定</summary>
       <form>
@@ -281,6 +318,67 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       actions.command('wish-mode', { wishMode: b.dataset.wishmode as WishMode });
     }),
   );
+
+  // 配役をいじる：並べて、選んで、まとめて指名する／動かす／印を付ける
+  const castSel = new Set<string>();
+  let castSort: CastSort = 'num';
+  let castOrder: string[] = [];
+  let castTagsOf = new Map<string, string[]>();
+  let lastCastKey = '';
+  let redraw = (): void => {};
+  const castTouch = () => {
+    lastCastKey = '';
+    redraw();
+  };
+  const sortBtns = [...el.querySelectorAll('[data-sort]')] as HTMLButtonElement[];
+  sortBtns.forEach((b) =>
+    b.addEventListener('click', () => {
+      castSort = b.dataset.sort as CastSort;
+      castTouch();
+    }),
+  );
+  q('castList').addEventListener('click', (e) => {
+    const t = (e.target as HTMLElement).closest('button[data-pid]') as HTMLButtonElement | null;
+    if (!t?.dataset.pid) return;
+    if (!castSel.delete(t.dataset.pid)) castSel.add(t.dataset.pid);
+    castTouch();
+  });
+  q('cast').addEventListener('click', (e) => {
+    const t = (e.target as HTMLElement).closest('button[data-cast]') as HTMLButtonElement | null;
+    if (!t) return;
+    const kind = t.dataset.cast;
+    if (kind === 'top' || kind === 'all' || kind === 'none') {
+      const n = kind === 'all' ? castOrder.length : kind === 'none' ? 0 : Math.floor(Number((q('castTop') as HTMLInputElement).value));
+      if (!Number.isFinite(n) || n < 0) return;
+      castSel.clear();
+      for (const pid of castOrder.slice(0, n)) castSel.add(pid);
+      castTouch();
+      return;
+    }
+    if (castSel.size === 0) return;
+    actions.command('cast', { pids: [...castSel], role: kind === 'lot' ? null : (kind as RoleId) });
+    castSel.clear();
+    castTouch();
+  });
+  // 印：選んだ全員に付いていれば外す。そうでなければ付ける
+  const sendTag = (tag: string) => {
+    const pids = [...castSel];
+    if (pids.length === 0 || !tag) return;
+    const all = pids.every((pid) => castTagsOf.get(pid)?.includes(tag));
+    actions.command('tag', { pids: all ? pids : pids.filter((pid) => !castTagsOf.get(pid)?.includes(tag)), tag, on: !all });
+  };
+  q('castTags').addEventListener('click', (e) => {
+    const t = (e.target as HTMLElement).closest('button[data-tag]') as HTMLButtonElement | null;
+    if (t?.dataset.tag) sendTag(t.dataset.tag);
+  });
+  q('castTagForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = q('castTagForm').querySelector('input') as HTMLInputElement;
+    const tag = input.value.normalize('NFKC').trim();
+    if (!tag || castSel.size === 0) return;
+    sendTag(tag);
+    input.value = '';
+  });
 
   btn('csv').addEventListener('click', () => {
     const b = btn('csv');
@@ -540,11 +638,12 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     if (confirm('遊ぶ範囲をなくす（どこまで行っても「戻れ」は出ない）。よいか？')) actions.command('area', { area: null });
   });
 
-  return {
+  const screen: HostScreen = {
     el,
     update(input) {
       const { game, host, serverNow, online, lastReject } = input;
       if (!game || !host) return;
+      redraw = () => screen.update(input);
       {
         // 遊ぶ範囲
         const pts = game.area?.pts ?? null;
@@ -678,6 +777,96 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         b.disabled = !canEditDurations || game.wishMode === undefined;
       });
       q('wishNote').textContent = wishNote(game, host);
+
+      // 配役をいじる
+      const cast = host.cast;
+      q('cast').hidden = !cast;
+      if (cast) {
+        // 試合中（時間が0になる前）は役を動かせない。印はいつでも付けられる
+        const castOpen = !(game.stage === 'timer' && !done);
+        const moving = game.stage === 'assigned';
+        const here = new Set(cast.map((c) => c.pid));
+        for (const pid of [...castSel]) if (!here.has(pid)) castSel.delete(pid);
+        const key = JSON.stringify([cast, [...castSel], castSort, game.stage, castOpen, game.ratio]);
+        if (key !== lastCastKey) {
+          lastCastKey = key;
+          const order = sortCast(cast, castSort);
+          castOrder = order.map((c) => c.pid);
+          castTagsOf = new Map(cast.map((c) => [c.pid, c.tags ?? []]));
+          sortBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.sort === castSort)));
+          const pinOni = cast.filter((c) => c.pin === 'oni').length;
+          const pinRunner = cast.filter((c) => c.pin === 'runner').length;
+          const ratioNow = game.ratio ?? DEFAULT_RATIO;
+          const plan = castCounts(cast.length, ROLES.map((x) => ({ ...x, weight: ratioNow[x.id] })), ROLES.map((x) => (x.id === 'oni' ? pinOni : pinRunner)));
+          q('castNow').textContent =
+            (pinOni + pinRunner > 0 ? `指名 鬼${pinOni}・逃走者${pinRunner}` : '指名なし') +
+            (moving || !castOpen ? '' : plan ? `　配役すると 鬼${plan[0]}・逃走者${plan[1]}` : '　このままだと片方が0人（配役できない）');
+          q('castNote').textContent = !castOpen
+            ? '試合中は役を動かせない。印は付けられる。'
+            : moving
+              ? '選んで「動かす」を押すと、その場で役が変わる（本人の画面もすぐ変わる）。希望とちがう役に動かした人は、次の配役で優先される。'
+              : '並べて、選んで、指名する。指名した人は、希望やくじより先にその役になる（残りは希望とくじ）。割合の枠より多く指名したら、指名のとおりの人数になる。希望とちがう役に指名した人は、次の配役で優先される。指名は「開始」で消える。';
+          q('castList').replaceChildren(
+            ...order.map((c) => {
+              const b = document.createElement('button');
+              b.type = 'button';
+              b.className = 'cast-row';
+              b.dataset.pid = c.pid;
+              b.dataset.on = c.on ? '1' : '0';
+              b.setAttribute('aria-pressed', String(castSel.has(c.pid)));
+              const head = document.createElement('span');
+              head.className = 'cast-name';
+              head.textContent = `${c.num} ${c.name}${c.on ? '' : '（切断中）'}`;
+              const marks = document.createElement('span');
+              marks.className = 'cast-marks';
+              const mark = (text: string, kind: string) => {
+                const m = document.createElement('i');
+                m.dataset.kind = kind;
+                m.textContent = text;
+                marks.append(m);
+              };
+              // 配役済みなら「いま」の役。次の配役の前なら、前のラウンドの役
+              if (c.role) mark(moving ? `いま ${ROLE_LABEL[c.role]}` : `前回 ${ROLE_LABEL[c.role]}`, moving ? 'role' : 'last');
+              if (c.pin) mark(`指名 ${ROLE_LABEL[c.pin]}`, 'pin');
+              if (c.wish) mark(`希望 ${ROLE_LABEL[c.wish]}`, 'wish');
+              if (c.prio) mark('優先', 'prio');
+              for (const t of c.tags ?? []) mark(t, 'tag');
+              b.append(head, marks);
+              const st = castStatText(c.stat);
+              if (st) {
+                const line = document.createElement('span');
+                line.className = 'cast-stat';
+                line.textContent = st;
+                b.append(line);
+              }
+              return b;
+            }),
+          );
+          const n = castSel.size;
+          q('castAct').hidden = n === 0;
+          q('castSel').textContent = `${n}人を選んでいる`;
+          const roleBtns = [...q('castAct').querySelectorAll('.cast-roles button')] as HTMLButtonElement[];
+          for (const rb of roleBtns) {
+            rb.disabled = !castOpen;
+            if (rb.dataset.cast === 'oni') rb.textContent = moving ? '鬼へ動かす' : '鬼に指名';
+            if (rb.dataset.cast === 'runner') rb.textContent = moving ? '逃走者へ動かす' : '逃走者に指名';
+          }
+          // 印：はじめからある印＋誰かに付いている印。選んだ全員に付いていれば「外す」
+          const known = [...new Set([...DEFAULT_TAGS, ...cast.flatMap((c) => c.tags ?? [])])];
+          const picked = cast.filter((c) => castSel.has(c.pid));
+          q('castTags').replaceChildren(
+            ...known.map((t) => {
+              const tb = document.createElement('button');
+              tb.type = 'button';
+              tb.dataset.tag = t;
+              const all = picked.length > 0 && picked.every((c) => c.tags?.includes(t));
+              tb.setAttribute('aria-pressed', String(all));
+              tb.textContent = all ? `${t} を外す` : `${t} を付ける`;
+              return tb;
+            }),
+          );
+        }
+      }
 
       const canEditRatio = canEditDurations;
       const ratio = game.ratio ?? DEFAULT_RATIO;
@@ -822,6 +1011,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       }
     },
   };
+  return screen;
 }
 
 function mb(bytes: number): string {

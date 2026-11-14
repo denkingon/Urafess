@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { assignRoles, assignWithWishes } from '../shared/allocate';
+import { allocateCounts, assignWithWishes, castCounts } from '../shared/allocate';
 import { autoPick, CAPTURE_PHASE_INDEX, captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
 import {
   cleanMissionTitle,
@@ -15,6 +15,7 @@ import type {
   GameView,
   GlowEntry,
   HostCapture,
+  HostCastEntry,
   HostPhoto,
   HostOp,
   HostSummary,
@@ -65,6 +66,7 @@ import {
   type Ratio,
   type RoleId,
   type WishMode,
+  WISH_MISS_MAX,
 } from '../shared/rules';
 import {
   GONE_NAME,
@@ -81,6 +83,7 @@ import {
   type AccountView,
 } from '../shared/account';
 import { nameKey, normalizeName } from '../shared/names';
+import { castStatsAll, cleanTag, TAGS_MAX, type CastEvent, type CastStat } from '../shared/cast';
 import { distanceM } from '../shared/run';
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
@@ -186,6 +189,8 @@ interface Member {
   nights: number;
   firstNight: number;
   lastNight: number;
+  /** 主催者が付けた印（男・女・速い…）。主催者の画面にしか出さない */
+  tags: string[];
 }
 
 type MemberRow = {
@@ -199,6 +204,7 @@ type MemberRow = {
   nights: number;
   first_night: number;
   last_night: number;
+  tags: string | null;
 };
 
 /** 記録に名前を残す相手（今夜の参加者でも、名簿の人でもよい） */
@@ -233,6 +239,8 @@ interface Participant {
   wishMiss: number;
   /** いまの配役を決める前の wishMiss（引き直しは、ここからやり直す。外れた回数を二重に数えない） */
   wishMissPrev: number;
+  /** 主催者の指名：この人はこの役（希望やくじより強い）。配役のあとに主催者が動かした人にも付く。開始で消える */
+  pin: RoleId | null;
 }
 
 /** 逃走者の「捕まった」。最初に長押しを始めた（または鬼に手動で選ばれた）ときに開き、本人が選ぶまで開いている */
@@ -322,6 +330,7 @@ type ParticipantRow = {
   wish: string | null;
   wish_miss: number | null;
   wish_miss_prev: number | null;
+  pin: string | null;
 };
 
 /**
@@ -363,6 +372,7 @@ export class GameRoom extends DurableObject<Env> {
   private readonly people = new Map<string, Participant>();
   /** 名簿（ずっと残る） */
   private readonly members = new Map<string, Member>();
+  private castStatCache: { key: string; stats: Map<string, CastStat> } | null = null;
   /** 名前の形 → 名簿の人（同じ形が2人いれば先に入った人） */
   private readonly memberByName = new Map<string, Member>();
   private readonly claims = new Map<string, Claim>();
@@ -437,6 +447,8 @@ export class GameRoom extends DurableObject<Env> {
       ['wish', 'wish TEXT'],
       ['wish_miss', 'wish_miss INTEGER NOT NULL DEFAULT 0'],
       ['wish_miss_prev', 'wish_miss_prev INTEGER NOT NULL DEFAULT 0'],
+      // 配役をいじる（主催者の指名）を入れたときに足した列
+      ['pin', 'pin TEXT'],
     ];
     for (const [name, ddl] of columns) {
       if (!have.has(name)) this.sql.exec(`ALTER TABLE participants ADD COLUMN ${ddl}`);
@@ -483,6 +495,9 @@ export class GameRoom extends DurableObject<Env> {
       )`,
     );
     this.sql.exec(`CREATE INDEX IF NOT EXISTS members_name_key ON members (name_key)`);
+    // 主催者が付ける印（配役を決めるときに見る）。すでにある部屋には後から足す
+    const memberCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(members)`).toArray().map((r) => r.name));
+    if (!memberCols.has('tags')) this.sql.exec(`ALTER TABLE members ADD COLUMN tags TEXT`);
     // 新しいスマホへ移す合言葉（古いスマホに出し、新しいスマホで打つ）。休止をまたいでも残すため保存する
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS handoffs (
@@ -621,6 +636,7 @@ export class GameRoom extends DurableObject<Env> {
         wish: isRoleId(r.wish) ? r.wish : null,
         wishMiss: r.wish_miss ?? 0,
         wishMissPrev: r.wish_miss_prev ?? 0,
+        pin: isRoleId(r.pin) ? r.pin : null,
       });
     }
     // 捕獲・牢屋を入れる前の版で配役した部屋（公開の瞬間に試合中だった等）は、3桁が無い。ここで配る
@@ -702,6 +718,7 @@ export class GameRoom extends DurableObject<Env> {
         nights: r.nights,
         firstNight: r.first_night,
         lastNight: r.last_night,
+        tags: parseTags(r.tags),
       };
       this.members.set(m.pid, m);
       if (!this.memberByName.has(m.nameKey)) this.memberByName.set(m.nameKey, m);
@@ -797,6 +814,8 @@ export class GameRoom extends DurableObject<Env> {
   ): void {
     const at = e.at ?? Date.now();
     const g = this.game;
+    // 試合の外で記録が増えたら、配役のための数字を数え直す
+    if (g.stage !== 'timer') this.castStatCache = null;
     let phase: number | null = null;
     let elapsed: number | null = null;
     if (g.stage === 'timer' && g.timer) {
@@ -1342,6 +1361,7 @@ export class GameRoom extends DurableObject<Env> {
       nights: 1,
       firstNight: night,
       lastNight: night,
+      tags: [],
     };
     this.game.nextNum += 1;
     const p = this.newParticipant(m, att.ua || null, now);
@@ -1488,6 +1508,7 @@ export class GameRoom extends DurableObject<Env> {
       wish: null,
       wishMiss: 0,
       wishMissPrev: 0,
+      pin: null,
     };
   }
 
@@ -2541,17 +2562,19 @@ export class GameRoom extends DurableObject<Env> {
         if (active.length === 0) return this.reject(ws, att, op, 'no-participants');
         const isReroll = g.stage === 'assigned';
         const rules = ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] }));
-        // 希望を聞く：人数は割合のまま。枠より多い希望はくじで、前に外れた人から先に通す。
+        // 主催者の指名で片方の役が0人になるなら、配役しない（主催者の画面に理由を出す）
+        if (!castCounts(active.length, rules, rules.map((r) => active.filter((p) => p.pin === r.id).length))) {
+          return this.reject(ws, att, op, 'empty-role');
+        }
+        // 主催者の指名が先。残りの枠は、希望を聞く：枠より多い希望はくじで、前に外れた人から先に通す（くじだけのときは全員くじ）。
         // 引き直しは、引き直す前の回数からやり直す（遊んでいない配役で外れた分を数えない）
         const missBase = new Map(active.map((p) => [p.pid, isReroll ? p.wishMissPrev : p.wishMiss] as const));
-        const wished =
-          g.wishMode === 'wish'
-            ? assignWithWishes(
-                active.map((p) => ({ pid: p.pid, wish: p.wish, miss: missBase.get(p.pid) ?? 0 })),
-                rules,
-              )
-            : null;
-        const roles = wished ? wished.roles : assignRoles(active.map((p) => p.pid), rules);
+        const drawn = assignWithWishes(
+          active.map((p) => ({ pid: p.pid, wish: g.wishMode === 'wish' ? p.wish : null, miss: missBase.get(p.pid) ?? 0, pin: p.pin })),
+          rules,
+        );
+        const wished = g.wishMode === 'wish' ? drawn : null;
+        const roles = drawn.roles;
         const missAfter = new Map(active.map((p) => [p.pid, wished ? (wished.miss.get(p.pid) ?? 0) : (missBase.get(p.pid) ?? 0)] as const));
         const missedNow = new Set(wished ? wished.missed : []);
         const wishStat = wished
@@ -2609,9 +2632,12 @@ export class GameRoom extends DurableObject<Env> {
             const p = this.people.get(pid)!;
             // 希望を聞いた配役では、その人の希望（wish）・通らなかったか（missed）・先に通る強さ（prio＝配役の前の、続けて外れた回数）も残す
             const wishData = wished ? { wish: p.wish, missed: missedNow.has(pid), prio: missBase.get(pid) ?? 0 } : {};
-            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid), ...wishData } });
+            // 主催者が指名した人には pin（指名した役）を残す
+            const pinData = p.pin ? { pin: p.pin } : {};
+            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid), ...wishData, ...pinData } });
           }
-          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll, how: g.wishMode, ...(wishStat ? { wish: wishStat } : {}) } });
+          const pins = active.filter((p) => p.pin !== null).length;
+          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll, how: g.wishMode, ...(wishStat ? { wish: wishStat } : {}), ...(pins ? { pins } : {}) } });
         });
         this.photos.clear();
         for (const [pid, role] of roles) {
@@ -2629,6 +2655,9 @@ export class GameRoom extends DurableObject<Env> {
       }
       case 'start':
         if (g.stage !== 'assigned') return this.reject(ws, att, op, 'not-allowed');
+        // 主催者の指名は、この試合のためのもの。始まったら消す（次の配役はまっさらから）
+        this.sql.exec(`UPDATE participants SET pin = NULL WHERE pin IS NOT NULL`);
+        for (const p of this.people.values()) p.pin = null;
         this.commit({ stage: 'timer', timer: startTimer(g.durations, now), result: null });
         this.log('start', { at: now, data: { durations: g.durations } });
         break;
@@ -2741,6 +2770,80 @@ export class GameRoom extends DurableObject<Env> {
         if (msg.wishMode === g.wishMode) break;
         this.commit({ wishMode: msg.wishMode });
         this.log('wish-mode', { at: now, data: { how: msg.wishMode } });
+        break;
+      }
+      case 'cast': {
+        // 配役をいじる：まとめて指名する／指名を外す。配役済み（開始の前）なら、役がちがう人をその場で動かす。
+        // 試合中（時間が0になる前）はできない
+        if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        const role = msg.role === null ? null : isRoleId(msg.role) ? msg.role : undefined;
+        const ids = Array.isArray(msg.pids) ? [...new Set(msg.pids.filter((x): x is string => typeof x === 'string'))] : [];
+        if (role === undefined || ids.length === 0 || ids.length > 1_000) return this.reject(ws, att, op, 'bad-input');
+        const targets = ids.map((pid) => this.people.get(pid)).filter((p): p is Participant => p !== undefined && !p.removed);
+        if (targets.length !== ids.length) return this.reject(ws, att, op, 'not-found');
+        // 配役済みのときだけ、いまの配役に入っていて役がちがう人を動かす
+        const movers = g.stage === 'assigned' && role !== null ? targets.filter((p) => this.inRound(p.pid) && p.role !== role) : [];
+        const counts = { ...g.counts };
+        for (const p of movers) {
+          counts[p.role as RoleId] -= 1;
+          counts[role as RoleId] += 1;
+        }
+        // 2人以上いるのに片方の役が0人になる動かし方は断る
+        if (movers.length > 0 && counts.oni + counts.runner >= ROLES.length && ROLES.some((r) => counts[r.id] < r.min)) {
+          return this.reject(ws, att, op, 'empty-role');
+        }
+        const changed = targets.filter((p) => p.pin !== role);
+        if (changed.length === 0 && movers.length === 0) break;
+        // 動かした人の「続けて外れた回数」は、この配役の前の回数から数え直す（希望どおりになれば 0、希望とちがえば 1 増える）
+        const moved = new Set(movers.map((p) => p.pid));
+        const missOf = (p: Participant): number =>
+          g.wishStat == null || p.wish === null ? p.wishMiss : role === p.wish ? 0 : Math.min(WISH_MISS_MAX, p.wishMissPrev + 1);
+        this.ctx.storage.transactionSync(() => {
+          for (const p of targets) {
+            if (moved.has(p.pid)) {
+              const from = p.role;
+              const miss = missOf(p);
+              this.sql.exec(`UPDATE participants SET pin = ?, role = ?, ack_id = 0, wish_miss = ? WHERE pid = ?`, role, role, miss, p.pid);
+              p.role = role;
+              p.ackId = 0;
+              p.wishMiss = miss;
+              this.log('recast', { p, at: now, data: { role, from, wish: p.wish, missed: p.wish !== null && p.wish !== role } });
+            } else if (p.pin !== role) {
+              this.sql.exec(`UPDATE participants SET pin = ? WHERE pid = ?`, role, p.pid);
+            }
+            p.pin = role;
+          }
+          this.log('cast', { at: now, data: { role, people: targets.length, moved: movers.length } });
+        });
+        // 動かしたあとの人数と、希望が通らなかった人数を数え直す
+        const inRound = [...this.people.values()].filter((p) => this.inRound(p.pid));
+        const wishStat =
+          g.wishStat != null && movers.length > 0
+            ? { ...g.wishStat, missed: inRound.filter((p) => p.wish !== null && p.role !== p.wish).length }
+            : g.wishStat;
+        this.commit(movers.length > 0 ? { counts, wishStat } : {});
+        break;
+      }
+      case 'tag': {
+        // 印を付ける・外す（男・女・速い…）。名簿に残る。いつでもできる（主催者の画面にしか出ない）
+        const tag = cleanTag(msg.tag);
+        const ids = Array.isArray(msg.pids) ? [...new Set(msg.pids.filter((x): x is string => typeof x === 'string'))] : [];
+        if (tag === null || typeof msg.on !== 'boolean' || ids.length === 0 || ids.length > 1_000) {
+          return this.reject(ws, att, op, 'bad-input');
+        }
+        const targets = ids.map((pid) => this.members.get(pid)).filter((m): m is Member => m !== undefined);
+        if (targets.length !== ids.length) return this.reject(ws, att, op, 'not-found');
+        const on = msg.on;
+        const changed = targets.filter((m) => m.tags.includes(tag) !== on);
+        if (on && changed.some((m) => m.tags.length >= TAGS_MAX)) return this.reject(ws, att, op, 'too-many-tags');
+        if (changed.length === 0) break;
+        this.ctx.storage.transactionSync(() => {
+          for (const m of changed) {
+            m.tags = on ? [...m.tags, tag] : m.tags.filter((t) => t !== tag);
+            this.sql.exec(`UPDATE members SET tags = ? WHERE pid = ?`, m.tags.length ? JSON.stringify(m.tags) : null, m.pid);
+          }
+        });
+        this.commit({});
         break;
       }
       case 'mic': {
@@ -3101,20 +3204,29 @@ export class GameRoom extends DurableObject<Env> {
       micMode: g.micMode,
       area: g.area ?? null,
       wishMode: g.wishMode,
-      wishes: this.wishCounts(),
+      ...this.wishCounts(),
     };
   }
 
-  /** 配役の希望：いま入室している人のうち、それぞれの役を希望している人数 */
-  private wishCounts(): { oni: number; runner: number } {
-    let oni = 0;
-    let runner = 0;
+  /**
+   * 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（wishes）と、開いている枠（wishSlots）。
+   * 主催者が指名した人は希望に数えず、その分の枠も引く（残りの枠を、指名されていない人で分けるため）
+   */
+  private wishCounts(): { wishes: { oni: number; runner: number }; wishSlots: { oni: number; runner: number } } {
+    const wishes = { oni: 0, runner: 0 };
+    const pinned = { oni: 0, runner: 0 };
+    let n = 0;
     for (const p of this.people.values()) {
       if (p.removed) continue;
-      if (p.wish === 'oni') oni++;
-      else if (p.wish === 'runner') runner++;
+      n++;
+      if (p.pin !== null) pinned[p.pin]++;
+      else if (p.wish !== null) wishes[p.wish]++;
     }
-    return { oni, runner };
+    const rules = ROLES.map((r) => ({ ...r, weight: this.game.ratio[r.id] }));
+    // 指名で配役できない形（片方が0人）になっている間は、割合のままの人数で出す
+    const counts = castCounts(n, rules, rules.map((r) => pinned[r.id])) ?? allocateCounts(n, rules);
+    const slot = (id: RoleId) => Math.max(0, counts[rules.findIndex((r) => r.id === id)] - pinned[id]);
+    return { wishes, wishSlots: { oni: slot('oni'), runner: slot('runner') } };
   }
 
   private meView(pid: string, now = Date.now()): MeView | undefined {
@@ -3154,6 +3266,7 @@ export class GameRoom extends DurableObject<Env> {
       wishMiss: p.wishMiss,
       // 役が決まってからゲームの終わりまで、その配役の人は希望を変えられないので、その間はこれで合っている
       wishMissed: live && g.wishStat != null && p.wish !== null && p.role !== null && p.role !== p.wish,
+      hostCast: p.pin !== null,
     };
   }
 
@@ -3191,7 +3304,27 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
+  /** 配役を決めるための数字。記録を全部読むので、段階・配役・夜が変わったときだけ数え直す（試合中は前のまま） */
+  private castStats(): Map<string, CastStat> {
+    const g = this.game;
+    const key = `${g.night}:${g.round}:${g.assignId}:${g.stage}:${g.result ?? ''}`;
+    if (this.castStatCache?.key === key) return this.castStatCache.stats;
+    const rows = this.sql
+      .exec<CastEvent>(
+        `SELECT at, assign_id, kind, pid, other_pid, elapsed,
+           CASE WHEN kind = 'run-end' THEN json_object('ms', json_extract(data, '$.ms'), 'm', json_extract(data, '$.m')) ELSE data END AS data
+         FROM events
+         WHERE kind IN ('clear', 'start', 'reset', 'skip', 'role', 'recast', 'capture', 'release', 'run-end')
+         ORDER BY id`,
+      )
+      .toArray();
+    const stats = castStatsAll(rows);
+    this.castStatCache = { key, stats };
+    return stats;
+  }
+
   private hostSummary(): HostSummary {
+    const stats = this.castStats();
     const active = this.activePeople();
     const connected = new Set<string>();
     const synced = new Set<string>();
@@ -3248,6 +3381,22 @@ export class GameRoom extends DurableObject<Env> {
       photoBytes: this.photoBytes,
       wishStat: g.stage === 'lobby' ? null : (g.wishStat ?? null),
       wishPrio: active.filter((p) => p.wish !== null && p.wishMiss > 0).length,
+      cast: [...active]
+        .sort((a, b) => a.num - b.num)
+        .map(
+          (p): HostCastEntry => ({
+            pid: p.pid,
+            num: p.num,
+            name: p.name,
+            wish: p.wish,
+            pin: p.pin,
+            role: g.assignId > 0 && p.assignId === g.assignId ? p.role : null,
+            prio: p.wish !== null && p.wishMiss > 0,
+            on: connected.has(p.pid),
+            ...(this.members.get(p.pid)?.tags.length ? { tags: this.members.get(p.pid)!.tags } : {}),
+            ...(stats.has(p.pid) ? { stat: stats.get(p.pid)! } : {}),
+          }),
+        ),
     };
   }
 
@@ -3411,4 +3560,14 @@ function randomKey(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function parseTags(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return Array.isArray(v) ? v.map(cleanTag).filter((t): t is string => t !== null).slice(0, TAGS_MAX) : [];
+  } catch {
+    return [];
+  }
 }

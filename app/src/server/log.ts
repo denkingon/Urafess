@@ -36,6 +36,8 @@ const KIND_NAME: Record<string, string> = {
   ratio: '割合の設定',
   mic: '鬼のマイクの聞き方',
   'wish-mode': '配役の決め方',
+  cast: '主催者の指名',
+  recast: '主催者が役を動かした',
   area: '遊ぶ範囲',
   remove: '外す',
   clear: '新しい夜を始める',
