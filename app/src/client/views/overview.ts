@@ -89,6 +89,12 @@ export function fromWorld(x: number, y: number): LatLon {
   return { lat: (Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180) / Math.PI, lon: x * 360 - 180 };
 }
 
+/** 枠の外側の余白に足す分（枠の幅・高さに対する割合。0 なら今まで通り）。本部は周りの道や建物まで見せたいので広げる */
+let framePad = 0;
+export function setFramePad(p: number): void {
+  framePad = p;
+}
+
 /**
  * 地図の枠：もとの枠（範囲があれば範囲、無ければキャンパス）と、近くにいる人を全部入れる。返り値は世界の座標の矩形。
  * base に範囲の頂点を渡すと、範囲に合わせる
@@ -102,7 +108,7 @@ export const FRAME_EXPAND_M = 40;
  * 地図の枠：もとの枠（範囲があれば範囲、無ければメビウスリングのまわり）と、そのすぐ外（FRAME_EXPAND_M 以内）にいる人を入れる。
  * 返り値は世界の座標の矩形。pad は余白の割合
  */
-export function frameOf(points: LatLon[], base?: LatLon[] | null, pad = 0.04): { x0: number; y0: number; x1: number; y1: number } {
+export function frameOf(points: LatLon[], base?: LatLon[] | null, pad = 0.04 + framePad): { x0: number; y0: number; x1: number; y1: number } {
   let x0: number;
   let y0: number;
   let x1: number;
@@ -199,7 +205,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     // 描くとき：範囲があれば範囲（と牢屋・描いている点）に、無ければメビウスリングのまわりに合わせ、少し広めの余白。
     // 遊ぶとき：範囲いっぱいに。範囲のすぐ外の人までは入れ、遠い人は地図のふちに寄せる
     const f = editing
-      ? frameOf([...jailPts, ...draftPts], areaPts.length >= 3 ? areaPts : null, 0.12)
+      ? frameOf([...jailPts, ...draftPts], areaPts.length >= 3 ? areaPts : null, 0.12 + framePad)
       : frameOf([...all, ...jailPts], areaPts.length >= 3 ? areaPts : null);
     const S = Math.min(w / (f.x1 - f.x0), h / (f.y1 - f.y0)); // 画面の px ／ 世界の 1
     const cx = (f.x0 + f.x1) / 2;
@@ -207,6 +213,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     const key = JSON.stringify([
       w,
       h,
+      framePad,
       Math.round(S),
       cx.toFixed(7),
       cy.toFixed(7),
