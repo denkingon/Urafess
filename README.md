@@ -15,3 +15,4 @@
 
 - [app/](app/)：アプリの土台（入室・①配役・②同期タイマー）。使い方は app/README.md
 - [map-chat-prototype-2025-07/](map-chat-prototype-2025-07/)：2025年7月の地図チャット試作
+- [progress-map/](progress-map/)：進捗マップ（夜の時計・のぼり）の表と、絵を作る道具。[ウェブ版](https://claude.ai/artifact/6r2tKyYRUH8LVRWKYePLsY)。アプリとは無関係
