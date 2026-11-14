@@ -435,11 +435,13 @@ describe('捕獲の記録（機械テスト）', () => {
     // 押している間だけ聞く鬼：鬼も押して、その間に拾う → 逃走者が離した時点で「音」で記録（残っている最後の逃走者で）
     const P = runners.find((r) => !r.client.state.me?.caught)!;
     expect(runners.filter((r) => !r.client.state.me?.caught)).toHaveLength(1);
+    // 拾った知らせは、逃走者が離すより十分前に送る（別々の回線なので、100ms差だと遅れで「離した」が先に着き、
+    // 鬼が押している＝「同時」で先に記録されてしまう。記録される鬼は同じでも、手がかりの名前が変わる）
     await Promise.all([
       hold(B, 2_500),
-      hold(P, 1_200),
+      hold(P, 1_600),
       (async () => {
-        await sleep(1_100);
+        await sleep(900);
         B.client.heard(P.client.state.me!.code!);
       })(),
     ]);

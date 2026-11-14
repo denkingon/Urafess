@@ -88,7 +88,7 @@ import { distanceM } from '../shared/run';
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
 import type { ProbeHub } from './probe';
-import { hostKeyCandidates, sameHostKey } from '../shared/hostkey';
+import { checkNewHostKey, hostKeyCandidates, sameHostKey } from '../shared/hostkey';
 
 export interface Env {
   GAME: DurableObjectNamespace<GameRoom>;
@@ -569,7 +569,14 @@ export class GameRoom extends DurableObject<Env> {
     );
   }
 
+  /**
+   * 主催者画面で決めた合言葉（この部屋のもの。無ければ null）。
+   * Cloudflare の HOST_TOKEN は予備の鍵として、これを決めたあとも効く（忘れても入れるように）
+   */
+  private hostKey: string | null = null;
+
   private load(): void {
+    this.hostKey = this.sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'hostkey'`).toArray()[0]?.v ?? null;
     const row = this.sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'game'`).toArray()[0];
     this.game = row
       ? (JSON.parse(row.v) as GameState)
@@ -860,6 +867,8 @@ export class GameRoom extends DurableObject<Env> {
     if (m[3]) return new Response('not found', { status: 404 });
 
     if (m[2] === 'key') {
+      // POST：主催者画面で合言葉を変える
+      if (request.method === 'POST') return this.onKeyChange(request);
       // 主催者の合言葉が合っているかだけを答える（主催者の入口が、覚える前に確かめる）
       return new Response(null, { status: this.isHostRequest(request) ? 204 : 403, headers: { 'cache-control': 'no-store' } });
     }
@@ -2428,7 +2437,31 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 空白・大文字小文字・全角半角のちがいは同じ合言葉とみなす（スマホで打つため。shared/hostkey.ts） */
   private isHostToken(token: unknown): boolean {
-    return sameHostKey(token, this.env.HOST_TOKEN);
+    return sameHostKey(token, this.env.HOST_TOKEN) || (this.hostKey !== null && sameHostKey(token, this.hostKey));
+  }
+
+  /**
+   * 主催者画面で合言葉を変える（いまの合言葉で入っている人だけ）。
+   * 変えるのは「主催者画面で決めた合言葉」で、Cloudflare の HOST_TOKEN は予備の鍵として残る。
+   * 204＝変えた、400＝短すぎる・長すぎる（{ error }）、403＝主催者ではない
+   */
+  private async onKeyChange(request: Request): Promise<Response> {
+    const headers = { 'cache-control': 'no-store' };
+    if (!this.isHostRequest(request)) return new Response('forbidden', { status: 403, headers });
+    let key = '';
+    try {
+      const body = (await request.json()) as { key?: unknown };
+      if (typeof body?.key === 'string') key = body.key.trim();
+    } catch {
+      // 中身が読めない → 下で short になる
+    }
+    const verdict = checkNewHostKey(key);
+    if (verdict !== 'ok') return Response.json({ error: verdict }, { status: 400, headers });
+    this.hostKey = key;
+    this.sql.exec(`INSERT INTO meta (k, v) VALUES ('hostkey', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`, key);
+    // 記録には「変えた」ことだけを残す（合言葉そのものは残さない）
+    this.log('host-key', { at: Date.now() });
+    return new Response(null, { status: 204, headers });
   }
 
   /** ヘッダー x-host-token の合言葉。日本語が入る合言葉は % の形で届く（前の版の画面はそのまま送ってくる） */
