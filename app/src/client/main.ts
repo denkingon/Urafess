@@ -5,9 +5,11 @@ import { bootQuiet, connectingView, participantView, type PhoneView } from '../s
 import { GameClient, type KeyValueStore } from './core/game-client';
 import { detectInstall, lineEscapeUrl, type InstallPath } from './install/detect';
 import { getCodec } from './sound/codec';
+import { AnnounceChime } from './sound/chime';
 import { SoundEmitter } from './sound/emitter';
 import { SoundListener } from './sound/listener';
 import { Sensors } from './sense';
+import { createAnnounce } from './views/announce';
 import { createCapture } from './views/capture';
 import { createGlow } from './views/glow';
 import { createHost } from './views/host';
@@ -207,9 +209,14 @@ function startPlayer(): void {
     }
   }, 250);
   // 音は「画面に触れた直後」にしか出させてもらえない。長押しより前のタップで一度準備しておく
+  // 捕まったときの全員への知らせ（帯と確保の音。全員のスマホで同じ瞬間に出る）
+  const chime = new AnnounceChime();
+  const announce = createAnnounce(chime);
+  phone.el.append(announce.el);
   const unlock = () => {
     emitter.unlock();
     listener.unlock();
+    chime.unlock();
   };
   document.addEventListener('pointerup', unlock, { capture: true, passive: true });
   document.addEventListener('click', unlock, { capture: true, passive: true });
@@ -274,9 +281,17 @@ function startPlayer(): void {
       return;
     }
     show(phone.el);
-    const view = participantView(s.game, s.me, client.serverNow() ?? Date.now(), s.online);
+    const serverNow = client.serverNow() ?? Date.now();
+    const view = participantView(s.game, s.me, serverNow, s.online);
     lastView = view;
     phone.update(view);
+    {
+      // 古いサーバーは news を送らない（無ければ知らせなし）
+      const news = s.game.news ?? null;
+      const me = s.me;
+      const freeRunner = me.role === 'runner' && me.assignId === s.game.assignId && !me.removed && me.caught == null;
+      announce.update({ news, aboutMe: news !== null && me.newsAbout === news.seq, serverNow, freeRunner, busy: emitter.playing });
+    }
     capture.update(view, s);
     mission.update(s.game, s.me);
     jail.update(view, s);
@@ -357,6 +372,12 @@ function startHost(token: string): void {
     },
   }, sensors);
   root.replaceChildren(host.el);
+  // 主催者の画面にも全員への知らせを出す（確保の音も鳴る。音のために、どこかのタップで一度準備する）
+  const chime = new AnnounceChime();
+  const announce = createAnnounce(chime);
+  host.el.append(announce.el);
+  document.addEventListener('pointerup', () => chime.unlock(), { capture: true, passive: true });
+  document.addEventListener('click', () => chime.unlock(), { capture: true, passive: true });
   loop(() => {
     const s = client.state;
     screenKeeper.set(inMatch(s.game?.stage));
@@ -375,6 +396,7 @@ function startHost(token: string): void {
       glow: s.glow,
       mates: s.mates,
     });
+    announce.update({ news: s.game?.news ?? null, aboutMe: false, serverNow: client.serverNow() ?? Date.now(), freeRunner: false, busy: false });
   });
 }
 

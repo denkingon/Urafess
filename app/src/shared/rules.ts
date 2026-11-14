@@ -138,6 +138,35 @@ export const SOUND_VOLUME = 50;
 /** 鳴らす合間（長押しの間、3桁を繰り返す） */
 export const SOUND_GAP_MS = 250;
 
+// ---------- 捕まったときの全員への知らせ ----------
+//
+// 捕獲が記録された瞬間、全員のスマホに「さむ → ゆいか 確保・逃走者 残り 6/7」の帯を出し、音を鳴らす。
+// 全員が同じ瞬間に出すよう、記録した時刻の ANNOUNCE_LEAD_MS 後をサーバー時刻で決めて配る。
+// 何を出すか・誰を鳴らすかは、主催者が試合ごとに切り替える。ANNOUNCE_DEFAULT は最初の値（11/6 本人が選んだ）。
+
+/** 帯に何を出すか。both＝捕まえた鬼も（さむ → ゆいか）、runner＝捕まった人（ゆいか）、count＝人数だけ（1人）、off＝知らせない */
+export type AnnounceShow = 'both' | 'runner' | 'count' | 'off';
+
+/** 誰のスマホを鳴らすか。all＝全員、oni＝逃げている逃走者のスマホは鳴らさない（隠れ場所がばれないように）、none＝鳴らさない */
+export type AnnounceSound = 'all' | 'oni' | 'none';
+
+export interface AnnounceSettings {
+  show: AnnounceShow;
+  sound: AnnounceSound;
+}
+
+export const ANNOUNCE_DEFAULT: AnnounceSettings = { show: 'both', sound: 'all' };
+
+/** 帯と音は、記録した瞬間のこれだけ後に出す（その間に全員へ届き、全員が同じ瞬間に鳴る） */
+export const ANNOUNCE_LEAD_MS = 1_000;
+
+/** 帯を出しておく長さ（触れると早く消せる）。消えたあとも、画面の下に「最新の確保」が残る */
+export const ANNOUNCE_SHOW_MS = 6_000;
+
+/** 出す瞬間をこれだけ過ぎてから届いた知らせは、帯だけ出して鳴らさない（遅れて鳴ると、いま捕まったと思われる） */
+export const ANNOUNCE_SOUND_LATE_MS = 3_000;
+
+
 // ---------- 走ると光る ----------
 //
 // 走っている人は、全員の画面に名前と場所が光る。止まると消える（走りは見せつける行為。走る奴は囮であり勇者）。

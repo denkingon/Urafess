@@ -1,7 +1,7 @@
 import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
 import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
-import { SILENCE_LIMIT_MS } from '../../shared/rules';
+import { SILENCE_LIMIT_MS, type AnnounceSettings } from '../../shared/rules';
 
 /**
  * しくみの層。接続・時計合わせ・状態だけを持ち、見た目は一切知らない。
@@ -384,6 +384,7 @@ export class GameClient {
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      announce?: AnnounceSettings;
       area?: [number, number][] | null;
       pid?: string;
       by?: string;

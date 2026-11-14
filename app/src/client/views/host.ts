@@ -1,7 +1,12 @@
+import { SHOW_EXAMPLE, SOUND_NAME } from '../../shared/announce';
 import { VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
 import { allocateCounts } from '../../shared/allocate';
 import {
+  ANNOUNCE_DEFAULT,
+  type AnnounceSettings,
+  type AnnounceShow,
+  type AnnounceSound,
   CAMPUS_BOX,
   DEFAULT_RATIO,
   DURATION_MAX_MS,
@@ -56,6 +61,7 @@ export interface HostActions {
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      announce?: AnnounceSettings;
       area?: [number, number][] | null;
       pid?: string;
       by?: string;
@@ -143,6 +149,22 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         <button type="button" data-mic="hold" aria-pressed="false">押している間だけ</button>
       </div>
       <p class="note" data-k="micNote"></p>
+    </div>
+    <div class="mic-mode announce-set">
+      <span>捕まったら全員に知らせる</span>
+      <div class="seg" role="group" aria-label="帯に出すもの">
+        <button type="button" data-show="both" aria-pressed="false">鬼も</button>
+        <button type="button" data-show="runner" aria-pressed="false">捕まった人</button>
+        <button type="button" data-show="count" aria-pressed="false">人数だけ</button>
+        <button type="button" data-show="off" aria-pressed="false">なし</button>
+      </div>
+      <div class="seg" role="group" aria-label="音を鳴らすスマホ">
+        <button type="button" data-sound="all" aria-pressed="false">全員鳴らす</button>
+        <button type="button" data-sound="oni" aria-pressed="false">逃走者以外</button>
+        <button type="button" data-sound="none" aria-pressed="false">鳴らさない</button>
+      </div>
+      <p class="note" data-k="annNote"></p>
+      <button type="button" data-k="annTest">全員のスマホで試す（帯と音）</button>
     </div>
     <details class="durations">
       <summary>時間の設定</summary>
@@ -255,6 +277,18 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   });
 
   // 鬼のマイクの聞き方：いつでも切り替えられる（試合中でも、そのときから全員に効く）。どちらで記録したかは CSV に残る
+  // 捕まったときの全員への知らせ：押したらすぐ送る（いつでも変えられる）
+  let annNow: AnnounceSettings = { ...ANNOUNCE_DEFAULT };
+  const showBtns = [...el.querySelectorAll('[data-show]')] as HTMLButtonElement[];
+  const soundBtns = [...el.querySelectorAll('[data-sound]')] as HTMLButtonElement[];
+  showBtns.forEach((b) =>
+    b.addEventListener('click', () => actions.command('announce', { announce: { ...annNow, show: b.dataset.show as AnnounceShow } })),
+  );
+  soundBtns.forEach((b) =>
+    b.addEventListener('click', () => actions.command('announce', { announce: { ...annNow, sound: b.dataset.sound as AnnounceSound } })),
+  );
+  const annTest = el.querySelector('[data-k="annTest"]') as HTMLButtonElement;
+  annTest.addEventListener('click', () => actions.command('announce-test'));
   const micBtns = [...el.querySelectorAll('[data-mic]')] as HTMLButtonElement[];
   micBtns.forEach((b) =>
     b.addEventListener('click', () => {
@@ -643,6 +677,22 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         if (!editingDurations) input.value = String(Math.round(game.durations[i] / 1000));
       });
       (form.querySelector('button') as HTMLButtonElement).disabled = !canEditDurations;
+
+      const ann = game.announce ?? ANNOUNCE_DEFAULT;
+      annNow = ann;
+      showBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.show === ann.show)));
+      soundBtns.forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.sound === ann.sound));
+        b.disabled = ann.show === 'off';
+      });
+      q('annNote').textContent =
+        ann.show === 'off'
+          ? SHOW_EXAMPLE.off
+          : `例：${SHOW_EXAMPLE[ann.show]}・逃走者 残り 6/7。音：${SOUND_NAME[ann.sound]}` +
+            (ann.sound === 'none' ? '' : '（全員のスマホで同じ瞬間に鳴る）') +
+            '。iPhone はウェブから震わせられないので、ポケットの iPhone に届くのは音だけ';
+      // 試合中は本物の確保と取り違えるので試さない
+      annTest.disabled = game.stage === 'timer' && !!game.timer && !isDone(game.timer, serverNow);
 
       const mic = game.micMode ?? 'always';
       micBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mic === mic)));

@@ -4,8 +4,30 @@ import type { PhotoStatus } from './mission';
 
 /** 牢屋からどうやって出たか。sound＝助ける人の音を拾った、together＝同時に長押し、mission＝ミッション成功、host＝主催者が手で */
 export type RescueVia = 'sound' | 'together' | 'mission' | 'host';
-import type { RoleId } from './rules';
+import type { AnnounceSettings, AnnounceSound, RoleId } from './rules';
 import type { Timer } from './schedule';
+
+/**
+ * 全員に配る「確保」の知らせ（最後の1件）。主催者の設定（AnnounceSettings）で出してよいものだけを入れる。
+ * 名前を出さない設定のときは、サーバーが名前を入れない（誰が鬼か・誰が捕まったかは配らない）
+ */
+export interface CaptureNews {
+  /** 増え続ける番号（配役をまたいでも戻らない）。画面はこれが変わったら帯を出す */
+  seq: number;
+  /** capture＝確保、release＝主催者が確保を取り消した、test＝主催者が試しに出した */
+  kind: 'capture' | 'release' | 'test';
+  /** 帯を出して鳴らす瞬間（サーバー時刻）。全員がこの瞬間に出す */
+  showAt: number;
+  /** 捕まった逃走者（「捕まった人」「捕まえた鬼も」のときだけ） */
+  runner: { num: number; name: string } | null;
+  /** 捕まえた鬼（「捕まえた鬼も」のときで、鬼が分かっているときだけ。主催者が鬼を空欄で記録したら null） */
+  oni: { num: number; name: string } | null;
+  /** この知らせのあとの逃走者の残り（牢屋の外）と、配役の逃走者の数 */
+  left: number;
+  total: number;
+  /** 誰のスマホを鳴らすか（知らせを作ったときの設定） */
+  sound: AnnounceSound;
+}
 
 /** ゲーム全体の段階（サーバーが持つ正解） */
 export type Stage =
@@ -55,6 +77,10 @@ export interface GameView {
   micMode?: 'always' | 'hold';
   /** 遊ぶ範囲（主催者がゲームの前に地図に描いた多角形）。null＝範囲なし。古いサーバーからは来ない */
   area?: Area | null;
+  /** 捕まったときの全員への知らせの設定（主催者が切り替える）。古いサーバーからは来ない */
+  announce?: AnnounceSettings;
+  /** 最後の「確保」の知らせ。配役・リセット・新しい夜で消える。古いサーバーからは来ない */
+  news?: CaptureNews | null;
 }
 
 export interface MissionView {
@@ -115,6 +141,11 @@ export interface MeView {
   claim: { at: number; cands: Candidate[] } | null;
   /** ミッション：このラウンドに自分が送った写真（古い順）。古いサーバーからは来ない */
   sent?: { id: string; missionId: number; status: PhotoStatus; at: number }[];
+  /**
+   * 最後の知らせ（game.news）が自分のこと（捕まった本人・捕まえた鬼）なら、その seq。
+   * 本人には自分の知らせ（「捕まった」「捕まえた」）が出るので、全員向けの帯は重ねない。古いサーバーからは来ない
+   */
+  newsAbout?: number | null;
 }
 
 /** 主催者が見る、今の配役の捕獲 */
@@ -249,7 +280,11 @@ export type HostOp =
    * 写真を見て決める（photo＝写真の印、ok=true で成功・false でやり直し）。決め直してもいい。
    * 成功のとき free=true なら牢屋の人も出す（n＝人数、省くと全員）。1枚の写真で出すのは最初の成功の1回だけ
    */
-  | 'judge';
+  | 'judge'
+  /** 捕まったときの全員への知らせの設定を変える（announce＝新しい設定。いつでも変えられる） */
+  | 'announce'
+  /** 全員のスマホで知らせを試す（帯と音）。試合中（時間が0になる前）はできない */
+  | 'announce-test';
 
 export type ClientMsg =
   /** 新しく名簿に入って、今夜に入る（名前が名簿にあれば taken が返る） */
@@ -274,6 +309,8 @@ export type ClientMsg =
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      /** 捕まったときの全員への知らせの設定 */
+      announce?: AnnounceSettings;
       /** 遊ぶ範囲の頂点（[緯度, 経度] の並び）。null で範囲なし */
       area?: [number, number][] | null;
       pid?: string;

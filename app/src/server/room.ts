@@ -10,7 +10,9 @@ import {
   PHOTO_STORE_MAX_BYTES,
   type PhotoStatus,
 } from '../shared/mission';
+import { isAnnounceSettings } from '../shared/announce';
 import type {
+  CaptureNews,
   ClientMsg,
   GameView,
   GlowEntry,
@@ -33,6 +35,8 @@ import type {
 import { decideWinner, everyoneJailed } from '../shared/jail';
 import { cleanAreaPts, isValidAreaPts, type Area } from '../shared/area';
 import {
+  ANNOUNCE_DEFAULT,
+  ANNOUNCE_LEAD_MS,
   CAMPUS_CENTER,
   CLAIM_GRACE_MS,
   CLAIM_OPEN_MS,
@@ -58,6 +62,7 @@ import {
   ROLES,
   RUN_STALE_MS,
   SYNC_OK_MS,
+  type AnnounceSettings,
   type MicMode,
   type Ratio,
   type RoleId,
@@ -109,6 +114,20 @@ interface GameState {
   allCaughtAt?: number | null;
   /** result をアプリが決めた */
   resultAuto?: boolean;
+  /** 捕まったときの全員への知らせの設定（主催者が切り替える。新しい夜でも残る）。古い保存データには無い */
+  announce?: AnnounceSettings;
+  /** 最後の知らせ。配役・リセット・新しい夜で消える */
+  news?: NewsState | null;
+  /** 知らせの番号（増え続ける。配役をまたいでも戻さない） */
+  newsSeq?: number;
+}
+
+/** 最後の知らせ。view は全員に配る形（設定に合わせて名前を絞ったもの）。誰のことかはサーバーだけが持つ */
+interface NewsState {
+  view: CaptureNews;
+  /** 知らせの本人たち（名前を出さない設定でも持つ。本人の画面で自分の知らせと重ねないため） */
+  runnerPid: string | null;
+  oniPid: string | null;
 }
 
 /** ミッションの写真1枚（中身の画像は SQLite にだけ置き、ここには持たない） */
@@ -542,6 +561,10 @@ export class GameRoom extends DurableObject<Env> {
     this.loadPhotos();
     if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
     if (this.game.area === undefined) this.game.area = null;
+    // 知らせを入れる前の版で作った部屋には、設定が無い。最初の値で埋める
+    if (!isAnnounceSettings(this.game.announce)) this.game.announce = { ...ANNOUNCE_DEFAULT };
+    if (this.game.news === undefined) this.game.news = null;
+    if (!Number.isInteger(this.game.newsSeq)) this.game.newsSeq = 0;
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -1599,9 +1622,36 @@ export class GameRoom extends DurableObject<Env> {
     this.dropSpot(runner.pid);
     this.notify(runner.pid, 'caught', oni ?? undefined, via);
     if (oni) this.notify(oni.pid, 'captured', runner, via);
+    this.announceNews('capture', runner, oni);
     // 最後の1人が牢屋に入ったら、ゲームを終わらせる（その中で配り直す）
     if (!this.checkAllCaught(Date.now(), at)) this.broadcastNow();
     this.refreshAutoResult();
+  }
+
+  // ---------- 捕まったときの全員への知らせ ----------
+
+  /**
+   * 全員に配る知らせを作って保存する（配るのは呼んだ側）。
+   * 名前は設定で出してよいものだけ入れる。設定が「知らせない」なら作らない（試しは作る）
+   */
+  private announceNews(kind: CaptureNews['kind'], runner: Participant | null, oni: Participant | null, now = Date.now()): void {
+    const g = this.game;
+    const set = isAnnounceSettings(g.announce) ? g.announce : ANNOUNCE_DEFAULT;
+    if (set.show === 'off' && kind !== 'test') return;
+    const total = g.assignId > 0 ? this.runnerCount() : 0;
+    const seq = (g.newsSeq ?? 0) + 1;
+    const view: CaptureNews = {
+      seq,
+      kind,
+      showAt: now + ANNOUNCE_LEAD_MS,
+      runner: runner && (set.show === 'runner' || set.show === 'both') ? { num: runner.num, name: runner.name } : null,
+      oni: oni && set.show === 'both' ? { num: oni.num, name: oni.name } : null,
+      left: Math.max(0, total - (g.assignId > 0 ? this.caughtCount() : 0)),
+      total,
+      sound: set.sound,
+    };
+    this.game = { ...g, newsSeq: seq, news: { view, runnerPid: runner?.pid ?? null, oniPid: oni?.pid ?? null } };
+    this.saveGame();
   }
 
   // ---------- 牢屋と解放 ----------
@@ -2128,6 +2178,7 @@ export class GameRoom extends DurableObject<Env> {
       }
       this.notify(runner.pid, 'released', by ?? undefined);
       if (by) this.notify(by.pid, 'released', runner);
+      this.announceNews('release', runner, by, now);
       this.broadcastNow();
       this.refreshAutoResult();
       return;
@@ -2179,6 +2230,7 @@ export class GameRoom extends DurableObject<Env> {
           resultAuto: false,
           allCaughtAt: null,
           counts: { oni, runner },
+          news: null,
           ...this.missionReset(now, 'assign'),
         };
         this.ctx.storage.transactionSync(() => {
@@ -2269,7 +2321,7 @@ export class GameRoom extends DurableObject<Env> {
             p.caughtVia = null;
           }
         }
-        this.commit({ stage: 'assigned', timer: null, result: null, allCaughtAt: null, resultAuto: false });
+        this.commit({ stage: 'assigned', timer: null, result: null, allCaughtAt: null, resultAuto: false, news: null });
         break;
       }
       case 'end': {
@@ -2322,6 +2374,23 @@ export class GameRoom extends DurableObject<Env> {
         this.log('ratio', { at: now, data: { ratio: r } });
         break;
       }
+      case 'announce': {
+        // いつでも変えられる（試合中に変えても、次の確保から効く）
+        if (!isAnnounceSettings(msg.announce)) return this.reject(ws, att, op, 'bad-input');
+        const a = { show: msg.announce.show, sound: msg.announce.sound };
+        if (g.announce && a.show === g.announce.show && a.sound === g.announce.sound) break;
+        this.commit({ announce: a });
+        this.log('announce', { at: now, data: a });
+        break;
+      }
+      case 'announce-test': {
+        // 試合中は本物の確保と取り違えるので試さない（時間が0になったあとは試せる）
+        if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        this.announceNews('test', null, null, now);
+        this.log('announce-test', { at: now, data: { ...(g.announce ?? ANNOUNCE_DEFAULT) } });
+        this.broadcastNow();
+        break;
+      }
       case 'mic': {
         // いつでも切り替えられる（どちらがいいか試すため）。試合中に変えても、そのときから全員のスマホに効く
         if (!isMicMode(msg.mic)) return this.reject(ws, att, op, 'bad-input');
@@ -2362,6 +2431,7 @@ export class GameRoom extends DurableObject<Env> {
           counts: { oni: 0, runner: 0 },
           night: g.night + 1,
           nightAt: now,
+          news: null,
           ...this.missionReset(now, 'clear'),
         };
         this.dropJail();
@@ -2678,6 +2748,8 @@ export class GameRoom extends DurableObject<Env> {
       resultAuto: g.resultAuto === true,
       micMode: g.micMode,
       area: g.area ?? null,
+      announce: g.announce ?? { ...ANNOUNCE_DEFAULT },
+      news: g.news?.view ?? null,
     };
   }
 
@@ -2714,6 +2786,7 @@ export class GameRoom extends DurableObject<Env> {
       rcode: live && p.role === 'runner' ? p.rcode : null,
       freeUntil: live && p.role === 'runner' && !this.isCaught(p) && p.freeUntil !== null && p.freeUntil > now ? p.freeUntil : null,
       rescues: live && p.role === 'runner' ? (this.rescues.get(p.pid) ?? 0) : 0,
+      newsAbout: g.news && (g.news.runnerPid === p.pid || g.news.oniPid === p.pid) ? g.news.view.seq : null,
     };
   }
 

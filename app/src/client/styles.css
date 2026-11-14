@@ -542,3 +542,19 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .area-btns button { flex: 1 1 30%; min-height: 44px; font-size: 16px; }
 .area-btns button.primary { flex-basis: 100%; font-weight: 900; }
 .area-host.is-locked .area-map { opacity: 0.6; }
+
+/* 捕まったときの全員への知らせ（参加者と主催者の画面のいちばん上。色は裏フェスの朱・闇・月白をそのまま書く） */
+.announce { position: fixed; left: 12px; right: 12px; top: calc(12px + env(safe-area-inset-top)); z-index: 40; max-width: 420px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 4px; padding: 14px 18px 16px; border-radius: 16px;
+  background: #ff6a3d; color: #0b0c10; box-shadow: 0 0 0 3px #0b0c10; text-align: left; cursor: pointer; }
+.announce[data-kind="release"], .announce[data-kind="test"] { background: #f1ede4; }
+.announce .an-label { display: flex; align-items: baseline; gap: 10px; font-size: 16px; line-height: 1.2; font-weight: 900; }
+.announce .an-label i { font-style: normal; font-family: "URAJI", "Hiragino Sans", system-ui, sans-serif; font-size: 19.2px; letter-spacing: .06em; opacity: .8; }
+.announce .an-who { font-size: clamp(26px, 9vw, 40px); line-height: 1.15; font-weight: 900; overflow-wrap: anywhere; }
+.announce .an-left { font-size: 18px; line-height: 1.3; font-weight: 700; font-variant-numeric: tabular-nums; }
+.announce .an-left:empty { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .announce:not([hidden]) { animation: an-drop .28s ease-out; }
+  @keyframes an-drop { from { transform: translateY(-24px); opacity: 0; } to { transform: none; opacity: 1; } }
+}
+.announce-set .seg button:disabled { opacity: .45; }
