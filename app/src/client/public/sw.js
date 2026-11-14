@@ -1,10 +1,30 @@
 // アプリ本体をスマホに保存しておき、当日の読み込みを通信に頼らないための Service Worker。
 // 状態のやり取り（/api/）は保存しない。
-const CACHE = 'urafess-v3';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png', '/fonts/URAJI-Black.woff2'];
+const CACHE = 'urafess-v4';
+const SHELL = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png', '/fonts/URAJI-Black.woff2'];
+
+/**
+ * 転送（リダイレクト）を経た応答は、ページの読み込みに返すとブラウザが表示しない（真っ白・読み込みエラー）。
+ * 本番は /index.html を / へ転送するので、保存する前に「転送の印」の無い応答に作り直す
+ */
+async function clean(response) {
+  if (!response.redirected) return response;
+  const body = await response.blob();
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
+  event.waitUntil(
+    caches.open(CACHE).then((cache) =>
+      Promise.all(
+        SHELL.map(async (path) => {
+          const response = await fetch(path, { cache: 'reload' });
+          if (!response.ok) throw new Error(`${path}: ${response.status}`);
+          await cache.put(path, await clean(response));
+        }),
+      ),
+    ),
+  );
   self.skipWaiting();
 });
 
@@ -28,11 +48,13 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const isPage = request.mode === 'navigate';
-      const key = isPage ? '/index.html' : request;
-      const cached = await cache.match(key, { ignoreSearch: isPage });
+      // ページはどの道（/・/host・?g=…）でも同じ1枚（/）
+      const key = isPage ? '/' : request;
+      const hit = await cache.match(key, { ignoreSearch: isPage });
+      const cached = hit ? await clean(hit) : undefined;
       const network = fetch(request)
-        .then((response) => {
-          if (response.ok) cache.put(key, response.clone());
+        .then(async (response) => {
+          if (response.ok) await cache.put(key, await clean(response.clone()));
           return response;
         })
         .catch(() => cached);

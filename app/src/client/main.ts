@@ -437,7 +437,7 @@ function loop(render: () => void | false): void {
  * 新しい版が公開されていたら、試合中でないときに読み込み直す。
  * Service Worker は保存しておいた画面を先に返すので、何もしないと公開後に1回目に開いたときは古い版のまま動く。
  * - 新しい Service Worker に切り替わったとき（sw.js が変わった公開）
- * - 開いたとき・画面に戻ったとき（最大1分に1回）、保存していない最新の index.html と、今動いている画面の版を比べる
+ * - 開いたとき・画面に戻ったとき（最大1分に1回）、保存していない最新の画面（/）と、今動いている画面の版を比べる
  * 試合中（配役〜タイマー）は読み込み直さない。同じ版のために2回は読み込み直さない（読み込みが回り続けないように）
  */
 function startUpdateChecks(idle: () => boolean): void {
@@ -463,7 +463,8 @@ function startUpdateChecks(idle: () => boolean): void {
     if (!running || !navigator.serviceWorker.controller || !navigator.onLine || Date.now() - lastCheck < 60_000) return;
     lastCheck = Date.now();
     try {
-      const res = await fetch('/index.html', { cache: 'no-store' });
+      // /index.html は本番で / へ転送されるので、/ を直接取りに行く
+      const res = await fetch('/', { cache: 'no-store' });
       if (!res.ok) return;
       const html = await res.text();
       const latest = /<script[^>]*type="module"[^>]*src="([^"]+)"/.exec(html)?.[1] ?? /<script[^>]*src="([^"]+)"[^>]*type="module"/.exec(html)?.[1];
@@ -471,9 +472,12 @@ function startUpdateChecks(idle: () => boolean): void {
       // 保存してある画面を新しいものに差し替えてから読み込み直す（保存場所の名前は sw.js が版ごとに変えるので、名前を決め打ちしない）
       const names = (await caches.keys()).filter((k) => k.startsWith('urafess-'));
       await Promise.all(
-        names.map(async (n) =>
-          (await caches.open(n)).put('/index.html', new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })),
-        ),
+        names.map(async (n) => {
+          const cache = await caches.open(n);
+          const page = () => new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+          // 今の Service Worker は / を、前の版（urafess-v3）は /index.html を見る
+          await Promise.all([cache.put('/', page()), cache.put('/index.html', page())]);
+        }),
       );
       reloadIfIdle(latest);
     } catch {
