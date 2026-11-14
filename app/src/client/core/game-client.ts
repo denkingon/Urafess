@@ -1,7 +1,7 @@
 import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
 import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
-import { SILENCE_LIMIT_MS } from '../../shared/rules';
+import { SILENCE_LIMIT_MS, type RoleId, type WishMode } from '../../shared/rules';
 
 /**
  * しくみの層。接続・時計合わせ・状態だけを持ち、見た目は一切知らない。
@@ -243,6 +243,30 @@ export class GameClient {
     this.emit();
   }
 
+  /**
+   * 新しいスマホへ移した合い鍵を受け取る（自分のページの「前のスマホから移す」）。
+   * 覚えて、その合い鍵で戻る（名簿にいれば名前のボタン、今夜に入っていれば今の状態が届く）
+   */
+  adopt(identity: Identity): void {
+    this.saveIdentity(identity);
+    this.pendingJoinName = null;
+    this.pendingReclaimName = null;
+    this.pendingEnter = false;
+    this.state = { ...this.state, identity, me: null, phase: 'connecting', joinError: null, takenName: null };
+    this.emit();
+    if (this.isOpen()) this.send({ t: 'resume', pid: identity.pid, key: identity.key });
+  }
+
+  /** 自分のページで名前を変えた（サーバーからも届くが、切れていてもすぐ画面に出す） */
+  setName(name: string): void {
+    const identity = this.state.identity;
+    if (!identity || identity.name === name) return;
+    const next = { ...identity, name };
+    this.saveIdentity(next);
+    this.state = { ...this.state, identity: next };
+    this.emit();
+  }
+
   /** taken のとき「そう（前の自分に戻る）」：主催者がつなぐのを待つ */
   reclaim(): void {
     const name = this.state.takenName;
@@ -355,6 +379,16 @@ export class GameClient {
     this.send({ t: 'dq' });
   }
 
+  /**
+   * 配役の希望：次の配役でなりたい役を送る（null＝どちらでも）。届いたかどうかは、返ってくる状態（me.wish）で分かる。
+   * 切れている間は送れない（false を返す。画面の板は押せなくしてある）
+   */
+  wish(role: RoleId | null): boolean {
+    if (!this.isOpen()) return false;
+    this.send({ t: 'wish', role });
+    return true;
+  }
+
   /** 逃走者が「捕まった」を取り下げる */
   cancelClaim(): void {
     this.pending = { kind: 'cancel', at: this.deps.now() };
@@ -389,6 +423,7 @@ export class GameClient {
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      wishMode?: WishMode;
       area?: [number, number][] | null;
       pid?: string;
       by?: string;

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { GameView, MeView } from '../src/shared/protocol';
+import type { GameView, HostSummary, MeView } from '../src/shared/protocol';
 import { START_LEAD_MS } from '../src/shared/rules';
 import { pauseTimer, startTimer } from '../src/shared/schedule';
-import { FAREWELL, hostStatus, participantView, BOOT_QUIET_MS, bootQuiet } from '../src/shared/viewmodel';
+import { FAREWELL, hostStatus, participantView, BOOT_QUIET_MS, bootQuiet, wishCaption, wishNote, wishPreview, wishView } from '../src/shared/viewmodel';
 
 const D = [20_000, 60_000, 300_000, 120_000];
 
@@ -193,5 +193,120 @@ describe('開いてすぐの画面', () => {
     expect(bootQuiet(true, 10, true)).toBe(false);
     expect(bootQuiet(false, BOOT_QUIET_MS, true)).toBe(false);
     expect(bootQuiet(false, 0, false)).toBe(false);
+  });
+});
+
+describe('配役の希望（逃走者／鬼の板）', () => {
+  // 10人・鬼3：逃走者7。逃走者の希望9人・鬼の希望1人
+  const wishing = (partial: Partial<GameView> = {}) =>
+    game({ counts: { oni: 3, runner: 7, total: 10, caught: 0 }, wishMode: 'wish', wishes: { oni: 1, runner: 9 }, ...partial });
+  const lobbyMe: MeView = { ...runner, role: null, assignId: 0, wish: null, wishMiss: 0 };
+
+  it('待合室：板が出る。まだ選んでいなければ「選ぶ」、選んだら「待つ」。枠はいまの人数と割合から', () => {
+    const g = wishing({ stage: 'lobby', assignId: 0 });
+    const none = participantView(g, lobbyMe, 0, true);
+    expect(none.word).toEqual(['選ぶ', 'CHOOSE']);
+    expect(none.wish).toEqual({ mine: null, want: { oni: 1, runner: 9 }, slots: { oni: 3, runner: 7 }, priority: false });
+    const picked = participantView(g, { ...lobbyMe, wish: 'oni' }, 0, true);
+    expect(picked.word).toEqual(['待つ', 'WAIT']);
+    expect(picked.wish?.mine).toBe('oni');
+    // 主催者が割合を変えたら、枠も変わる
+    expect(participantView({ ...g, ratio: { oni: 1, runner: 1 } }, lobbyMe, 0, true).wish?.slots).toEqual({ oni: 5, runner: 5 });
+  });
+
+  it('くじだけの決め方・古いサーバーでは、板を出さない（待合室は前と同じ「待つ」）', () => {
+    const lot = participantView(wishing({ stage: 'lobby', assignId: 0, wishMode: 'lot' }), lobbyMe, 0, true);
+    expect(lot.wish).toBeNull();
+    expect(lot.word).toEqual(['待つ', 'WAIT']);
+    // 古いサーバー：決め方も人数も、自分の希望も来ない
+    const old = participantView(game({ stage: 'lobby', assignId: 0 }), { ...runner, role: null, assignId: 0 }, 0, true);
+    expect(old.wish).toBeNull();
+    expect(old.word).toEqual(['待つ', 'WAIT']);
+    expect(wishView(wishing(), { ...lobbyMe, removed: true })).toBeNull();
+  });
+
+  it('役が決まってからゲームの終わりまでは、板を出さない。結果発表・見学では出す', () => {
+    const me: MeView = { ...runner, wish: 'runner', wishMiss: 0 };
+    expect(participantView(wishing({}), me, 0, true).wish ?? null).toBeNull();
+    const t = startTimer(D, 0);
+    const playing = wishing({ stage: 'timer', timer: t });
+    expect(participantView(playing, me, START_LEAD_MS + 100_000, true).wish ?? null).toBeNull();
+    // 時間が0になったら、結果を待たずに出す
+    expect(participantView(playing, me, START_LEAD_MS + 500_000 + 1_000, true).wish?.mine).toBe('runner');
+    // 長押しの板（捕獲）が出ている間は、同じ場所に重ねない。段階がとても短い試しの部屋でだけ起きる
+    // （長押しは「10秒前がゲームの段階だった」間も出る。どの段階も1秒なら、時間が0になったあとにその2回目が来る）
+    const quick = wishing({ stage: 'timer', timer: startTimer([1_000, 1_000, 1_000, 1_000], 0), durations: [1_000, 1_000, 1_000, 1_000] });
+    expect(participantView(quick, me, START_LEAD_MS + 5_000, true).wish?.mine).toBe('runner');
+    expect(participantView(quick, me, START_LEAD_MS + 12_500, true)).toMatchObject({ step: 6, touch: 'runner' });
+    expect(participantView(quick, me, START_LEAD_MS + 12_500, true).wish ?? null).toBeNull();
+    expect(participantView(quick, me, START_LEAD_MS + 14_000, true).wish?.mine).toBe('runner');
+    expect(participantView(wishing({ stage: 'result', result: 'runner' }), me, 0, true).wish?.mine).toBe('runner');
+    // 途中で来た人（見学）：走ると光るの板・光の地図が出ている間は出さず、ゲームが終わったら（広場に戻る間・結果発表）出す
+    const late: MeView = { ...runner, role: null, assignId: 0, wish: null, wishMiss: 0 };
+    expect(participantView(wishing({}), late, 0, true).wish ?? null).toBeNull();
+    expect(participantView(playing, late, START_LEAD_MS + 100_000, true).wish ?? null).toBeNull();
+    expect(participantView(playing, late, START_LEAD_MS + 400_000, true).wish).toMatchObject({ mine: null });
+    expect(participantView(wishing({ stage: 'result', result: 'runner' }), late, 0, true).wish).toMatchObject({ mine: null });
+    // 夜の最後は出さない
+    expect(participantView(wishing({ stage: 'ended' }), me, 0, true).wish ?? null).toBeNull();
+  });
+
+  it('配役の画面：希望が通らなかった人にだけ「次は優先」を出す', () => {
+    const missed = participantView(wishing({}), { ...oni, wish: 'runner', wishMiss: 1, wishMissed: true }, 0, true);
+    expect(missed).toMatchObject({ role: '鬼', step: 1, note: ['希望が多かった。次は優先', 'Too many wished. Priority next time'] });
+    expect(missed.message).toContain('次の配役は優先される');
+    const granted = participantView(wishing({}), { ...runner, wish: 'runner', wishMiss: 0, wishMissed: false }, 0, true);
+    expect(granted.note).toBeNull();
+    expect(granted.message).toBe('鬼から逃げ切れ。合図まで、その場で待つ。');
+  });
+
+  it('前に外れた人は、板に「今回は優先」と出せる', () => {
+    const v = participantView(wishing({ stage: 'result', result: 'runner' }), { ...oni, wish: 'runner', wishMiss: 1 }, 0, true);
+    expect(v.wish?.priority).toBe(true);
+  });
+
+  it('板の下のひとこと：選んでいない／このままなら通る／希望が多い／前に外れたので優先', () => {
+    const w = { mine: null, want: { oni: 1, runner: 9 }, slots: { oni: 3, runner: 7 }, priority: false } as const;
+    expect(wishCaption(w)[0]).toBe('選ばなければ、どちらかになる');
+    expect(wishCaption({ ...w, mine: 'oni' })[0]).toBe('このままなら希望どおり');
+    expect(wishCaption({ ...w, mine: 'runner' })[0]).toBe('希望が多い。外れたら次は優先');
+    expect(wishCaption({ ...w, mine: 'runner', priority: true })[0]).toBe('前に外れたので、今回は優先');
+    // 枠が空いているなら、前に外れた人にも「このままなら希望どおり」
+    expect(wishCaption({ ...w, mine: 'oni', priority: true })[0]).toBe('このままなら希望どおり');
+    // ちょうど枠と同じなら通る
+    expect(wishCaption({ ...w, mine: 'runner', want: { oni: 3, runner: 7 } })[0]).toBe('このままなら希望どおり');
+    // 枠が0（1人だけの部屋で鬼）なら通らない
+    expect(wishCaption({ ...w, mine: 'oni', want: { oni: 1, runner: 0 }, slots: { oni: 0, runner: 1 } })[0]).toBe('希望が多い。外れたら次は優先');
+  });
+
+  it('板を押した直後の姿：自分の1人ぶんだけ人数を先に動かす', () => {
+    const w = { mine: null, want: { oni: 1, runner: 7 }, slots: { oni: 3, runner: 7 }, priority: false } as const;
+    // まだ選んでいない人が逃走者を押す：7→8（枠7を超える）
+    expect(wishPreview(w, 'runner')).toMatchObject({ mine: 'runner', want: { oni: 1, runner: 8 } });
+    expect(wishCaption(wishPreview(w, 'runner'))[0]).toBe('希望が多い。外れたら次は優先');
+    // 逃走者を選んでいた人が鬼に替える：逃走者が1減り、鬼が1増える
+    expect(wishPreview({ ...w, mine: 'runner' }, 'oni')).toMatchObject({ mine: 'oni', want: { oni: 2, runner: 6 } });
+    // 取り消す
+    expect(wishPreview({ ...w, mine: 'runner' }, null)).toMatchObject({ mine: null, want: { oni: 1, runner: 6 } });
+    // 同じなら何も変えない。0 より下にはしない
+    expect(wishPreview({ ...w, mine: 'runner' }, 'runner')).toEqual({ ...w, mine: 'runner' });
+    expect(wishPreview({ ...w, mine: 'oni', want: { oni: 0, runner: 7 } }, null).want.oni).toBe(0);
+  });
+
+  it('主催者の画面の文：配役の前は「このままだとどうなるか」、配役のあとは「どうなったか」', () => {
+    const host = { wishStat: null, wishPrio: 0 } as unknown as HostSummary;
+    const before = wishNote(wishing({ stage: 'lobby', assignId: 0 }), host);
+    expect(before).toContain('希望：逃走者 9人（枠7）・鬼 1人（枠3）・どちらでも 0人。');
+    expect(before).toContain('逃走者を希望した2人が鬼になる');
+    expect(wishNote(wishing({ stage: 'lobby', assignId: 0, wishes: { oni: 6, runner: 2 } }), host)).toContain('鬼を希望した3人が逃走者になる');
+    expect(wishNote(wishing({ stage: 'lobby', assignId: 0, wishes: { oni: 2, runner: 5 } }), host)).toContain('どちらでも 3人。このまま配役すると、全員が希望どおり。');
+    expect(wishNote(wishing({ stage: 'result', result: 'oni' }), { ...host, wishPrio: 2 })).toContain('前に外れて優先される人 2人。');
+    const after = wishNote(wishing({}), { ...host, wishStat: { oni: 1, runner: 9, none: 0, missed: 2 } });
+    expect(after).toBe('いまの配役：逃走者を希望 9人・鬼を希望 1人・どちらでも 0人。通らなかった人 2人（次の配役で優先）。');
+    expect(wishNote(wishing({}), { ...host, wishStat: { oni: 1, runner: 5, none: 4, missed: 0 } })).toContain('全員が希望どおり。');
+    expect(wishNote(wishing({}), host)).toBe('いまの配役はくじだけで決めた。次の配役から希望を聞く。');
+    expect(wishNote(wishing({ wishMode: 'lot' }), host)).toContain('くじだけで決める');
+    // 古いサーバーでは何も出さない
+    expect(wishNote(game({}), host)).toBe('');
   });
 });

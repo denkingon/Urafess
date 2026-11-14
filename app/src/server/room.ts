@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { assignRoles } from '../shared/allocate';
+import { assignRoles, assignWithWishes } from '../shared/allocate';
 import { autoPick, CAPTURE_PHASE_INDEX, captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
 import {
   cleanMissionTitle,
@@ -40,6 +40,7 @@ import {
   DEFAULT_DURATIONS_MS,
   DEFAULT_MIC_MODE,
   DEFAULT_RATIO,
+  DEFAULT_WISH_MODE,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
   EVIDENCE_VALID_MS,
@@ -48,7 +49,9 @@ import {
   HEARD_SLACK_MS,
   HOLD_UNKNOWN_END_MS,
   isMicMode,
+  isRoleId,
   isValidRatio,
+  isWishMode,
   MATES_BROADCAST_MS,
   MATES_STALE_MS,
   PHASES,
@@ -61,7 +64,22 @@ import {
   type MicMode,
   type Ratio,
   type RoleId,
+  type WishMode,
 } from '../shared/rules';
+import {
+  GONE_NAME,
+  HANDOFF_DIGITS,
+  HANDOFF_FAIL_WINDOW_MS,
+  HANDOFF_MAX_FAILS,
+  HANDOFF_MAX_FAILS_ROOM,
+  HANDOFF_REPLAY_MS,
+  HANDOFF_TTL_MS,
+  isHandoffCode,
+  summarizeAccount,
+  type AccountError,
+  type AccountEvent,
+  type AccountView,
+} from '../shared/account';
 import { nameKey, normalizeName } from '../shared/names';
 import { distanceM } from '../shared/run';
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
@@ -110,6 +128,10 @@ interface GameState {
   allCaughtAt?: number | null;
   /** result をアプリが決めた */
   resultAuto?: boolean;
+  /** 配役の決め方（主催者が切り替える）。古い保存データには無いので load で補う */
+  wishMode: WishMode;
+  /** いまの配役を決めたときの希望の数（くじだけで決めた配役・配役前は null） */
+  wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
 }
 
 /** ミッションの写真1枚（中身の画像は SQLite にだけ置き、ここには持たない） */
@@ -205,6 +227,12 @@ interface Participant {
   freeUntil: number | null;
   /** 最後に入室・復帰したときの端末（ブラウザの User-Agent）。機種ごとの失敗を後から見るため */
   ua: string | null;
+  /** 配役の希望：次の配役でなりたい役（null＝どちらでも）。今夜のあいだ残る */
+  wish: RoleId | null;
+  /** 配役の希望：続けて希望が通らなかった回数（多い人ほど、次の配役で先に通る） */
+  wishMiss: number;
+  /** いまの配役を決める前の wishMiss（引き直しは、ここからやり直す。外れた回数を二重に数えない） */
+  wishMissPrev: number;
 }
 
 /** 逃走者の「捕まった」。最初に長押しを始めた（または鬼に手動で選ばれた）ときに開き、本人が選ぶまで開いている */
@@ -291,13 +319,16 @@ type ParticipantRow = {
   ua: string | null;
   rcode: string | null;
   free_until: number | null;
+  wish: string | null;
+  wish_miss: number | null;
+  wish_miss_prev: number | null;
 };
 
 /**
  * /api/game/<ゲームID>/(ws|debug|log|photo|photos)。photo は後ろに写真の印が付くこともある（取り出す）。
  * worker.ts も同じ形で部屋へ渡す
  */
-export const GAME_PATH = /^\/api\/game\/([A-Za-z0-9_-]{1,40})\/(ws|debug|log|photo|photos|key)(?:\/([A-Za-z0-9_-]{1,40}))?$/;
+export const GAME_PATH = /^\/api\/game\/([A-Za-z0-9_-]{1,40})\/(ws|debug|log|photo|photos|key|me)(?:\/([A-Za-z0-9_-]{1,40}))?$/;
 /** 「助けて」「助ける」の長押し（保存しない。押している間の数秒だけのもの） */
 interface RescueHold {
   start: number;
@@ -406,6 +437,10 @@ export class GameRoom extends DurableObject<Env> {
       ['ua', 'ua TEXT'],
       ['rcode', 'rcode TEXT'],
       ['free_until', 'free_until INTEGER'],
+      // 配役の希望を入れたときに足した列
+      ['wish', 'wish TEXT'],
+      ['wish_miss', 'wish_miss INTEGER NOT NULL DEFAULT 0'],
+      ['wish_miss_prev', 'wish_miss_prev INTEGER NOT NULL DEFAULT 0'],
     ];
     for (const [name, ddl] of columns) {
       if (!have.has(name)) this.sql.exec(`ALTER TABLE participants ADD COLUMN ${ddl}`);
@@ -452,6 +487,22 @@ export class GameRoom extends DurableObject<Env> {
       )`,
     );
     this.sql.exec(`CREATE INDEX IF NOT EXISTS members_name_key ON members (name_key)`);
+    // 新しいスマホへ移す合言葉（古いスマホに出し、新しいスマホで打つ）。休止をまたいでも残すため保存する
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS handoffs (
+        code TEXT PRIMARY KEY,
+        mid TEXT NOT NULL,
+        until INTEGER NOT NULL
+      )`,
+    );
+    // 使った合言葉は、少しの間だけ使ったときの合い鍵と一緒に残す（答えが届かず打ち直したときに同じ合い鍵を返す）
+    const handoffCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(handoffs)`).toArray().map((r) => r.name));
+    if (!handoffCols.has('used_at')) this.sql.exec(`ALTER TABLE handoffs ADD COLUMN used_at INTEGER`);
+    if (!handoffCols.has('key')) this.sql.exec(`ALTER TABLE handoffs ADD COLUMN key TEXT`);
+    // 合言葉の打ち間違い（当てずっぽうを止めるため、回線ごとと部屋全体で数える）
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS handoff_fails (at INTEGER NOT NULL)`);
+    const failCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(handoff_fails)`).toArray().map((r) => r.name));
+    if (!failCols.has('ip')) this.sql.exec(`ALTER TABLE handoff_fails ADD COLUMN ip TEXT`);
     // ミッションと写真。新しい夜を始めても消さない（名簿と一緒にずっと残す）
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS missions (
@@ -522,6 +573,7 @@ export class GameRoom extends DurableObject<Env> {
           durations: [...DEFAULT_DURATIONS_MS],
           ratio: { ...DEFAULT_RATIO },
           micMode: DEFAULT_MIC_MODE,
+          wishMode: DEFAULT_WISH_MODE,
           nextNum: 1,
           counts: { oni: 0, runner: 0 },
           night: 1,
@@ -547,6 +599,9 @@ export class GameRoom extends DurableObject<Env> {
     this.loadPhotos();
     if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
     if (this.game.area === undefined) this.game.area = null;
+    // 配役の希望を入れる前の版で作った部屋には、決め方が無い
+    if (!isWishMode(this.game.wishMode)) this.game.wishMode = DEFAULT_WISH_MODE;
+    if (this.game.wishStat === undefined) this.game.wishStat = null;
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -567,6 +622,9 @@ export class GameRoom extends DurableObject<Env> {
         ua: r.ua ?? null,
         rcode: r.rcode ?? null,
         freeUntil: r.free_until ?? null,
+        wish: isRoleId(r.wish) ? r.wish : null,
+        wishMiss: r.wish_miss ?? 0,
+        wishMissPrev: r.wish_miss_prev ?? 0,
       });
     }
     // 捕獲・牢屋を入れる前の版で配役した部屋（公開の瞬間に試合中だった等）は、3桁が無い。ここで配る
@@ -783,6 +841,7 @@ export class GameRoom extends DurableObject<Env> {
 
     if (m[2] === 'photo') return this.onPhotoRequest(request, url, m[3] ?? null);
     if (m[2] === 'photos') return this.onAlbumRequest(request);
+    if (m[2] === 'me' && !m[3]) return this.onMeRequest(request);
     if (m[3]) return new Response('not found', { status: 404 });
 
     if (m[2] === 'key') {
@@ -955,6 +1014,9 @@ export class GameRoom extends DurableObject<Env> {
       case 'dq':
         this.onDq(att, now);
         return;
+      case 'wish':
+        this.onWish(ws, att, msg.role, now);
+        return;
     }
   }
 
@@ -980,6 +1042,282 @@ export class GameRoom extends DurableObject<Env> {
     this.scheduleHostUpdate();
   }
 
+  // ---------- 自分のページ（ステータスと設定） ----------
+
+  /**
+   * /api/game/<id>/me
+   * GET：本人の名前と記録（x-pid・x-key の合い鍵で本人を確かめる）
+   * POST：{op:'rename'|'handoff'|'leave'}（合い鍵つき）・{op:'take', code}（新しいスマホ。合い鍵なし）
+   */
+  private async onMeRequest(request: Request): Promise<Response> {
+    const now = Date.now();
+    const answer = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
+    const fail = (error: AccountError, status: number) => answer({ error }, status);
+    const who = (): Member | null => {
+      const m = this.members.get(request.headers.get('x-pid') ?? '');
+      return m && m.key === (request.headers.get('x-key') ?? '') ? m : null;
+    };
+
+    if (request.method === 'GET') {
+      const m = who();
+      return m ? answer(this.accountOf(m)) : fail('unknown', 403);
+    }
+    if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+    const buf = await readLimited(request, 2048);
+    let body: { op?: unknown; name?: unknown; code?: unknown } = {};
+    try {
+      body = buf ? (JSON.parse(new TextDecoder().decode(buf)) as typeof body) : {};
+    } catch {
+      return fail('bad-input', 400);
+    }
+    if (body.op === 'take') return this.onHandoffTake(body.code, request.headers.get('cf-connecting-ip') ?? '', now, answer, fail);
+    const m = who();
+    if (!m) return fail('unknown', 403);
+    switch (body.op) {
+      case 'rename':
+        return this.onRename(m, body.name, now, answer, fail);
+      case 'handoff':
+        return answer(this.newHandoff(m, now));
+      case 'leave':
+        return this.onLeave(m, now, answer, fail);
+      default:
+        return fail('bad-input', 400);
+    }
+  }
+
+  /** 試合中（配役〜タイマー）で、今夜に入っている */
+  private inMatchTonight(pid: string): boolean {
+    const p = this.people.get(pid);
+    return !!p && !p.removed && (this.game.stage === 'assigned' || this.game.stage === 'timer');
+  }
+
+  private accountOf(m: Member): AccountView {
+    const rows = this.sql
+      .exec<AccountEvent>(
+        `SELECT at, assign_id, kind, pid, other_pid, CASE WHEN kind = 'role' THEN data END AS data FROM events
+         WHERE kind IN ('start', 'reset', 'clear', 'capture', 'release')
+            OR (pid = ? AND kind IN ('role', 'join', 'enter', 'rescue'))
+         ORDER BY id`,
+        m.pid,
+      )
+      .toArray();
+    return { name: m.name, since: m.createdAt, stats: summarizeAccount(rows, m.pid), busy: this.inMatchTonight(m.pid) };
+  }
+
+  /** この人につながっている接続（今夜に入っている・名前のボタンを待っている） */
+  private socketsOf(pid: string): { ws: WebSocket; att: Attachment }[] {
+    const out: { ws: WebSocket; att: Attachment }[] = [];
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as Attachment | null;
+      if (att && (att.pid === pid || att.mid === pid)) out.push({ ws, att });
+    }
+    return out;
+  }
+
+  /** 名前を変える。名前は名簿の中で1人1つのまま。試合中で今夜に入っている人は変えられない */
+  private onRename(
+    m: Member,
+    raw: unknown,
+    now: number,
+    answer: (body: unknown, status?: number) => Response,
+    fail: (e: AccountError, status: number) => Response,
+  ): Response {
+    if (this.inMatchTonight(m.pid)) return fail('busy', 409);
+    const name = normalizeName(raw);
+    if (!name || isGoneName(name)) return fail('invalid', 400);
+    const key = nameKey(name);
+    const owner = this.memberByName.get(key);
+    if (owner && owner.pid !== m.pid) return fail('taken', 409);
+    if (name === m.name) return answer({ name });
+    const from = m.name;
+    const p = this.people.get(m.pid);
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`UPDATE members SET name = ?, name_key = ? WHERE pid = ?`, name, key, m.pid);
+      if (p) this.sql.exec(`UPDATE participants SET name = ? WHERE pid = ?`, name, m.pid);
+      this.sql.exec(`UPDATE photos SET name = ? WHERE pid = ?`, name, m.pid);
+      this.log('rename', { p: { pid: m.pid, num: m.num, name }, at: now, data: { from } });
+    });
+    this.forgetName(m);
+    m.name = name;
+    m.nameKey = key;
+    this.memberByName.set(key, m);
+    if (p) p.name = name;
+    for (const ph of this.photos.values()) if (ph.pid === m.pid) ph.name = name;
+    // 開いているスマホにも新しい名前を届ける（今夜に入っていれば合い鍵ごと、名前のボタンなら名前だけ）
+    for (const { ws, att } of this.socketsOf(m.pid)) {
+      if (att.pid && p) this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name });
+      else this.send(ws, { t: 'known', name });
+    }
+    this.scheduleBroadcast();
+    this.scheduleHostUpdate();
+    return answer({ name });
+  }
+
+  /** 新しいスマホへ移す合言葉を出す（前に出した合言葉は消える） */
+  private newHandoff(m: Member, now: number): { code: string; until: number } {
+    this.sql.exec(`DELETE FROM handoffs WHERE mid = ?`, m.pid);
+    this.pruneHandoffs(now);
+    let code = '';
+    for (let i = 0; i < 20; i++) {
+      code = randomDigits(HANDOFF_DIGITS);
+      if (!this.sql.exec(`SELECT 1 FROM handoffs WHERE code = ?`, code).toArray().length) break;
+    }
+    const until = now + HANDOFF_TTL_MS;
+    this.sql.exec(`INSERT OR REPLACE INTO handoffs (code, mid, until) VALUES (?, ?, ?)`, code, m.pid, until);
+    return { code, until };
+  }
+
+  /** 切れた合言葉と、打ち直しを待つ時間が過ぎた使用済みの合言葉を消す */
+  private pruneHandoffs(now: number): void {
+    this.sql.exec(
+      `DELETE FROM handoffs WHERE (used_at IS NULL AND until <= ?) OR (used_at IS NOT NULL AND used_at <= ?)`,
+      now,
+      now - HANDOFF_REPLAY_MS,
+    );
+  }
+
+  /**
+   * 新しいスマホで合言葉を打つ。合い鍵を作り直して新しいスマホに渡し、古いスマホは入室画面に戻す
+   * （同じ人が2台で入ったままにならないように）。
+   * 答えが届かずに同じ合言葉を打ち直したときは、少しの間だけ同じ合い鍵をもう一度返す
+   */
+  private onHandoffTake(
+    raw: unknown,
+    ip: string,
+    now: number,
+    answer: (body: unknown, status?: number) => Response,
+    fail: (e: AccountError, status: number) => Response,
+  ): Response {
+    this.sql.exec(`DELETE FROM handoff_fails WHERE at <= ?`, now - HANDOFF_FAIL_WINDOW_MS);
+    const fails = this.sql
+      .exec<{ room: number; mine: number }>(
+        `SELECT COUNT(*) AS room, COALESCE(SUM(CASE WHEN ip = ? THEN 1 ELSE 0 END), 0) AS mine FROM handoff_fails`,
+        ip,
+      )
+      .toArray()[0];
+    if ((fails?.mine ?? 0) >= HANDOFF_MAX_FAILS || (fails?.room ?? 0) >= HANDOFF_MAX_FAILS_ROOM) return fail('locked', 429);
+    this.pruneHandoffs(now);
+    const row = isHandoffCode(raw)
+      ? this.sql
+          .exec<{ mid: string; until: number; used_at: number | null; key: string | null }>(
+            `SELECT mid, until, used_at, key FROM handoffs WHERE code = ?`,
+            raw,
+          )
+          .toArray()[0]
+      : undefined;
+    const m = row ? this.members.get(row.mid) : undefined;
+    // 使ったばかりの合言葉の打ち直し：そのとき渡した合い鍵がまだ生きていれば、同じものを返す
+    if (row && m && row.used_at !== null && row.key && row.key === m.key) {
+      this.log('handoff-again', { p: m, at: now });
+      return answer({ pid: m.pid, key: m.key, num: m.num, name: m.name });
+    }
+    if (!row || !m || row.used_at !== null || row.until <= now) {
+      this.sql.exec(`INSERT INTO handoff_fails (at, ip) VALUES (?, ?)`, now, ip);
+      return fail('bad-code', 400);
+    }
+    const key = randomKey();
+    const p = this.people.get(m.pid);
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`DELETE FROM handoffs WHERE mid = ? AND code != ?`, m.pid, raw);
+      this.sql.exec(`UPDATE handoffs SET used_at = ?, key = ? WHERE code = ?`, now, key, raw);
+      this.sql.exec(`UPDATE members SET key = ? WHERE pid = ?`, key, m.pid);
+      if (p) this.sql.exec(`UPDATE participants SET key = ? WHERE pid = ?`, key, m.pid);
+      this.log('handoff', { p: m, at: now });
+    });
+    m.key = key;
+    if (p) p.key = key;
+    for (const { ws, att } of this.socketsOf(m.pid)) {
+      delete att.pid;
+      delete att.mid;
+      delete att.syncErr;
+      ws.serializeAttachment(att);
+      this.send(ws, { t: 'unknown' });
+    }
+    this.scheduleHostUpdate();
+    return answer({ pid: m.pid, key, num: m.num, name: m.name });
+  }
+
+  /**
+   * 名簿から消える。名前は空き、記録・写真に残っている名前は「消えた人」になる（数は残る）。
+   * 試合中で今夜に入っている人は消えられない。今夜に入っていれば、主催者が外したのと同じ扱いで今夜の一覧に残す
+   * （結果の画面の「誰が捕まえたか」が名前ごと消えないように。合い鍵は捨てる）。新しい夜で一覧から消える
+   */
+  private onLeave(
+    m: Member,
+    now: number,
+    answer: (body: unknown, status?: number) => Response,
+    fail: (e: AccountError, status: number) => Response,
+  ): Response {
+    if (this.inMatchTonight(m.pid)) return fail('busy', 409);
+    const gone: Who = { pid: m.pid, num: m.num, name: GONE_NAME };
+    const p = this.people.get(m.pid);
+    const deadKey = randomKey();
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`DELETE FROM members WHERE pid = ?`, m.pid);
+      if (p) {
+        this.sql.exec(`UPDATE participants SET removed = 1, name = ?, key = ? WHERE pid = ?`, GONE_NAME, deadKey, m.pid);
+      }
+      this.sql.exec(`DELETE FROM handoffs WHERE mid = ?`, m.pid);
+      this.sql.exec(`UPDATE events SET name = ? WHERE pid = ?`, GONE_NAME, m.pid);
+      this.sql.exec(`UPDATE events SET other_name = ? WHERE other_pid = ?`, GONE_NAME, m.pid);
+      // 記録の中身に残っている打った名前・前の名前も消す
+      this.sql.exec(
+        `UPDATE events SET data = json_set(data, '$.from', ?) WHERE pid = ? AND kind = 'rename' AND json_valid(data)`,
+        GONE_NAME,
+        m.pid,
+      );
+      this.sql.exec(
+        `UPDATE events SET data = json_set(data, '$.typed', ?) WHERE pid = ? AND kind IN ('taken', 'reclaim-ask') AND json_valid(data)`,
+        GONE_NAME,
+        m.pid,
+      );
+      this.sql.exec(`UPDATE photos SET name = ? WHERE pid = ?`, GONE_NAME, m.pid);
+      this.log('leave', { p: gone, at: now });
+    });
+    this.members.delete(m.pid);
+    this.forgetName(m);
+    for (const ph of this.photos.values()) if (ph.pid === m.pid) ph.name = GONE_NAME;
+    for (const { ws, att } of this.socketsOf(m.pid)) {
+      delete att.pid;
+      delete att.mid;
+      delete att.syncErr;
+      ws.serializeAttachment(att);
+      this.send(ws, { t: 'unknown' });
+    }
+    // 「前の◯◯に戻る」でこの人を待っていた接続は、名前の入力に戻す
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as Attachment | null;
+      if (att?.reclaim?.mid !== m.pid) continue;
+      delete att.reclaim;
+      ws.serializeAttachment(att);
+      this.send(ws, { t: 'reclaim', status: 'denied', name: m.name });
+    }
+    if (p) {
+      p.removed = true;
+      p.name = GONE_NAME;
+      p.key = deadKey;
+      // 主催者が外したときと同じ：走っていれば止め、外にいた最後の逃走者なら全員が牢屋にいることになる
+      this.endRun(p.pid, now, 'out');
+      if (!this.checkAllCaught(now, now)) this.broadcastNow();
+      this.refreshAutoResult();
+    } else {
+      this.scheduleBroadcast();
+    }
+    this.scheduleHostUpdate();
+    return answer({ ok: true });
+  }
+
+  /** 名前の引き当てからこの人を外す。同じ名前の古い人が残っていれば、番号の小さい人に引き継ぐ */
+  private forgetName(m: Member): void {
+    if (this.memberByName.get(m.nameKey) !== m) return;
+    this.memberByName.delete(m.nameKey);
+    let next: Member | null = null;
+    for (const o of this.members.values()) {
+      if (o !== m && o.nameKey === m.nameKey && (!next || o.num < next.num)) next = o;
+    }
+    if (next) this.memberByName.set(next.nameKey, next);
+  }
+
   // ---------- 参加者 ----------
 
   /**
@@ -988,7 +1326,7 @@ export class GameRoom extends DurableObject<Env> {
    */
   private onJoin(ws: WebSocket, att: Attachment, rawName: unknown, now: number): void {
     const name = normalizeName(rawName);
-    if (!name) {
+    if (!name || isGoneName(name)) {
       this.send(ws, { t: 'unknown' });
       return;
     }
@@ -1154,6 +1492,9 @@ export class GameRoom extends DurableObject<Env> {
       ua,
       rcode: null,
       freeUntil: null,
+      wish: null,
+      wishMiss: 0,
+      wishMissPrev: 0,
     };
   }
 
@@ -1207,6 +1548,39 @@ export class GameRoom extends DurableObject<Env> {
     this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name: p.name });
     this.sendSnap(ws, att);
     this.sendGlowTo(ws, Date.now());
+    this.scheduleBroadcast();
+  }
+
+  // ---------- 配役の希望 ----------
+
+  /**
+   * 役が決まってからゲームが終わるまで、その配役に入っている人は希望を変えられない（配役の画面の「希望が通らなかった」が、
+   * あとから変えた希望とずれないように）。配役の前・結果発表・見学の人は変えられる
+   */
+  private wishLocked(p: Participant, now: number): boolean {
+    const g = this.game;
+    if (g.assignId === 0 || p.assignId !== g.assignId || !p.role) return false;
+    if (g.stage === 'assigned') return true;
+    return g.stage === 'timer' && !(g.timer !== null && isDone(g.timer, now));
+  }
+
+  /** 参加者が、次の配役でなりたい役を選んだ（null＝どちらでも）。人数は全員にまとめて配る */
+  private onWish(ws: WebSocket, att: Attachment, role: unknown, now: number): void {
+    if (!att.pid) return;
+    const p = this.people.get(att.pid);
+    if (!p || p.removed) return;
+    const wish = role === null ? null : isRoleId(role) ? role : undefined;
+    // 受け付けないとき・おかしな値のときは、今の状態を送り直す（スマホの板を元に戻す）
+    if (wish === undefined || this.game.wishMode !== 'wish' || this.wishLocked(p, now)) {
+      this.sendSnap(ws, att);
+      return;
+    }
+    if (p.wish !== wish) {
+      p.wish = wish;
+      this.sql.exec(`UPDATE participants SET wish = ? WHERE pid = ?`, wish, p.pid);
+    }
+    // 本人にはすぐ返す。ほかの人の画面の人数は、入室と同じ間隔でまとめて配る
+    this.sendSnapTo([p.pid]);
     this.scheduleBroadcast();
   }
 
@@ -2214,15 +2588,33 @@ export class GameRoom extends DurableObject<Env> {
         }
         const active = [...this.people.values()].filter((p) => !p.removed);
         if (active.length === 0) return this.reject(ws, att, op, 'no-participants');
-        const roles = assignRoles(
-          active.map((p) => p.pid),
-          ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] })),
-        );
+        const isReroll = g.stage === 'assigned';
+        const rules = ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] }));
+        // 希望を聞く：人数は割合のまま。枠より多い希望はくじで、前に外れた人から先に通す。
+        // 引き直しは、引き直す前の回数からやり直す（遊んでいない配役で外れた分を数えない）
+        const missBase = new Map(active.map((p) => [p.pid, isReroll ? p.wishMissPrev : p.wishMiss] as const));
+        const wished =
+          g.wishMode === 'wish'
+            ? assignWithWishes(
+                active.map((p) => ({ pid: p.pid, wish: p.wish, miss: missBase.get(p.pid) ?? 0 })),
+                rules,
+              )
+            : null;
+        const roles = wished ? wished.roles : assignRoles(active.map((p) => p.pid), rules);
+        const missAfter = new Map(active.map((p) => [p.pid, wished ? (wished.miss.get(p.pid) ?? 0) : (missBase.get(p.pid) ?? 0)] as const));
+        const missedNow = new Set(wished ? wished.missed : []);
+        const wishStat = wished
+          ? {
+              oni: active.filter((p) => p.wish === 'oni').length,
+              runner: active.filter((p) => p.wish === 'runner').length,
+              none: active.filter((p) => p.wish === null).length,
+              missed: wished.missed.length,
+            }
+          : null;
         // 1人に2つ：捕まったとき鳴らす番号（code）と、牢屋の人を助けるとき鳴らす番号（rcode）。部屋の中で重ならない
         const codes = pickCodes(active.length * 2);
         const codeOf = new Map(active.map((p, i) => [p.pid, codes[i]] as const));
         const rcodeOf = new Map(active.map((p, i) => [p.pid, codes[active.length + i]] as const));
-        const isReroll = g.stage === 'assigned';
         const nextRound = isReroll ? Math.max(g.round, 1) : g.round + 1;
         const nextAssignId = g.assignId + 1;
         let oni = 0;
@@ -2239,16 +2631,19 @@ export class GameRoom extends DurableObject<Env> {
           resultAuto: false,
           allCaughtAt: null,
           counts: { oni, runner },
+          wishStat,
           ...this.missionReset(now, 'assign'),
         };
         this.ctx.storage.transactionSync(() => {
           for (const [pid, role] of roles) {
             this.sql.exec(
-              `UPDATE participants SET role = ?, assign_id = ?, ack_id = 0, code = ?, rcode = ?, free_until = NULL WHERE pid = ?`,
+              `UPDATE participants SET role = ?, assign_id = ?, ack_id = 0, code = ?, rcode = ?, free_until = NULL, wish_miss = ?, wish_miss_prev = ? WHERE pid = ?`,
               role,
               nextAssignId,
               codeOf.get(pid) ?? null,
               rcodeOf.get(pid) ?? null,
+              missAfter.get(pid) ?? 0,
+              missBase.get(pid) ?? 0,
               pid,
             );
           }
@@ -2261,9 +2656,11 @@ export class GameRoom extends DurableObject<Env> {
           this.game = next;
           for (const [pid, role] of roles) {
             const p = this.people.get(pid)!;
-            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid) } });
+            // 希望を聞いた配役では、その人の希望（wish）・通らなかったか（missed）・先に通る強さ（prio＝配役の前の、続けて外れた回数）も残す
+            const wishData = wished ? { wish: p.wish, missed: missedNow.has(pid), prio: missBase.get(pid) ?? 0 } : {};
+            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid), ...wishData } });
           }
-          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll } });
+          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll, how: g.wishMode, ...(wishStat ? { wish: wishStat } : {}) } });
         });
         this.photos.clear();
         for (const [pid, role] of roles) {
@@ -2274,6 +2671,8 @@ export class GameRoom extends DurableObject<Env> {
           p.code = codeOf.get(pid) ?? null;
           p.rcode = rcodeOf.get(pid) ?? null;
           p.freeUntil = null;
+          p.wishMissPrev = missBase.get(pid) ?? 0;
+          p.wishMiss = missAfter.get(pid) ?? 0;
         }
         break;
       }
@@ -2382,6 +2781,17 @@ export class GameRoom extends DurableObject<Env> {
         this.log('ratio', { at: now, data: { ratio: r } });
         break;
       }
+      case 'wish-mode': {
+        // 配役の決め方：次の配役（引き直しも）から効く。試合中は変えられない（割合と同じ）
+        if (!(g.stage === 'lobby' || g.stage === 'assigned' || g.stage === 'result')) {
+          return this.reject(ws, att, op, 'not-allowed');
+        }
+        if (!isWishMode(msg.wishMode)) return this.reject(ws, att, op, 'bad-input');
+        if (msg.wishMode === g.wishMode) break;
+        this.commit({ wishMode: msg.wishMode });
+        this.log('wish-mode', { at: now, data: { how: msg.wishMode } });
+        break;
+      }
       case 'mic': {
         // いつでも切り替えられる（どちらがいいか試すため）。試合中に変えても、そのときから全員のスマホに効く
         if (!isMicMode(msg.mic)) return this.reject(ws, att, op, 'bad-input');
@@ -2420,6 +2830,7 @@ export class GameRoom extends DurableObject<Env> {
           resultAuto: false,
           allCaughtAt: null,
           counts: { oni: 0, runner: 0 },
+          wishStat: null,
           night: g.night + 1,
           nightAt: now,
           ...this.missionReset(now, 'clear'),
@@ -2738,7 +3149,21 @@ export class GameRoom extends DurableObject<Env> {
       resultAuto: g.resultAuto === true,
       micMode: g.micMode,
       area: g.area ?? null,
+      wishMode: g.wishMode,
+      wishes: this.wishCounts(),
     };
+  }
+
+  /** 配役の希望：いま入室している人のうち、それぞれの役を希望している人数 */
+  private wishCounts(): { oni: number; runner: number } {
+    let oni = 0;
+    let runner = 0;
+    for (const p of this.people.values()) {
+      if (p.removed) continue;
+      if (p.wish === 'oni') oni++;
+      else if (p.wish === 'runner') runner++;
+    }
+    return { oni, runner };
   }
 
   private meView(pid: string, now = Date.now()): MeView | undefined {
@@ -2774,6 +3199,10 @@ export class GameRoom extends DurableObject<Env> {
       rcode: live && p.role === 'runner' ? p.rcode : null,
       freeUntil: live && p.role === 'runner' && !this.isCaught(p) && p.freeUntil !== null && p.freeUntil > now ? p.freeUntil : null,
       rescues: live && p.role === 'runner' ? (this.rescues.get(p.pid) ?? 0) : 0,
+      wish: p.wish,
+      wishMiss: p.wishMiss,
+      // 役が決まってからゲームの終わりまで、その配役の人は希望を変えられないので、その間はこれで合っている
+      wishMissed: live && g.wishStat != null && p.wish !== null && p.role !== null && p.role !== p.wish,
     };
   }
 
@@ -2866,6 +3295,8 @@ export class GameRoom extends DurableObject<Env> {
         (ph): HostPhoto => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, status: ph.status, bytes: ph.bytes, freed: ph.freed }),
       ),
       photoBytes: this.photoBytes,
+      wishStat: g.stage === 'lobby' ? null : (g.wishStat ?? null),
+      wishPrio: active.filter((p) => p.wish !== null && p.wishMiss > 0).length,
     };
   }
 
@@ -2996,6 +3427,11 @@ async function readLimited(request: Request, limit: number): Promise<ArrayBuffer
   return out.buffer;
 }
 
+/** 「消えた人」は名簿から消えた人の記録に使う名前なので、新しく名乗れない */
+function isGoneName(name: string): boolean {
+  return nameKey(name) === nameKey(GONE_NAME);
+}
+
 function photoOf(r: PhotoRow): PhotoMeta {
   return {
     id: r.id,
@@ -3012,6 +3448,12 @@ function photoOf(r: PhotoRow): PhotoMeta {
     bytes: r.bytes,
     freed: r.freed ?? 0,
   };
+}
+
+function randomDigits(n: number): string {
+  const bytes = new Uint32Array(n);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => String(b % 10)).join('');
 }
 
 function randomKey(): string {

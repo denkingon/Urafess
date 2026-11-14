@@ -11,6 +11,7 @@ export { GameRoom } from './room';
  * /api/game/<ゲームID>/log   … 主催者の合言葉つきで、1イベント＝1行の記録を CSV（?format=json で JSON）で書き出す
  * /api/game/<ゲームID>/photo … ミッションの写真を送る（POST）・/photo/<印> で取り出す（GET）
  * /api/game/<ゲームID>/photos … 主催者の合言葉つきで、全部の夜の写真の一覧
+ * /api/game/<ゲームID>/me    … 自分のページ（本人の合い鍵つきで記録を見る・名前を変える・新しいスマホへ移す・名簿から消える）
  * /api/probe…                 … 夜テスト（位置・往復・回線・接続の切れ目を記録する画面と、その集計）
  * それ以外は画面（静的ファイル）。
  */
