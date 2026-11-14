@@ -11,6 +11,10 @@
 
 - [Urafess アプリ画面（Claude Design）](https://claude.ai/artifact/9RCkDqT7CL9dtifftVs1SY)
 
+書体
+
+- [font/](font/)：裏フェスの書体 URAJI（裏字）。使い方は [裏フェス フォント](https://claude.ai/artifact/51KpKXTyAqecGQS2kp2hRK)、形を動かすのは [URAJI つまみ](https://claude.ai/artifact/FabYiinMDhuPoC8WHhADeW)
+
 コード
 
 - [app/](app/)：アプリの土台（入室・①配役・②同期タイマー）。使い方は app/README.md
