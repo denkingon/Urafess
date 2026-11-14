@@ -15,6 +15,8 @@ export interface PhoneScreen {
   slot: HTMLElement;
   /** 走ると光るを差し込む場所。ゲームの段階は真ん中の絵の場所（光の地図）、その前は長押しの上（「オンにする」） */
   stage: HTMLElement;
+  /** 自分のページを開くボタン（試合の外だけ出す。出すかは main が決める） */
+  mine: HTMLButtonElement;
   update(view: PhoneView): void;
 }
 
@@ -45,6 +47,7 @@ export function createPhone(): PhoneScreen {
     <div class="p-note" data-k="note"></div>
     <div class="p-end u" data-k="end" hidden></div>
     <div class="slot" data-k="slot"></div>
+    <button type="button" class="p-mine" data-k="mine" hidden>${say(['自分のページ', 'MY PAGE'])}</button>
   `;
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
   const parts = {
@@ -66,6 +69,7 @@ export function createPhone(): PhoneScreen {
     el,
     slot: q('slot'),
     stage: q('stage'),
+    mine: q('mine') as HTMLButtonElement,
     update(view) {
       const key = JSON.stringify(view);
       if (key === last) return;
