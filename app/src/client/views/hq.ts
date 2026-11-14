@@ -114,7 +114,12 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   const ratioCard = make('section', 'hq-card', `<h2>鬼と逃走者</h2>${stepRow('鬼', 'r-oni')}${stepRow('逃走者', 'r-runner')}`);
   ratioCard.append(old('[data-k="ratioPreview"]'));
   const micCard = make('section', 'hq-card');
-  micCard.append(old('.mic-mode'));
+  micCard.append(old('.mic-mode:not(.wish-mode)'));
+  // 配役の決め方（希望を聞く／くじだけ）。無い版の画面では札ごと出さない
+  const wishCard = make('section', 'hq-card');
+  const wishMode = old('.wish-mode');
+  if (wishMode) wishCard.append(wishMode);
+  else wishCard.hidden = true;
   const sec = (ms: number) => `${ms / 1000}秒`;
   const fixed = make('section', 'hq-card hq-fixed',
     '<h2>固定の札<span>いまはコードの中の数字</span></h2><ul>'
@@ -139,11 +144,19 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   leave.hidden = !onLeave;
   leave.addEventListener('click', () => onLeave?.());
   rec.append(csv, old('[data-k="foot"]'), leave);
-  panel.deck.append(timeCard, ratioCard, micCard, fixed, ready, night, rec, durations, ratio);
+  panel.deck.append(timeCard, ratioCard, wishCard, micCard, fixed, ready, night, rec, durations, ratio);
   durations.classList.add('hq-gone');
   ratio.classList.add('hq-gone');
 
-  el.append(head, rail, now, strip, old('[data-k="reject"]'), body, dock, tabs);
+  // 前の画面にあとから足された部品（ここがまだ知らないもの）は、迷子にしないでデッキの下へ集める
+  const reject = old('[data-k="reject"]');
+  const strays = [...el.children].filter((c) => c !== reject && !c.classList.contains('hq-gone')) as HTMLElement[];
+  if (strays.length) {
+    const misc = make('section', 'hq-card', '<h2>そのほか</h2>');
+    misc.append(...strays);
+    panel.deck.append(misc);
+  }
+  el.append(head, rail, now, strip, reject, body, dock, tabs);
 
   // ---------- 押したとき ----------
   /** ＋−：欄の値を変えて、前の画面の「変える」をそのまま押す（確かめ・送り方は前のしくみ） */

@@ -107,6 +107,7 @@
 .hq-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--muted); border-radius: 6px; background: var(--raised); }
 .hq-card h2 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 16px; line-height: 24px; font-weight: 700; }
 .hq-card h2 span { font-weight: 400; color: var(--muted); }
+.hq-card[hidden] { display: none; }
 .hq-step { display: flex; align-items: center; gap: 8px; }
 .hq-step > span { flex: 1 1 0; min-width: 0; }
 .hq-step output { min-width: 92px; text-align: center; font-size: 32px; line-height: 40px; }
