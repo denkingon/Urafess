@@ -1,4 +1,4 @@
-import { AREA_OUT_MARGIN_M, AreaWatch, isFarOutside } from '../../shared/area';
+import { AREA_DQ_MS, AREA_OUT_MARGIN_M, AreaWatch, isFarOutside } from '../../shared/area';
 import type { GlowEntry } from '../../shared/protocol';
 import { MATES_STALE_MS, RUN_STALE_MS } from '../../shared/rules';
 import { bearingDeg, compassName, compassNameEn, distanceM, distanceText, distanceTextEn, type LatLon } from '../../shared/run';
@@ -334,8 +334,21 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
     <div class="area-out" data-k="out" role="alert" hidden>
       <svg class="area-out-arrow" viewBox="-20 -20 40 40" aria-hidden="true"><path d="M0,-15 L11,6 L3,3 L3,15 L-3,15 L-3,3 L-11,6 Z"/></svg>
       <div class="area-out-text"><b data-k="outWord"></b><span data-k="outWhere"></span></div>
+      <div class="area-out-dq"><b class="u" data-k="dqSec"></b><span data-k="dqLbl"></span></div>
+      <i class="area-out-bar" data-k="dqBar"></i>
     </div>
   `;
+  // 失格の画面：参加者の画面いっぱいに被せる（捕獲・牢屋の操作も隠れる）
+  const dq = document.createElement('div');
+  dq.className = 'dq';
+  dq.setAttribute('role', 'alertdialog');
+  dq.hidden = true;
+  dq.innerHTML = `
+    <svg class="dq-x" viewBox="-60 -60 120 120" aria-hidden="true"><circle r="52"/><path d="M-26,-26 L26,26 M26,-26 L-26,26"/></svg>
+    <b class="dq-word u">${say(['失格', 'DISQUALIFIED'])}</b>
+    <p class="dq-why">${sent([`範囲の外に${AREA_DQ_MS / 1000}秒いた`, `${AREA_DQ_MS / 1000} seconds out of bounds`])}</p>
+  `;
+  (root ?? el).append(dq);
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
   const ask = el.querySelector('.glow-ask') as HTMLButtonElement;
   const note = q('note');
@@ -344,8 +357,44 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
   el.append(board.el);
   const outBox = q('out');
   const outArrow = el.querySelector('.area-out-arrow') as SVGElement;
+  const dqBar = q('dqBar');
   const watch = new AreaWatch();
   let lastOutBuzz = 0;
+  let lastSecBuzz = -1;
+  /** 失格は「今の配役」ごと。同じ配役のうちは、アプリを開き直しても失格のまま */
+  let dqKey: string | null = null;
+  let dqShown = false;
+  const DQ_STORE = 'urafess.dq';
+  const readDq = (): string | null => {
+    try {
+      return localStorage.getItem(DQ_STORE);
+    } catch {
+      return null;
+    }
+  };
+  const writeDq = (k: string) => {
+    try {
+      localStorage.setItem(DQ_STORE, k);
+    } catch {
+      // 保存できない端末（開いている間は失格のまま）
+    }
+  };
+  /** 失格の画面を出す・隠す。出すのは逃げ始めからゲームが終わって広場に戻るまで（結果発表では隠す） */
+  const applyDq = (view: PhoneView, state: ClientState) => {
+    const gk = state.game ? `${state.game.gameId}:${state.game.assignId}` : null;
+    if (gk && gk !== dqKey) {
+      dqKey = gk;
+      watch.clearDq();
+      if (readDq() === gk) watch.disqualified = true;
+    }
+    if (watch.disqualified && dqKey && readDq() !== dqKey) writeDq(dqKey);
+    const show = watch.disqualified && view.step >= 3 && view.step <= 5 && view.ended !== true;
+    if (show === dqShown) return;
+    dqShown = show;
+    dq.hidden = !show;
+    if (root) root.classList.toggle('is-dq', show);
+    if (show) vibrate([700, 150, 700]);
+  };
 
   ask.addEventListener('click', () => {
     // このタップの中で許可を聞く（iPhone はタップの直後でないと聞けない）
@@ -359,10 +408,11 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
   return {
     el,
     update(view, state, serverNow) {
+      applyDq(view, state);
       if (el.dataset.glow !== view.glow) el.dataset.glow = view.glow;
       setHidden(el, view.glow === 'none');
       if (view.glow === 'none') {
-        root?.classList.remove('is-lit');
+        root?.classList.remove('is-lit', 'is-out', 'is-dq-soon');
         return;
       }
       const now = Date.now();
@@ -398,9 +448,27 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
       const bounded = view.role !== 'なし' && (view.step === 3 || view.step === 4) && !view.paused;
       const out = bounded && watch.feed(area, pos ? { lat: pos.lat, lon: pos.lon } : null, now);
       if (!bounded) watch.reset();
-      setHidden(outBox, !out);
-      if (root && root.classList.contains('is-out') !== out) root.classList.toggle('is-out', out);
-      if (out && pos && watch.last) {
+      applyDq(view, state);
+      const showOut = out && !watch.disqualified;
+      setHidden(outBox, !showOut);
+      if (root && root.classList.contains('is-out') !== showOut) root.classList.toggle('is-out', showOut);
+      // 失格までの数え：「戻れ」が出た時点から AREA_DQ_MS。最後の5秒は縁の脈が速くなり、1秒ごとに震える
+      const left = showOut ? watch.dqLeftMs(now) : null;
+      const sec = left === null ? -1 : Math.ceil(left / 1000);
+      const soon = left !== null && left <= 5_000;
+      if (root && root.classList.contains('is-dq-soon') !== soon) root.classList.toggle('is-dq-soon', soon);
+      if (left !== null) {
+        setHTML(q('dqSec'), esc(String(sec)));
+        setHTML(q('dqLbl'), say(['失格まで', 'DQ IN']));
+        dqBar.style.transform = `scaleX(${(left / AREA_DQ_MS).toFixed(3)})`;
+        if (soon && sec !== lastSecBuzz) {
+          lastSecBuzz = sec;
+          vibrate(150);
+        }
+      } else {
+        lastSecBuzz = -1;
+      }
+      if (showOut && pos && watch.last) {
         const to = watch.last.nearest;
         const deg = bearingDeg(pos, to);
         const head = sensors.heading(now);

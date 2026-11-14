@@ -5,6 +5,7 @@ import { distanceM, type LatLon } from './run';
  * - 頂点は [緯度, 経度] の並び（3〜AREA_MAX_PTS 個、描いた順）。null＝範囲なし（どこでも遊べる）
  * - 範囲の外に AREA_OUT_MARGIN_M より出て、それが AREA_OUT_CONFIRM_MS 続いたら「外」。位置のぶれで外と言わないため
  * - 外になった人は、内側へ AREA_BACK_MARGIN_M 入ったら「中」に戻る（境目でばたばたしないため）
+ * - 「外」が AREA_DQ_MS（20秒）続いたら失格。中に戻れば数え直す。失格はそのラウンドの終わりまで戻らない
  * - 判定はスマホが自分の位置で決める（サーバーへの通信は増えない）。主催者の地図は届いた位置で同じ判定をする
  */
 
@@ -24,6 +25,8 @@ export const AREA_OUT_MARGIN_M = 15;
 export const AREA_OUT_CONFIRM_MS = 3_000;
 /** 外になった人が「中」に戻るには、線から内側へこれだけ入る（m） */
 export const AREA_BACK_MARGIN_M = 3;
+/** 「外」がこれだけ続いたら失格（「戻れ」が出た時点から数える。中に戻れば数え直し） */
+export const AREA_DQ_MS = 20_000;
 
 const toPt = (p: [number, number]): LatLon => ({ lat: p[0], lon: p[1] });
 
@@ -106,7 +109,13 @@ export function isFarOutside(pts: [number, number][], p: LatLon): boolean {
  */
 export class AreaWatch {
   out = false;
+  /**
+   * 失格（「外」が AREA_DQ_MS 続いた）。一度なったら clearDq まで戻らない。
+   * reset（一時停止・範囲なし・位置が取れない）では消えない：一時停止で失格が取り消されないように
+   */
+  disqualified = false;
   private since: number | null = null;
+  private outSince: number | null = null;
   last: AreaCheck | null = null;
 
   feed(pts: [number, number][] | null, p: LatLon | null, now: number): boolean {
@@ -128,12 +137,33 @@ export class AreaWatch {
     } else {
       this.since = null;
     }
+    // 「外」が続いた長さ。中に戻れば数え直し
+    if (this.out) {
+      this.outSince ??= now;
+      if (now - this.outSince >= AREA_DQ_MS) this.disqualified = true;
+    } else {
+      this.outSince = null;
+    }
     return this.out;
   }
 
+  /** 失格まで残り（ms）。外にいないときは null。失格済みは 0 */
+  dqLeftMs(now: number): number | null {
+    if (this.disqualified) return 0;
+    if (!this.out || this.outSince === null) return null;
+    return Math.max(0, AREA_DQ_MS - (now - this.outSince));
+  }
+
+  /** 外・中の見張りだけ止める（失格は残す） */
   reset(): void {
     this.out = false;
     this.since = null;
+    this.outSince = null;
     this.last = null;
+  }
+
+  /** 失格を消す（新しいラウンド） */
+  clearDq(): void {
+    this.disqualified = false;
   }
 }
