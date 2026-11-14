@@ -39,6 +39,7 @@ const KIND_NAME: Record<string, string> = {
   clear: '新しい夜を始める',
   rename: '名前を変えた',
   handoff: '新しいスマホへ移した',
+  'handoff-again': '新しいスマホへ移す（打ち直し）',
   leave: '名簿から消えた',
   hold: '長押し',
   heard: '音を拾った',

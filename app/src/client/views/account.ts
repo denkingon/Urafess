@@ -41,6 +41,9 @@ export function errorText(e: AccountError | 'network'): string {
   return `${ja}／${en}`;
 }
 
+/** 答えを待つ長さ */
+const ACCOUNT_TIMEOUT_MS = 10_000;
+
 /** /api/game/<id>/me に頼む。答えか、断られた理由を返す */
 export async function callAccount<T>(
   gameId: string,
@@ -60,6 +63,8 @@ export async function callAccount<T>(
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: 'no-store',
+      // 電波が弱くて止まったままにならないように（つながらない、として扱う）
+      signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(ACCOUNT_TIMEOUT_MS) : undefined,
     });
     const json = (await r.json().catch(() => ({}))) as { error?: AccountError } & T;
     if (!r.ok || json.error) return { ok: false, error: json.error ?? 'bad-input' };
@@ -228,10 +233,13 @@ export function createAccount(deps: AccountDeps): AccountScreen {
 
   el.addEventListener('click', async (e) => {
     const a = (e.target as HTMLElement).closest('button')?.dataset.a;
-    if (!a || busy) return;
+    // もどるは、答えを待っている間も押せる
     if (a === 'close') {
       deps.close();
-    } else if (a === 'handoff') {
+      return;
+    }
+    if (!a || busy) return;
+    if (a === 'handoff') {
       busy = true;
       showError('handoffError', null);
       render();

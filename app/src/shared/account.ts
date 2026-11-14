@@ -7,9 +7,20 @@
 export const HANDOFF_DIGITS = 6;
 /** 合言葉が効く長さ */
 export const HANDOFF_TTL_MS = 10 * 60_000;
-/** 合言葉の打ち間違いをこれだけ数えたら、しばらく受け付けない（部屋全体で。当てずっぽうを防ぐ） */
+/**
+ * 合言葉の打ち間違いをこれだけ数えたら、しばらく受け付けない（当てずっぽうを防ぐ）。
+ * 同じ回線から（HANDOFF_MAX_FAILS）と、部屋全体で（HANDOFF_MAX_FAILS_ROOM）。
+ * 部屋全体の上限を高くしておくのは、いたずらで全員の引き継ぎを止められないようにするため
+ * （それでも当たる見込みは、生きている合言葉の数 × 回数 ÷ 100万で、ほぼない）
+ */
 export const HANDOFF_MAX_FAILS = 20;
+export const HANDOFF_MAX_FAILS_ROOM = 200;
 export const HANDOFF_FAIL_WINDOW_MS = 10 * 60_000;
+/**
+ * 使った合言葉をもう一度打たれたら、この間だけは同じ合い鍵を返す
+ * （電波が弱くて答えが届かず、新しいスマホが打ち直したときに締め出さないように）
+ */
+export const HANDOFF_REPLAY_MS = 2 * 60_000;
 /** 名簿から消えた人の、記録に残す名前 */
 export const GONE_NAME = '消えた人';
 
@@ -64,55 +75,86 @@ export interface AccountStats {
   freed: number;
 }
 
-/** 本人の記録を数える。events は id の順（古い順）に並んでいること */
+/**
+ * 本人の記録を数える。events は id の順（古い順）に並んでいること。
+ * 配役の番号（assign_id）は、新しい夜（clear）で0から数え直し、やり直し（reset）では同じ番号のまま続くので、
+ * 「何回目の夜か（clear の数）＋配役の番号」で1つのラウンドとみなす。
+ * やり直したラウンドの捕獲・助けた記録は消える（サーバーの数え方と同じ）。やり直したあと始めなければ、役も数えない
+ */
 export function summarizeAccount(events: readonly AccountEvent[], pid: string): AccountStats {
-  const started = new Set<number>();
   const roomNights = new Set<string>();
   const myNights = new Set<string>();
+  // 始まっている（やり直されていない）ラウンド
+  const started = new Set<string>();
+  // 役：ラウンドごとに、最後に配られた役と、その時刻（配り直しは別のラウンドになる）
+  const roleOf = new Map<string, { role: string; at: number }>();
+  // 捕獲：ラウンドと逃走者ごとに、捕まえた鬼を積む。取り消しは最後の1つを外す（助けられて、また捕まることもある）
+  const captures = new Map<string, Map<string, (string | null)[]>>();
+  // 助けた：ラウンドごとの回数
+  const rescues = new Map<string, number>();
+  let epoch = 0;
   for (const e of events) {
-    if (e.kind === 'start') {
-      started.add(e.assign_id);
-      roomNights.add(nightKeyOf(e.at));
+    if (e.kind === 'clear') {
+      epoch += 1;
+      continue;
     }
-  }
-
-  // 役：始まった配役ごとに、最後に配られた役（配り直しは別の配役になる）
-  const roleOf = new Map<number, string>();
-  // 捕獲：配役と逃走者ごとに、捕まえた鬼を積む。取り消しは最後の1つを外す（助けられて、また捕まることもある）
-  const captures = new Map<string, { oni: string | null; runner: string }[]>();
-  let freed = 0;
-  for (const e of events) {
-    if (e.pid === pid && (e.kind === 'join' || e.kind === 'enter')) myNights.add(nightKeyOf(e.at));
-    if (e.kind === 'role' && e.pid === pid) {
-      const role = parseRole(e.data);
-      if (role) roleOf.set(e.assign_id, role);
-      if (started.has(e.assign_id)) myNights.add(nightKeyOf(e.at));
-    } else if (e.kind === 'capture' && e.other_pid) {
-      const k = `${e.assign_id}:${e.other_pid}`;
-      const list = captures.get(k) ?? [];
-      list.push({ oni: e.pid, runner: e.other_pid });
-      captures.set(k, list);
-    } else if (e.kind === 'release' && e.other_pid) {
-      captures.get(`${e.assign_id}:${e.other_pid}`)?.pop();
-    } else if (e.kind === 'rescue' && e.pid === pid) {
-      freed += 1;
+    const round = `${epoch}:${e.assign_id}`;
+    switch (e.kind) {
+      case 'start':
+        started.add(round);
+        roomNights.add(nightKeyOf(e.at));
+        break;
+      case 'reset':
+        started.delete(round);
+        captures.delete(round);
+        rescues.delete(round);
+        break;
+      case 'join':
+      case 'enter':
+        if (e.pid === pid) myNights.add(nightKeyOf(e.at));
+        break;
+      case 'role': {
+        const role = e.pid === pid ? parseRole(e.data) : null;
+        if (role) roleOf.set(round, { role, at: e.at });
+        break;
+      }
+      case 'capture': {
+        if (!e.other_pid) break;
+        const byRunner = captures.get(round) ?? new Map<string, (string | null)[]>();
+        const list = byRunner.get(e.other_pid) ?? [];
+        list.push(e.pid);
+        byRunner.set(e.other_pid, list);
+        captures.set(round, byRunner);
+        break;
+      }
+      case 'release':
+        if (e.other_pid) captures.get(round)?.get(e.other_pid)?.pop();
+        break;
+      case 'rescue':
+        if (e.pid === pid) rescues.set(round, (rescues.get(round) ?? 0) + 1);
+        break;
     }
   }
 
   const roles = { oni: 0, runner: 0 };
-  for (const [assignId, role] of roleOf) {
-    if (!started.has(assignId)) continue;
-    if (role === 'oni') roles.oni += 1;
-    else if (role === 'runner') roles.runner += 1;
+  for (const [round, r] of roleOf) {
+    if (!started.has(round)) continue;
+    myNights.add(nightKeyOf(r.at));
+    if (r.role === 'oni') roles.oni += 1;
+    else if (r.role === 'runner') roles.runner += 1;
   }
   let caught = 0;
   let gotCaught = 0;
-  for (const list of captures.values()) {
-    for (const c of list) {
-      if (c.oni === pid) caught += 1;
-      if (c.runner === pid) gotCaught += 1;
+  for (const byRunner of captures.values()) {
+    for (const [runner, onis] of byRunner) {
+      for (const oni of onis) {
+        if (oni === pid) caught += 1;
+        if (runner === pid) gotCaught += 1;
+      }
     }
   }
+  let freed = 0;
+  for (const n of rescues.values()) freed += n;
 
   const keys = [...new Set([...roomNights, ...myNights])].sort();
   return {

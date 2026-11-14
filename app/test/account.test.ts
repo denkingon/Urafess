@@ -78,6 +78,66 @@ describe('自分の記録を数える', () => {
     expect(a.roles).toEqual({ oni: 0, runner: 1 });
   });
 
+  it('新しい夜（clear）で配役の番号が1に戻っても、夜ごとに別のラウンドとして数える', () => {
+    const events: AccountEvent[] = [];
+    // 11/6：1回目は鬼、2回目は逃走者（どちらも始まった）。2回目で b に捕まる
+    assign = 1;
+    events.push(ev('join', '2026-11-06T21:00:00', { pid: 'me' }), role('me', 'oni', '2026-11-06T21:05:00'), ev('start', '2026-11-06T21:06:00'));
+    assign = 2;
+    events.push(
+      role('me', 'runner', '2026-11-06T21:30:00'),
+      ev('start', '2026-11-06T21:31:00'),
+      ev('capture', '2026-11-06T21:35:00', { pid: 'b', other_pid: 'me' }),
+    );
+    // 11/7：新しい夜。番号は1から。1回目は配っただけで配り直し、2回目で鬼として始まる
+    assign = 0;
+    events.push(ev('clear', '2026-11-07T20:00:00'));
+    assign = 1;
+    events.push(ev('enter', '2026-11-07T21:00:00', { pid: 'me' }), role('me', 'runner', '2026-11-07T21:05:00'));
+    assign = 2;
+    events.push(
+      role('me', 'oni', '2026-11-07T21:06:00'),
+      ev('start', '2026-11-07T21:07:00'),
+      // 前の夜の2番と同じ番号の取り消しが、前の夜の捕獲を消さない
+      ev('capture', '2026-11-07T21:10:00', { pid: 'me', other_pid: 'c' }),
+      ev('release', '2026-11-07T21:10:30', { pid: 'me', other_pid: 'c' }),
+    );
+
+    const s = summarizeAccount(events, 'me');
+    expect(s.roles).toEqual({ oni: 2, runner: 1 });
+    expect(s.gotCaught).toBe(1);
+    expect(s.caught).toBe(0);
+    expect(s.nights.map((n) => n.label)).toEqual(['11/6', '11/7']);
+    expect(s.nightsHere).toBe(2);
+  });
+
+  it('やり直し（reset）たラウンドの捕獲と助けた記録は数えない。やり直して始め直せば役は1回', () => {
+    const events: AccountEvent[] = [];
+    assign = 1;
+    events.push(
+      ev('join', '2026-11-06T21:00:00', { pid: 'me' }),
+      role('me', 'runner', '2026-11-06T21:05:00'),
+      ev('start', '2026-11-06T21:06:00'),
+      ev('capture', '2026-11-06T21:08:00', { pid: 'b', other_pid: 'me' }),
+      ev('rescue', '2026-11-06T21:09:00', { pid: 'me', other_pid: 'c' }),
+      ev('reset', '2026-11-06T21:10:00'),
+      // 同じ配役のまま始め直す：こちらの捕獲は数える
+      ev('start', '2026-11-06T21:11:00'),
+      ev('capture', '2026-11-06T21:15:00', { pid: 'b', other_pid: 'c' }),
+    );
+    // 2回目は始まってからやり直し、始め直さずに配り直した：役は数えない
+    assign = 2;
+    events.push(role('me', 'oni', '2026-11-06T21:30:00'), ev('start', '2026-11-06T21:31:00'), ev('reset', '2026-11-06T21:32:00'));
+    assign = 3;
+    events.push(role('me', 'runner', '2026-11-06T21:33:00'));
+
+    const s = summarizeAccount(events, 'me');
+    expect(s.roles).toEqual({ oni: 0, runner: 1 });
+    expect(s.gotCaught).toBe(0);
+    expect(s.freed).toBe(0);
+    expect(summarizeAccount(events, 'b').caught).toBe(1);
+  });
+
   it('記録が無い人はすべて0', () => {
     const s = summarizeAccount([], 'nobody');
     expect(s).toEqual({ nights: [], nightsHere: 0, roles: { oni: 0, runner: 0 }, caught: 0, gotCaught: 0, freed: 0 });

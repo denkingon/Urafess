@@ -2,8 +2,10 @@
  * 自分のページ（/api/game/<id>/me）。手元に本物のサーバー（wrangler dev）を立てて確かめる。
  * - 合い鍵が合わなければ断る。記録（来た夜・役）が数えられる
  * - 名前を変える：名簿のほかの人の名前・空の名前・試合中は断る。変えると開いているスマホにも届き、古い名前は空く
- * - 新しいスマホへ移す：合言葉で合い鍵が作り直され、古いスマホは入室画面に戻る。合言葉は1回だけ。打ち間違いが多いと止まる
- * - 名簿から消える：試合中は断る。消えると名前が空き、記録の名前は「消えた人」になる
+ * - 新しいスマホへ移す：合言葉で合い鍵が作り直され、古いスマホは入室画面に戻る。合言葉は1回だけ
+ *   （答えが届かず打ち直したときは、少しの間だけ同じ合い鍵を返す）。打ち間違いが多いと止まる
+ * - 名簿から消える：試合中は断る。消えると名前が空き、記録の名前（中身に残る前の名前も）は「消えた人」になる
+ * - 「消えた人」は名乗れない
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
@@ -168,11 +170,23 @@ describe('自分のページ', () => {
     await waitFor('新しいスマホは同じ人として今夜にいる', () => fresh.state.phase === 'ready' && fresh.state.me?.pid === oldId.pid);
     await waitFor('古いスマホは入室画面に戻る', () => midori.state.phase === 'need-name' && midori.state.identity === null);
     expect((await me(oldId)).json.error).toBe('unknown'); // 古い合い鍵はもう使えない
-    expect((await me(null, { op: 'take', code })).json.error).toBe('bad-code'); // 1回だけ
+    // 答えが届かなかったつもりで打ち直す：同じ合い鍵が返り、新しいスマホは締め出されない
+    const again = await me(null, { op: 'take', code });
+    expect(again.status).toBe(200);
+    expect(again.json.key).toBe(r.json.key);
+    expect((await me(fresh.state.identity)).status).toBe(200);
+    // 新しいスマホでまた合言葉を出すと、前の合言葉はもう効かない（1回だけ）
+    expect((await me(fresh.state.identity, { op: 'handoff' })).status).toBe(200);
+    expect((await me(null, { op: 'take', code })).json.error).toBe('bad-code');
     // 今夜の人数は変わらない（あおい・みどり・あか・新しい「あお」）
     await waitFor('今夜の人数は4のまま', () => host.state.host?.total === 4 && host.state.host?.registry === 4);
 
-    // --- 名簿から消える ---
+    // --- 「消えた人」は名乗れない ---
+    expect((await me(aka.state.identity, { op: 'rename', name: GONE_NAME })).json.error).toBe('invalid');
+
+    // --- 名簿から消える（前の名前も記録から消える） ---
+    expect((await me(aka.state.identity, { op: 'rename', name: 'あかね' })).json.name).toBe('あかね');
+    await waitFor('名前が変わる', () => aka.state.identity?.name === 'あかね');
     const akaId = aka.state.identity!;
     r = await me(akaId, { op: 'leave' });
     expect(r.json.ok).toBe(true);
@@ -182,16 +196,21 @@ describe('自分のページ', () => {
       kind: string;
       pid: string | null;
       name: string | null;
+      data: string | null;
     }[];
     expect(log.filter((e) => e.pid === akaId.pid).every((e) => e.name === GONE_NAME)).toBe(true);
+    const akaRename = log.find((e) => e.pid === akaId.pid && e.kind === 'rename');
+    expect(JSON.parse(akaRename!.data!).from).toBe(GONE_NAME);
+    expect(log.filter((e) => e.pid === akaId.pid).some((e) => (e.data ?? '').includes('あか'))).toBe(false);
+    expect((await me(akaId)).json.error).toBe('unknown');
     expect(log.some((e) => e.kind === 'rename')).toBe(true);
     expect(log.some((e) => e.kind === 'handoff')).toBe(true);
     // 名前が空いたので、別の人が同じ名前で新しく入れる
     const other = client('player');
-    other.join('あか');
+    other.join('あかね');
     await waitFor('空いた名前で入れる', () => other.state.phase === 'ready' && other.state.identity?.pid !== akaId.pid);
 
-    // --- 合言葉の当てずっぽうは止まる（上で使い終わった合言葉を打った1回も数える） ---
+    // --- 合言葉の当てずっぽうは止まる（上で効かなくなった合言葉を打った1回も数える） ---
     for (let i = 1; i < HANDOFF_MAX_FAILS; i++) {
       const bad = await me(null, { op: 'take', code: '000000' });
       expect(bad.json.error).toBe('bad-code');

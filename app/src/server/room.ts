@@ -65,6 +65,8 @@ import {
   HANDOFF_DIGITS,
   HANDOFF_FAIL_WINDOW_MS,
   HANDOFF_MAX_FAILS,
+  HANDOFF_MAX_FAILS_ROOM,
+  HANDOFF_REPLAY_MS,
   HANDOFF_TTL_MS,
   isHandoffCode,
   summarizeAccount,
@@ -463,8 +465,14 @@ export class GameRoom extends DurableObject<Env> {
         until INTEGER NOT NULL
       )`,
     );
-    // 合言葉の打ち間違い（当てずっぽうを止めるため、部屋全体で数える）
+    // 使った合言葉は、少しの間だけ使ったときの合い鍵と一緒に残す（答えが届かず打ち直したときに同じ合い鍵を返す）
+    const handoffCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(handoffs)`).toArray().map((r) => r.name));
+    if (!handoffCols.has('used_at')) this.sql.exec(`ALTER TABLE handoffs ADD COLUMN used_at INTEGER`);
+    if (!handoffCols.has('key')) this.sql.exec(`ALTER TABLE handoffs ADD COLUMN key TEXT`);
+    // 合言葉の打ち間違い（当てずっぽうを止めるため、回線ごとと部屋全体で数える）
     this.sql.exec(`CREATE TABLE IF NOT EXISTS handoff_fails (at INTEGER NOT NULL)`);
+    const failCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(handoff_fails)`).toArray().map((r) => r.name));
+    if (!failCols.has('ip')) this.sql.exec(`ALTER TABLE handoff_fails ADD COLUMN ip TEXT`);
     // ミッションと写真。新しい夜を始めても消さない（名簿と一緒にずっと残す）
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS missions (
@@ -1013,7 +1021,7 @@ export class GameRoom extends DurableObject<Env> {
     } catch {
       return fail('bad-input', 400);
     }
-    if (body.op === 'take') return this.onHandoffTake(body.code, now, answer, fail);
+    if (body.op === 'take') return this.onHandoffTake(body.code, request.headers.get('cf-connecting-ip') ?? '', now, answer, fail);
     const m = who();
     if (!m) return fail('unknown', 403);
     switch (body.op) {
@@ -1037,10 +1045,10 @@ export class GameRoom extends DurableObject<Env> {
   private accountOf(m: Member): AccountView {
     const rows = this.sql
       .exec<AccountEvent>(
-        `SELECT at, assign_id, kind, pid, other_pid, data FROM events
-         WHERE kind IN ('start', 'capture', 'release') OR pid = ? OR other_pid = ?
+        `SELECT at, assign_id, kind, pid, other_pid, CASE WHEN kind = 'role' THEN data END AS data FROM events
+         WHERE kind IN ('start', 'reset', 'clear', 'capture', 'release')
+            OR (pid = ? AND kind IN ('role', 'join', 'enter', 'rescue'))
          ORDER BY id`,
-        m.pid,
         m.pid,
       )
       .toArray();
@@ -1067,7 +1075,7 @@ export class GameRoom extends DurableObject<Env> {
   ): Response {
     if (this.inMatchTonight(m.pid)) return fail('busy', 409);
     const name = normalizeName(raw);
-    if (!name) return fail('invalid', 400);
+    if (!name || isGoneName(name)) return fail('invalid', 400);
     const key = nameKey(name);
     const owner = this.memberByName.get(key);
     if (owner && owner.pid !== m.pid) return fail('taken', 409);
@@ -1077,13 +1085,15 @@ export class GameRoom extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(`UPDATE members SET name = ?, name_key = ? WHERE pid = ?`, name, key, m.pid);
       if (p) this.sql.exec(`UPDATE participants SET name = ? WHERE pid = ?`, name, m.pid);
+      this.sql.exec(`UPDATE photos SET name = ? WHERE pid = ?`, name, m.pid);
       this.log('rename', { p: { pid: m.pid, num: m.num, name }, at: now, data: { from } });
     });
-    if (this.memberByName.get(m.nameKey) === m) this.memberByName.delete(m.nameKey);
+    this.forgetName(m);
     m.name = name;
     m.nameKey = key;
     this.memberByName.set(key, m);
     if (p) p.name = name;
+    for (const ph of this.photos.values()) if (ph.pid === m.pid) ph.name = name;
     // 開いているスマホにも新しい名前を届ける（今夜に入っていれば合い鍵ごと、名前のボタンなら名前だけ）
     for (const { ws, att } of this.socketsOf(m.pid)) {
       if (att.pid && p) this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name });
@@ -1096,7 +1106,8 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 新しいスマホへ移す合言葉を出す（前に出した合言葉は消える） */
   private newHandoff(m: Member, now: number): { code: string; until: number } {
-    this.sql.exec(`DELETE FROM handoffs WHERE mid = ? OR until <= ?`, m.pid, now);
+    this.sql.exec(`DELETE FROM handoffs WHERE mid = ?`, m.pid);
+    this.pruneHandoffs(now);
     let code = '';
     for (let i = 0; i < 20; i++) {
       code = randomDigits(HANDOFF_DIGITS);
@@ -1107,31 +1118,59 @@ export class GameRoom extends DurableObject<Env> {
     return { code, until };
   }
 
+  /** 切れた合言葉と、打ち直しを待つ時間が過ぎた使用済みの合言葉を消す */
+  private pruneHandoffs(now: number): void {
+    this.sql.exec(
+      `DELETE FROM handoffs WHERE (used_at IS NULL AND until <= ?) OR (used_at IS NOT NULL AND used_at <= ?)`,
+      now,
+      now - HANDOFF_REPLAY_MS,
+    );
+  }
+
   /**
    * 新しいスマホで合言葉を打つ。合い鍵を作り直して新しいスマホに渡し、古いスマホは入室画面に戻す
-   * （同じ人が2台で入ったままにならないように）
+   * （同じ人が2台で入ったままにならないように）。
+   * 答えが届かずに同じ合言葉を打ち直したときは、少しの間だけ同じ合い鍵をもう一度返す
    */
   private onHandoffTake(
     raw: unknown,
+    ip: string,
     now: number,
     answer: (body: unknown, status?: number) => Response,
     fail: (e: AccountError, status: number) => Response,
   ): Response {
     this.sql.exec(`DELETE FROM handoff_fails WHERE at <= ?`, now - HANDOFF_FAIL_WINDOW_MS);
-    const fails = this.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM handoff_fails`).toArray()[0]?.n ?? 0;
-    if (fails >= HANDOFF_MAX_FAILS) return fail('locked', 429);
+    const fails = this.sql
+      .exec<{ room: number; mine: number }>(
+        `SELECT COUNT(*) AS room, COALESCE(SUM(CASE WHEN ip = ? THEN 1 ELSE 0 END), 0) AS mine FROM handoff_fails`,
+        ip,
+      )
+      .toArray()[0];
+    if ((fails?.mine ?? 0) >= HANDOFF_MAX_FAILS || (fails?.room ?? 0) >= HANDOFF_MAX_FAILS_ROOM) return fail('locked', 429);
+    this.pruneHandoffs(now);
     const row = isHandoffCode(raw)
-      ? this.sql.exec<{ mid: string; until: number }>(`SELECT mid, until FROM handoffs WHERE code = ?`, raw).toArray()[0]
+      ? this.sql
+          .exec<{ mid: string; until: number; used_at: number | null; key: string | null }>(
+            `SELECT mid, until, used_at, key FROM handoffs WHERE code = ?`,
+            raw,
+          )
+          .toArray()[0]
       : undefined;
-    const m = row && row.until > now ? this.members.get(row.mid) : undefined;
-    if (!m) {
-      this.sql.exec(`INSERT INTO handoff_fails (at) VALUES (?)`, now);
+    const m = row ? this.members.get(row.mid) : undefined;
+    // 使ったばかりの合言葉の打ち直し：そのとき渡した合い鍵がまだ生きていれば、同じものを返す
+    if (row && m && row.used_at !== null && row.key && row.key === m.key) {
+      this.log('handoff-again', { p: m, at: now });
+      return answer({ pid: m.pid, key: m.key, num: m.num, name: m.name });
+    }
+    if (!row || !m || row.used_at !== null || row.until <= now) {
+      this.sql.exec(`INSERT INTO handoff_fails (at, ip) VALUES (?, ?)`, now, ip);
       return fail('bad-code', 400);
     }
     const key = randomKey();
     const p = this.people.get(m.pid);
     this.ctx.storage.transactionSync(() => {
-      this.sql.exec(`DELETE FROM handoffs WHERE mid = ?`, m.pid);
+      this.sql.exec(`DELETE FROM handoffs WHERE mid = ? AND code != ?`, m.pid, raw);
+      this.sql.exec(`UPDATE handoffs SET used_at = ?, key = ? WHERE code = ?`, now, key, raw);
       this.sql.exec(`UPDATE members SET key = ? WHERE pid = ?`, key, m.pid);
       if (p) this.sql.exec(`UPDATE participants SET key = ? WHERE pid = ?`, key, m.pid);
       this.log('handoff', { p: m, at: now });
@@ -1150,8 +1189,9 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   /**
-   * 名簿から消える。名前は空き、記録に残っている名前は「消えた人」になる（数は残る）。
-   * 試合中で今夜に入っている人は消えられない
+   * 名簿から消える。名前は空き、記録・写真に残っている名前は「消えた人」になる（数は残る）。
+   * 試合中で今夜に入っている人は消えられない。今夜に入っていれば、主催者が外したのと同じ扱いで今夜の一覧に残す
+   * （結果の画面の「誰が捕まえたか」が名前ごと消えないように。合い鍵は捨てる）。新しい夜で一覧から消える
    */
   private onLeave(
     m: Member,
@@ -1161,17 +1201,33 @@ export class GameRoom extends DurableObject<Env> {
   ): Response {
     if (this.inMatchTonight(m.pid)) return fail('busy', 409);
     const gone: Who = { pid: m.pid, num: m.num, name: GONE_NAME };
+    const p = this.people.get(m.pid);
+    const deadKey = randomKey();
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(`DELETE FROM members WHERE pid = ?`, m.pid);
-      this.sql.exec(`DELETE FROM participants WHERE pid = ?`, m.pid);
+      if (p) {
+        this.sql.exec(`UPDATE participants SET removed = 1, name = ?, key = ? WHERE pid = ?`, GONE_NAME, deadKey, m.pid);
+      }
       this.sql.exec(`DELETE FROM handoffs WHERE mid = ?`, m.pid);
       this.sql.exec(`UPDATE events SET name = ? WHERE pid = ?`, GONE_NAME, m.pid);
       this.sql.exec(`UPDATE events SET other_name = ? WHERE other_pid = ?`, GONE_NAME, m.pid);
+      // 記録の中身に残っている打った名前・前の名前も消す
+      this.sql.exec(
+        `UPDATE events SET data = json_set(data, '$.from', ?) WHERE pid = ? AND kind = 'rename' AND json_valid(data)`,
+        GONE_NAME,
+        m.pid,
+      );
+      this.sql.exec(
+        `UPDATE events SET data = json_set(data, '$.typed', ?) WHERE pid = ? AND kind IN ('taken', 'reclaim-ask') AND json_valid(data)`,
+        GONE_NAME,
+        m.pid,
+      );
+      this.sql.exec(`UPDATE photos SET name = ? WHERE pid = ?`, GONE_NAME, m.pid);
       this.log('leave', { p: gone, at: now });
     });
     this.members.delete(m.pid);
-    if (this.memberByName.get(m.nameKey) === m) this.memberByName.delete(m.nameKey);
-    this.people.delete(m.pid);
+    this.forgetName(m);
+    for (const ph of this.photos.values()) if (ph.pid === m.pid) ph.name = GONE_NAME;
     for (const { ws, att } of this.socketsOf(m.pid)) {
       delete att.pid;
       delete att.mid;
@@ -1187,9 +1243,30 @@ export class GameRoom extends DurableObject<Env> {
       ws.serializeAttachment(att);
       this.send(ws, { t: 'reclaim', status: 'denied', name: m.name });
     }
-    this.scheduleBroadcast();
+    if (p) {
+      p.removed = true;
+      p.name = GONE_NAME;
+      p.key = deadKey;
+      // 主催者が外したときと同じ：走っていれば止め、外にいた最後の逃走者なら全員が牢屋にいることになる
+      this.endRun(p.pid, now, 'out');
+      if (!this.checkAllCaught(now, now)) this.broadcastNow();
+      this.refreshAutoResult();
+    } else {
+      this.scheduleBroadcast();
+    }
     this.scheduleHostUpdate();
     return answer({ ok: true });
+  }
+
+  /** 名前の引き当てからこの人を外す。同じ名前の古い人が残っていれば、番号の小さい人に引き継ぐ */
+  private forgetName(m: Member): void {
+    if (this.memberByName.get(m.nameKey) !== m) return;
+    this.memberByName.delete(m.nameKey);
+    let next: Member | null = null;
+    for (const o of this.members.values()) {
+      if (o !== m && o.nameKey === m.nameKey && (!next || o.num < next.num)) next = o;
+    }
+    if (next) this.memberByName.set(next.nameKey, next);
   }
 
   // ---------- 参加者 ----------
@@ -1200,7 +1277,7 @@ export class GameRoom extends DurableObject<Env> {
    */
   private onJoin(ws: WebSocket, att: Attachment, rawName: unknown, now: number): void {
     const name = normalizeName(rawName);
-    if (!name) {
+    if (!name || isGoneName(name)) {
       this.send(ws, { t: 'unknown' });
       return;
     }
@@ -3143,6 +3220,11 @@ async function readLimited(request: Request, limit: number): Promise<ArrayBuffer
     at += c.byteLength;
   }
   return out.buffer;
+}
+
+/** 「消えた人」は名簿から消えた人の記録に使う名前なので、新しく名乗れない */
+function isGoneName(name: string): boolean {
+  return nameKey(name) === nameKey(GONE_NAME);
 }
 
 function photoOf(r: PhotoRow): PhotoMeta {
