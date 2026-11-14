@@ -408,6 +408,7 @@ export class GameClient {
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      area?: [number, number][] | null;
       pid?: string;
       by?: string;
       rid?: string;

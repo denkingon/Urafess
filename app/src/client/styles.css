@@ -506,3 +506,39 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 
 .mission-free-pick { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--quiet); }
 .mission-free-pick select { min-height: 44px; font-size: 16px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--field); color: var(--ink); }
+
+/* 遊ぶ範囲：地図の外を暗く、線は月白の点線。描いている途中は蓄光。外にいる人は朱の輪 */
+.ov-area-shade { fill: #000; fill-opacity: 0.68; }
+.ov-area-line { fill: none; stroke: #f1ede4; stroke-width: 2.5; stroke-dasharray: 8 5; stroke-linejoin: round; }
+.ov-area-line.is-old { stroke-opacity: 0.4; }
+.ov-draft-line { fill: rgba(184, 255, 90, 0.08); stroke: #b8ff5a; stroke-width: 2.5; stroke-linejoin: round; }
+.ov-draft-pt { fill: #b8ff5a; stroke: #0b0c10; stroke-width: 2; }
+.ov-out { fill: none; stroke: var(--shu, #ff6a3d); stroke-width: 3; }
+@media (prefers-reduced-motion: no-preference) {
+  .ov-out { animation: area-blink 0.9s steps(2, start) infinite; }
+}
+@keyframes area-blink { to { visibility: hidden; } }
+.ov.is-tappable { cursor: crosshair; touch-action: manipulation; }
+
+/* 範囲の外：画面のふちが朱に脈打ち、戻る向きの矢印と距離 */
+.area-out {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 14px;
+  background: var(--shu, #ff6a3d); color: #0b0c10; flex: none;
+}
+.area-out[hidden] { display: none; }
+.area-out-arrow { width: 52px; height: 52px; flex: none; fill: #0b0c10; transition: transform 0.3s ease-out; }
+.area-out-text { display: flex; flex-direction: column; gap: 2px; font-size: 16px; line-height: 1.3; }
+.area-out-text b { font-size: 20px; font-weight: 900; }
+.is-out { box-shadow: inset 0 0 0 6px var(--shu, #ff6a3d); }
+@media (prefers-reduced-motion: no-preference) {
+  .is-out { animation: area-edge 1s ease-in-out infinite alternate; }
+}
+@keyframes area-edge { from { box-shadow: inset 0 0 0 3px var(--shu, #ff6a3d); } to { box-shadow: inset 0 0 0 10px var(--shu, #ff6a3d); } }
+
+/* 主催者：範囲を描く */
+.area-host .area-map { height: min(110vw, 520px); }
+.area-host .area-map .ov { height: 100%; }
+.area-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.area-btns button { flex: 1 1 30%; min-height: 44px; font-size: 16px; }
+.area-btns button.primary { flex-basis: 100%; font-weight: 900; }
+.area-host.is-locked .area-map { opacity: 0.6; }

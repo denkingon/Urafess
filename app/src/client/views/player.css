@@ -87,6 +87,9 @@
 
 .player .gl { display: block; flex: 0 0 auto; }
 
+/* 開いてすぐ：最初の返事が来るまでは闇のまま（何も描かない） */
+.phone.player.is-booting > * { visibility: hidden; }
+
 /* 夜の最後：SEE YOU AGAIN だけ */
 .player .p-end { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; text-align: center; font-size: clamp(calc(var(--min) * 1.2), 16vw, 88px); line-height: 1.1; letter-spacing: .04em; }
 .player .p-end[hidden] { display: none; }

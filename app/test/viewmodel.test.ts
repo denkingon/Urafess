@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { GameView, MeView } from '../src/shared/protocol';
 import { START_LEAD_MS } from '../src/shared/rules';
 import { pauseTimer, startTimer } from '../src/shared/schedule';
-import { FAREWELL, hostStatus, participantView } from '../src/shared/viewmodel';
+import { FAREWELL, hostStatus, participantView, BOOT_QUIET_MS, bootQuiet } from '../src/shared/viewmodel';
 
 const D = [20_000, 60_000, 300_000, 120_000];
 
@@ -183,5 +183,15 @@ describe('参加者の画面（キャンバスの Phone に渡す中身）', () 
       const host = game({ stage: 'result', result: 'oni', resultAuto: false, counts: { oni: 3, runner: 7, total: 10, caught: 4 } });
       expect(participantView(host, oni, 0, true).big).toBe('鬼の勝ち');
     });
+  });
+});
+
+describe('開いてすぐの画面', () => {
+  it('最初の返事が来るまでは何も描かない。返事が来たら・待っても来なければ・圏外なら描く', () => {
+    expect(bootQuiet(false, 0, true)).toBe(true);
+    expect(bootQuiet(false, BOOT_QUIET_MS - 1, true)).toBe(true);
+    expect(bootQuiet(true, 10, true)).toBe(false);
+    expect(bootQuiet(false, BOOT_QUIET_MS, true)).toBe(false);
+    expect(bootQuiet(false, 0, false)).toBe(false);
   });
 });

@@ -235,3 +235,6 @@ export const RESCUE_GAP_MS = 3_000;
 
 /** 「助けて」「助ける」の長押しが重なったかを見るために、離した長押しを覚えておく時間 */
 export const RESCUE_HOLD_KEEP_MS = 10_000;
+
+/** キャンパスの真ん中（範囲の頂点の打ち間違いを見分ける基準） */
+export const CAMPUS_CENTER = { lat: (CAMPUS_BOX.north + CAMPUS_BOX.south) / 2, lon: (CAMPUS_BOX.west + CAMPUS_BOX.east) / 2 } as const;
