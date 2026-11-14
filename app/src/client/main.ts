@@ -61,8 +61,8 @@ if (isLab) {
   if (!token) showTokenForm();
   else startHost(token);
 } else {
-  // 背景の地図（試作）：?bg=map のときだけ、参加者の画面の後ろに SFC の地図を敷く
-  if (params.get('bg') === 'map') mountBackdrop();
+  // 背景の地図：参加者の画面の後ろに SFC の地図を敷く（?bg=off で消せる）
+  if (params.get('bg') !== 'off') mountBackdrop();
   const path = installPath();
   if (path === 'line' && escapeLine()) {
     // LINE が外のブラウザで開き直す。この画面はこのまま閉じられる
