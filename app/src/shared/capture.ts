@@ -20,9 +20,11 @@ import { positionAt, type Timer } from './schedule';
 /**
  * どうやって記録されたか（選ばれた鬼が持っていた一番強い手がかり）。
  * sound＝音を拾った、together＝同時に長押し、nominated＝鬼が手動で選んだ、near＝前後に長押し、
- * manual＝逃走者が手動の一覧から選んだ（ほかの手がかり無し）、host＝主催者が手で
+ * manual＝逃走者が手動の一覧から選んだ（ほかの手がかり無し）、host＝主催者が手で、
+ * out＝遊ぶ範囲の外に20秒いて失格（牢屋の仲間の助けでは出られない）、
+ * reported＝失格したあと牢屋に出頭した（ふつうの牢屋の人と同じ：仲間の助けで出られる）
  */
-export type CaptureVia = 'sound' | 'together' | 'nominated' | 'near' | 'manual' | 'host';
+export type CaptureVia = 'sound' | 'together' | 'nominated' | 'near' | 'manual' | 'host' | 'out' | 'reported';
 
 export const VIA_NAME: Record<CaptureVia, string> = {
   sound: '音',
@@ -31,6 +33,8 @@ export const VIA_NAME: Record<CaptureVia, string> = {
   near: '前後に長押し',
   manual: '手動',
   host: '主催者',
+  out: '範囲の外（失格）',
+  reported: '範囲の外（出頭済み）',
 };
 
 /** 逃走者に見せる候補（鬼）。候補でない鬼の名前は送らない（役は本人にしか見せない） */

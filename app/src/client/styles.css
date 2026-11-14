@@ -552,6 +552,15 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .ov-area-shade { fill: #000; fill-opacity: 0.68; }
 .ov-area-line { fill: none; stroke: #f1ede4; stroke-width: 2.5; stroke-dasharray: 8 5; stroke-linejoin: round; }
 .ov-area-line.is-old { stroke-opacity: 0.4; }
+/* 範囲の縮小：元の線は薄く、縮んだ線は実線。予告中の行き先は蓄光の点線（動く） */
+.ov-area-line.is-past { stroke-opacity: 0.35; }
+.ov-zone-shade { fill: #000; fill-opacity: 0.45; }
+.ov-zone-line { fill: none; stroke: #f1ede4; stroke-width: 3; stroke-linejoin: round; }
+.ov-zone-next { fill: none; stroke: var(--chikko, #c8ff63); stroke-width: 2.5; stroke-dasharray: 6 6; stroke-linejoin: round; animation: zone-march 1s linear infinite; }
+.ov-zone-next.is-preview { animation: none; stroke-opacity: 0.8; }
+.ov-zone-center { stroke: var(--chikko, #c8ff63); stroke-width: 2.5; stroke-linecap: round; }
+@keyframes zone-march { to { stroke-dashoffset: -12; } }
+@media (prefers-reduced-motion: reduce) { .ov-zone-next { animation: none; } }
 .ov-draft-line { fill: rgba(184, 255, 90, 0.08); stroke: #b8ff5a; stroke-width: 2.5; stroke-linejoin: round; }
 .ov-draft-pt { fill: #b8ff5a; stroke: #0b0c10; stroke-width: 2; }
 .ov-out { fill: none; stroke: var(--shu, #ff6a3d); stroke-width: 3; }
@@ -563,18 +572,86 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 
 /* 範囲の外：画面のふちが朱に脈打ち、戻る向きの矢印と距離 */
 .area-out {
-  display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 14px;
-  background: var(--shu, #ff6a3d); color: #0b0c10; flex: none;
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px 16px; border-radius: 14px;
+  background: var(--shu, #ff6a3d); color: #0b0c10; flex: none; position: relative; overflow: hidden;
 }
 .area-out[hidden] { display: none; }
 .area-out-arrow { width: 52px; height: 52px; flex: none; fill: #0b0c10; transition: transform 0.3s ease-out; }
-.area-out-text { display: flex; flex-direction: column; gap: 2px; font-size: 16px; line-height: 1.3; }
+.area-out-text { display: flex; flex-direction: column; gap: 2px; font-size: 16px; line-height: 1.3; flex: 1 1 auto; min-width: 0; }
 .area-out-text b { font-size: 20px; font-weight: 900; }
+/* 失格までの数え：右に大きい秒、下に減っていく棒 */
+.area-out-dq { flex: none; display: flex; flex-direction: column; align-items: center; line-height: 1; gap: 2px; min-width: 64px; }
+.area-out-dq b { font-size: 44px; font-variant-numeric: tabular-nums; }
+.area-out-dq span, .area-out-dq .ja, .area-out-dq .en { font-size: 16px; font-weight: 700; line-height: 1.15; text-align: center; }
+.area-out-dq .en.u:not(.solo) { font-size: 16px; opacity: 1; }
+.area-out-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: rgba(11, 12, 16, 0.78); transform-origin: left center; }
+.is-dq-soon .area-out-dq b { animation: dq-blink 1s steps(2, start) infinite; }
+@keyframes dq-blink { 50% { opacity: 0.25; } }
 .is-out { box-shadow: inset 0 0 0 6px var(--shu, #ff6a3d); }
 @media (prefers-reduced-motion: no-preference) {
   .is-out { animation: area-edge 1s ease-in-out infinite alternate; }
 }
+@media (prefers-reduced-motion: no-preference) {
+  .is-dq-soon.is-out { animation-duration: 0.35s; }
+}
 @keyframes area-edge { from { box-shadow: inset 0 0 0 3px var(--shu, #ff6a3d); } to { box-shadow: inset 0 0 0 10px var(--shu, #ff6a3d); } }
+
+/* 失格：参加者の画面いっぱいに被せる。闇に朱の × と「失格」 */
+.dq {
+  position: fixed; inset: 0; z-index: 60; background: #0b0c10; color: #f1ede4;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; text-align: center;
+  padding: calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
+  box-shadow: inset 0 0 0 8px var(--shu, #ff6a3d);
+}
+.dq[hidden] { display: none; }
+.dq-x { width: min(40vw, 26dvh, 180px); height: min(40vw, 26dvh, 180px); flex: none; }
+.dq-x circle { fill: none; stroke: var(--shu, #ff6a3d); stroke-width: 7; }
+.dq-x path { fill: none; stroke: var(--shu, #ff6a3d); stroke-width: 11; stroke-linecap: round; }
+.dq-word { display: flex; flex-direction: column; align-items: center; gap: 6px; line-height: 1; }
+.dq-word .ja { font-size: clamp(56px, 22vw, 104px); letter-spacing: 0.08em; padding-left: 0.08em; }
+.dq-word .en { font-size: clamp(19.2px, 8vw, 40px); color: var(--shu, #ff6a3d); opacity: 1; letter-spacing: 0.08em; }
+.dq-why { margin: 0; display: flex; flex-direction: column; gap: 4px; font-size: 18px; line-height: 1.4; font-weight: 700; color: #a29d93; }
+.dq-why .en { font-size: 16px; font-weight: 400; }
+.dq-order { margin: 6px 0 0; display: flex; flex-direction: column; gap: 2px; font-size: 24px; line-height: 1.3; font-weight: 900; color: #f1ede4; }
+.dq-order .en { font-size: 16px; font-weight: 400; color: #a29d93; }
+/* 牢屋に着いた：長押し。押している間、下から朱が満ちる */
+.dq-report {
+  position: relative; overflow: hidden; width: min(100%, 340px); min-height: 84px; border-radius: 16px;
+  border: 3px solid var(--shu, #ff6a3d); background: transparent; color: #f1ede4; font: inherit;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 10px 14px;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: pointer;
+}
+.dq-report-fill { position: absolute; inset: 0; background: var(--shu, #ff6a3d); transform: scaleX(0); transform-origin: left center; transition: transform 0.18s ease-out; }
+.dq-report.is-holding .dq-report-fill { transform: scaleX(1); transition: transform 1.5s linear; }
+.dq-report.is-holding { color: #0b0c10; }
+.dq-report-text, .dq-report-hint { position: relative; display: flex; flex-direction: column; align-items: center; line-height: 1.2; }
+.dq-report-text .ja { font-size: 24px; font-weight: 900; }
+.dq-report-text .en { font-size: 19.2px; }
+.dq-report-hint { font-size: 16px; opacity: 0.85; }
+.dq-report-hint .en { font-size: 16px; }
+.area-out.no-dq .area-out-dq, .area-out.no-dq .area-out-bar { display: none; }
+/* 範囲が縮む知らせ（全体の地図の上に重ねる1行）。予告は蓄光の枠、縮んでいる間は蓄光で塗る */
+.zone-chip { position: absolute; left: 8px; right: 8px; top: 8px; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 2px solid var(--chikko, #c8ff63); border-radius: 10px; color: var(--chikko, #c8ff63); background: rgba(11, 12, 16, 0.92); }
+.zone-chip[hidden] { display: none; }
+.zone-chip-icon { width: 22px; height: 22px; flex: none; }
+.zone-chip-icon rect { fill: none; stroke: currentColor; stroke-width: 2; }
+.zone-chip-icon rect + rect { stroke-dasharray: 3 2; }
+.zone-chip-word { flex: 1 1 auto; min-width: 0; font-size: 16px; font-weight: 800; line-height: 1.2; }
+.zone-chip-word .en { font-size: 16px; }
+.zone-chip-sec { flex: none; font-size: 28px; font-variant-numeric: tabular-nums; line-height: 1; }
+.zone-chip[data-kind="move"] { background: var(--chikko, #c8ff63); color: #0b0c10; }
+.shrink-host { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.shrink-mission { display: flex; align-items: flex-start; gap: 8px; text-align: left; font-size: 16px; line-height: 1.4; }
+.shrink-mission input { width: 22px; height: 22px; flex: none; margin: 1px 0 0; }
+.area-host.is-picking .area-map { outline: 3px solid var(--chikko, #c8ff63); outline-offset: 2px; }
+.zone-chip[data-kind="warn"] .zone-chip-icon rect + rect { animation: zone-march 1s linear infinite; }
+@media (prefers-reduced-motion: no-preference) {
+  .dq:not([hidden]) .dq-x { animation: dq-in 0.45s cubic-bezier(.2, 1.4, .4, 1) both; }
+  .dq:not([hidden]) .dq-word { animation: dq-rise 0.5s 0.12s ease-out both; }
+  .dq:not([hidden]) .dq-why { animation: dq-rise 0.5s 0.3s ease-out both; }
+}
+@keyframes dq-in { from { transform: scale(2.2) rotate(-14deg); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes dq-rise { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
 
 /* 主催者：範囲を描く */
 .area-host .area-map { height: min(110vw, 520px); }

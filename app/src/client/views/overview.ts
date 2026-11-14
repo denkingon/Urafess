@@ -47,6 +47,11 @@ export interface OvInput {
   frameBase?: 'area' | 'campus';
   /** 自分が範囲の外にいる */
   meOut?: boolean;
+  /**
+   * 範囲の縮小：今の縮んだ形（inner）・予告中の行き先（next）・縮む先の点（center）。
+   * preview は主催者が描くときに見せる「最後はここまで縮む」形
+   */
+  zone?: { inner?: [number, number][] | null; next?: [number, number][] | null; center?: [number, number] | null; preview?: [number, number][] | null } | null;
 }
 
 export interface OverviewOptions {
@@ -217,6 +222,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       input.frameBase,
       input.meOut,
       input.points.map((p) => p.out),
+      input.zone,
     ]);
     if (!force && key === lastKey) return;
     lastKey = key;
@@ -287,6 +293,27 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
         svg('path', { d: `M-4,-4H${w + 4}V${h + 4}H-4Z${d}`, class: 'ov-area-shade', 'fill-rule': 'evenodd' }),
         svg('path', { d, class: `ov-area-line${draftPts.length && !draftJail ? ' is-old' : ''}` }),
       );
+    }
+    // 範囲の縮小：縮んだ形の外をもう一段暗く（元の範囲の外は二重に暗い）、今の線は実線。予告中の行き先は蓄光の点線
+    const zone = input.zone;
+    const ringD = (pts: [number, number][]) =>
+      pts.map(([lat, lon], i) => {
+        const q = px({ lat, lon });
+        return `${i ? 'L' : 'M'}${q.x.toFixed(1)},${q.y.toFixed(1)}`;
+      }).join('') + 'Z';
+    if (zone?.inner && zone.inner.length >= 3) {
+      const d = ringD(zone.inner);
+      areaG.querySelector('.ov-area-line')?.classList.add('is-past');
+      areaG.append(
+        svg('path', { d: `M-4,-4H${w + 4}V${h + 4}H-4Z${d}`, class: 'ov-zone-shade', 'fill-rule': 'evenodd' }),
+        svg('path', { d, class: 'ov-zone-line' }),
+      );
+    }
+    if (zone?.next && zone.next.length >= 3) areaG.append(svg('path', { d: ringD(zone.next), class: 'ov-zone-next' }));
+    if (zone?.preview && zone.preview.length >= 3) areaG.append(svg('path', { d: ringD(zone.preview), class: 'ov-zone-next is-preview' }));
+    if (zone?.center && (zone.next || zone.preview)) {
+      const q = px({ lat: zone.center[0], lon: zone.center[1] });
+      areaG.append(svg('path', { d: `M${(q.x - 7).toFixed(1)},${q.y.toFixed(1)}h14M${q.x.toFixed(1)},${(q.y - 7).toFixed(1)}v14`, class: 'ov-zone-center' }));
     }
     // 牢屋：薄い面と実線（字は置かない。人の印や名前の邪魔になるため）
     if (jailPts.length >= 3) {

@@ -1,4 +1,5 @@
 import type { Area } from './area';
+import type { ShrinkLive, ShrinkPlan } from './shrink';
 import type { Candidate, CaptureVia } from './capture';
 import type { CastStat } from './cast';
 import type { PhotoStatus } from './mission';
@@ -56,6 +57,10 @@ export interface GameView {
   micMode?: 'always' | 'hold';
   /** 遊ぶ範囲（主催者がゲームの前に地図に描いた多角形）。null＝範囲なし。古いサーバーからは来ない */
   area?: Area | null;
+  /** 範囲の縮み方（主催者が試合の前に決める）。古いサーバーからは来ない */
+  shrinkPlan?: ShrinkPlan;
+  /** このラウンドの縮小（試合を始めると決まる。縮む先と段）。範囲が無い・始める前は null。古いサーバーからは来ない */
+  shrink?: ShrinkLive | null;
   /** 牢屋の場所（遊ぶ範囲と同じく、主催者がゲームの前に地図に描いた多角形）。null＝決めていない。古いサーバーからは来ない */
   jail?: Area | null;
   /** 配役の決め方（wish＝希望を聞く／lot＝くじだけ）。古いサーバーからは来ない（そのときは希望の板を出さない） */
@@ -301,6 +306,10 @@ export type HostOp =
   /** 遊ぶ範囲を決める（area＝頂点の並び、null で範囲なし）。試合中（時間が0になる前）は変えられない */
   /** 遊ぶ範囲・牢屋の場所を決める（layer で選ぶ。area＝頂点の並び、null でなし）。試合中（時間が0になる前）は変えられない */
   | 'area'
+  /** 範囲の縮み方を決める（plan）。試合中（時間が0になる前）は変えられない */
+  | 'shrink-plan'
+  /** 範囲を今すぐ1段縮める（予告のあと縮む）。逃げ始めてからゲームの終わりまで */
+  | 'shrink-now'
   | 'remove'
   /** 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。名簿は残る */
   | 'clear'
@@ -366,6 +375,8 @@ export type ClientMsg =
       on?: boolean;
       /** 遊ぶ範囲の頂点（[緯度, 経度] の並び）。null で範囲なし */
       area?: [number, number][] | null;
+      /** 範囲の縮み方 */
+      plan?: ShrinkPlan;
       /** area で決めるのはどれか（既定は遊ぶ範囲） */
       layer?: 'area' | 'jail';
       pid?: string;
@@ -412,6 +423,16 @@ export type ClientMsg =
   | { t: 'sense'; motion: SenseState; geo: SenseState }
   /** 全体の地図：自分の位置（ゲームの段階の間だけ MATES_SEND_EVERY_MS ごとに送る。段階の外・捕まった人の分は、サーバーが捨てる） */
   | { t: 'pos'; lat: number; lon: number; acc: number }
+  /**
+   * 遊ぶ範囲の外に20秒いて失格になった（スマホが自分で決める）。逃走者は「捕まった」扱いで牢屋の助けでは出られず、鬼は記録だけ。
+   * 同じ配役のうちは何度送っても1回だけ数える（つなぎ直しの送り直し用）
+   */
+  | { t: 'dq' }
+  /**
+   * 失格したあと、牢屋に出頭した（本人が長押しで伝える）。逃走者は「捕まった」のまま、ふつうの牢屋の人になる（仲間の助けで出られる）。
+   * 同じ配役のうちに失格していなければ無視する
+   */
+  | { t: 'dq-ok' }
   /**
    * 配役の希望：次の配役でなりたい役（null＝どちらでも）。配役の前（待合室・結果発表）と、見学の人だけ変えられる。
    * 役が決まってからゲームが終わるまでの分は、サーバーが捨てて今の状態を送り直す
