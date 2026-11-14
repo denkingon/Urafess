@@ -6,6 +6,7 @@ export { GameRoom } from './room';
 
 /**
  * /api/game/<ゲームID>/ws    … 参加者・主催者がつなぐ WebSocket
+ * /api/game/<ゲームID>/key   … 主催者の合言葉が合っているかだけを答える（204 か 403）
  * /api/game/<ゲームID>/debug … 主催者の合言葉つきで、全員の役を含む中身を見る
  * /api/game/<ゲームID>/log   … 主催者の合言葉つきで、1イベント＝1行の記録を CSV（?format=json で JSON）で書き出す
  * /api/game/<ゲームID>/photo … ミッションの写真を送る（POST）・/photo/<印> で取り出す（GET）
