@@ -366,17 +366,37 @@ def js_data():
     }
 
 
+ARC_SPAN = ('<sc-for list="{{%s}}" as="uc" hint-placeholder-count="%d"><span style="position: absolute; left: 0px; top: 0px; font-size: {{uc.fs}}px; line-height: 1; '
+            'font-weight: {{uc.fw}}; color: {{uc.col}}; opacity: {{uc.op}}; white-space: pre; transform: translate({{uc.x}}px, {{uc.y}}px) translate(-50%%, -50%%); pointer-events: none">{{uc.c}}</span></sc-for>\n')
+
+
 def ura_text():
-    arc = g3.arc_text
+    """裏の字。ねじりに合わせて輪ごとに回るので、スクリプトが置く（置き方は gen9.py の arcText）"""
+    return ARC_SPAN % ("uraChars", 170)
+
+
+def ura_entries():
+    """裏の字の表：txt・a（ねじる前の角度）・R・fs・col（軸の名前か色）・fw・op"""
     out = []
     for u in D.URA_SOLID:
-        out.append(arc(u["txt"], ura_angle(u), RR[u["ring"]], 20 if u["ring"] != "ita" else 17, "{{" + u["col"] + "}}", 900))
+        out.append({"txt": u["txt"], "a": round(ura_angle(u), 2), "R": RR[u["ring"]], "fs": 20 if u["ring"] != "ita" else 17, "col": u["col"], "fw": 900, "op": 1})
     for u in D.URA_PLANNED:
-        out.append(arc(u["txt"], ura_angle(u), RR[u["ring"]], 20 if u["ring"] != "ita" else 15, "{{" + u["col"] + "}}", 700).replace("font-weight: 700;", "font-weight: 700; opacity: 0.55;"))
+        out.append({"txt": u["txt"], "a": round(ura_angle(u), 2), "R": RR[u["ring"]], "fs": 20 if u["ring"] != "ita" else 15, "col": u["col"], "fw": 700, "op": 0.55})
     for u in D.URA_EMPTY:
-        out.append(arc(u["txt"], ura_angle(u), RR[u["ring"]], 17, "#6E7177", 700))
-    out.append(arc(D.MOTTO["txt"], ura_angle(D.MOTTO), RR[D.MOTTO["ring"]], 22, "#ECECEA", 900))
-    return "\n".join(out) + "\n"
+        out.append({"txt": u["txt"], "a": round(ura_angle(u), 2), "R": RR[u["ring"]], "fs": 17, "col": "#6E7177", "fw": 700, "op": 1})
+    out.append({"txt": D.MOTTO["txt"], "a": round(ura_angle(D.MOTTO), 2), "R": RR[D.MOTTO["ring"]], "fs": 22, "col": "#ECECEA", "fw": 900, "op": 1})
+    return out
+
+
+def ura_names():
+    out = [{"txt": "いた人 ─ のべ150人・約10回", "a": RLA, "R": RR["ita"], "fs": 15, "col": "#A3A3A0", "fw": 700, "op": 1}]
+    for n, r in [("イータ", "eta"), ("SFC", "sfc"), ("世界", "world")]:
+        out.append({"txt": n, "a": RLA, "R": RR[r], "fs": 15, "col": "#A3A3A0", "fw": 700, "op": 1})
+    out.append({"txt": "ここまで届いたものが、縁を越えて表で次の回の妄想になる →", "a": -90.0, "R": RR["world"], "fs": 18, "col": "#ECECEA", "fw": 700, "op": 1})
+    return out
+
+
+STAGE_LABELS = [("妄想", 340), ("問い", 275), ("決定", 210), ("試作", 145), ("実地", 85), ("段階不明", RU)]
 
 
 def band_html():
@@ -458,11 +478,8 @@ body{{margin:0}}
             for key, op in [("ita", 0.22), ("eta", 0.22), ("sfc", 0.22), ("world", 0.36)]:
                 g.append(f'<circle cx="{CX}" cy="{CY}" r="{RR[key]}" fill="none" stroke="rgba(236,236,234,{op})" stroke-width="1" stroke-dasharray="2 7"></circle>')
         g.append(f'<circle cx="{CX}" cy="{CY}" r="{SEAM}" fill="none" stroke="#4A4D54" stroke-width="1.5"></circle>')
-        for s in D.SECTORS:
-            a0 = SEC[s][0]
-            a = a0 if front else back(a0)
-            t = math.radians(a)
-            g.append(f'<line x1="{CX + 34 * math.cos(t):.1f}" y1="{CY + 34 * math.sin(t):.1f}" x2="{CX + SEAM * math.cos(t):.1f}" y2="{CY + SEAM * math.sin(t):.1f}" stroke="#2A2C31" stroke-width="1" stroke-dasharray="2 6"></line>')
+        # 時間帯の境目：渦の腕（ねじりに合わせてスクリプトが描く）
+        g.append('<path d="{{%s}}" fill="none" stroke="#3E4148" stroke-width="1" stroke-dasharray="2 5"></path>' % ("armsD" if front else "armsUraD"))
         g.append("</svg>\n")
         return "".join(g)
 
@@ -480,8 +497,7 @@ body{{margin:0}}
     for cls in ("gather", "gather d2", "gather d3"):
         o.append(f'<span class="{cls}" style="position: absolute; left: {CX - SEAM}px; top: {CY - SEAM}px; width: {2 * SEAM}px; height: {2 * SEAM}px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid rgba(236,236,234,0.5); pointer-events: none"></span>\n')
     o.append(rim(True))
-    for name, r in [("妄想", 340), ("問い", 275), ("決定", 210), ("試作", 145), ("実地", 85), ("段階不明", RU)]:
-        o.append(arc(name, STAGE_RAY, r, 13, "#7A7D83", 400) + "\n")
+    o.append(ARC_SPAN % ("stageChars", 16))
     o.append(f'<div onWheel="{{{{onWheel}}}}" style="position: absolute; left: 0px; top: 0px; width: {W}px; height: 1470px">\n')
     o.append(
         f'<svg width="{W}" height="1470" viewBox="0 0 {W} 1470" aria-hidden="true" style="position: absolute; left: 0px; top: 0px; width: {W}px; height: 1470px; pointer-events: none">'
@@ -509,11 +525,8 @@ body{{margin:0}}
     for cls in ("spread", "spread d2", "spread d3"):
         o.append(f'<span class="{cls}" style="position: absolute; left: {CX - SEAM}px; top: {CY - SEAM}px; width: {2 * SEAM}px; height: {2 * SEAM}px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid rgba(236,236,234,0.6); pointer-events: none"></span>\n')
     o.append(rim(False))
-    o.append(arc("いた人 ─ のべ150人・約10回", RLA, RR["ita"], 15, "#A3A3A0", 700) + "\n")
-    for name, key in [("イータ", "eta"), ("SFC", "sfc"), ("世界", "world")]:
-        o.append(arc(name, RLA, RR[key], 15, "#A3A3A0", 700) + "\n")
+    o.append(ARC_SPAN % ("uraNames", 50))
     o.append(ura_text())
-    o.append(arc("ここまで届いたものが、縁を越えて表で次の回の妄想になる →", -90.0, RR["world"], 18, "#ECECEA", 700) + "\n")
     o.append(
         f'<button type="button" onClick="{{{{toOmote}}}}" aria-label="表に戻る" style="position: absolute; left: {CX - 34}px; top: {CY - 34}px; width: 68px; height: 68px; box-sizing: border-box; border-radius: 34px; border: 1px solid #ECECEA; background: #ECECEA; color: #101114; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; padding: 0px; font-family: inherit">'
         '<span style="font-size: 13px; line-height: 15px; font-weight: 900">本番の夜</span><span style="font-size: 10px; line-height: 12px">表へ戻る</span></button>\n'
@@ -525,7 +538,7 @@ body{{margin:0}}
     o.append(
         '<sc-if value="{{isOmote}}" hint-placeholder-val="{{ true }}">'
         '<div style="position: absolute; left: 64px; top: 44px; display: flex; flex-direction: column; gap: 4px; pointer-events: none"><span style="font-size: 40px; line-height: 48px; font-weight: 900; letter-spacing: 0.02em">夜の時計</span><span style="font-size: 18px; line-height: 24px; font-weight: 700; color: #A3A3A0">表 ─ その時間帯のために準備しているもの（11/06）</span></div>'
-        '<div style="position: absolute; left: 64px; top: 150px; width: 400px; display: flex; flex-direction: column; gap: 12px; pointer-events: none"><span style="font-size: 12px; line-height: 16px; color: #A3A3A0">角度＝当日の流れ　中心に近いほど仕上がり　中心を抜けると裏へ</span>'
+        '<div style="position: absolute; left: 64px; top: 150px; width: 400px; display: flex; flex-direction: column; gap: 12px; pointer-events: none"><span style="font-size: 12px; line-height: 16px; color: #A3A3A0">角度＝当日の流れ（縁の名前から、渦の腕に沿って中心へ）　中心に近いほど仕上がり　中心を抜けると裏へ</span>'
         '<span style="display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 15px; line-height: 20px; font-weight: 700"><span style="color: {{kabe}}">壁突破</span><span style="color: {{hako}}">箱庭建築</span><span style="color: {{yume}}">夢・妄想・神</span><span style="color: {{gu}}">物理</span></span>'
         '<span style="display: flex; align-items: baseline; gap: 14px; color: #ECECEA"><span style="font-size: 28px; line-height: 32px; font-weight: 900">無いと開けない</span><span style="font-size: 24px; line-height: 32px; font-weight: 700">核</span><span style="font-size: 17px; line-height: 32px; font-weight: 700">支える</span></span>'
         '<span style="font-size: 15px; line-height: 20px; font-weight: 700; color: #FFFFFF; text-shadow: 0 0 10px rgba(255,255,255,0.55), 0 0 26px rgba(255,255,255,0.22)">光る＝その日に手を入れた</span>'
@@ -567,6 +580,7 @@ body{{margin:0}}
 
     props = {k: {"editor": "color", "default": DEF[k], "section": "4軸の色"} for k in ["kabe", "hako", "yume", "gu"]}
     props["motion"] = {"editor": "enum", "options": ["当日だけ動く", "日付の間を直線で"], "default": "当日だけ動く", "section": "時間"}
+    props["twist"] = {"editor": "range", "default": D.TWIST, "min": -1.2, "max": 1.2, "step": 0.05, "section": "ねじり（0 でまっすぐ）"}
     props["$preview"] = {"width": W, "height": H}
     pj = json.dumps(props, ensure_ascii=False)
     assert "'" not in pj

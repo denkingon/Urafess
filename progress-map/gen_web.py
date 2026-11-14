@@ -38,7 +38,9 @@ button{font-family:inherit}
 .zoom{margin-left:auto}
 .tb{min-height:40px;min-width:40px;padding:0 14px;border-radius:8px;border:1px solid #34373E;background:#1C1E23;color:#C9C9C5;font-size:14px;line-height:20px;font-weight:700;cursor:pointer;white-space:nowrap}
 .tb[aria-pressed="true"],.tb[aria-selected="true"]{background:#ECECEA;color:#101114;border-color:#ECECEA}
-.tb:focus-visible,.bar input:focus-visible{outline:2px solid #FFFFFF;outline-offset:2px}
+.tb:focus-visible,.bar input:focus-visible,.tw input:focus-visible{outline:2px solid #FFFFFF;outline-offset:2px}
+.tw{display:flex;align-items:center;gap:8px;font-size:13px;line-height:18px;color:#A3A3A0;white-space:nowrap}
+.tw input{width:140px;height:40px;margin:0;accent-color:#ECECEA;cursor:pointer}
 .zl{font-size:13px;line-height:18px;color:#A3A3A0;min-width:44px;text-align:center;font-variant-numeric:tabular-nums}
 #wrap{overflow-x:auto;overflow-y:hidden;padding-bottom:92px}
 #stage{position:relative;overflow:hidden}
@@ -146,7 +148,7 @@ APP_JS = r"""
 (function () {
   var W = 1720, $ = function (id) { return document.getElementById(id); };
   var wrap = $('wrap'), stage = $('stage'), board = $('board'), styleEl = $('board-style');
-  var cur = null, vals = null, zoom = null, key = null, started = false;
+  var cur = null, vals = null, zoom = null, key = null, started = false, twist = null;
   var facs = {};
   Object.keys(BOARDS).forEach(function (k) { facs[k] = Array.prototype.map.call($(BOARDS[k].tpl).content.childNodes, make); });
   function fit() { return Math.max(0.2, Math.min(1, wrap.clientWidth / W)); }
@@ -181,6 +183,8 @@ APP_JS = r"""
     key = k;
     var B = BOARDS[k], comp = new B.C(), insts = null;
     if (t0 !== null) comp.state.t = t0;  // 見ていた日付のまま切りかえる
+    if (twist !== null) comp.props.twist = twist;
+    $('twbox').style.display = k === 'clock' ? '' : 'none';
     styleEl.textContent = B.css;
     var render = function () {
       vals = comp.renderVals();
@@ -206,6 +210,9 @@ APP_JS = r"""
   $('zin').addEventListener('click', function () { zoom = Math.min(2, (zoom === null ? fit() : zoom) * 1.25); layout(); });
   $('zout').addEventListener('click', function () { zoom = Math.max(0.2, (zoom === null ? fit() : zoom) / 1.25); layout(); });
   $('zfit').addEventListener('click', function () { zoom = null; layout(); });
+  var showTw = function () { $('twl').textContent = (+$('twist').value).toFixed(2); };
+  $('twist').addEventListener('input', function (ev) { twist = parseFloat(ev.target.value) || 0; showTw(); if (cur && key === 'clock') { cur.comp.props.twist = twist; cur.comp.forceUpdate(); } });
+  showTw();
   $('bprev').addEventListener('click', function () { if (vals) vals.prev(); });
   $('bnext').addEventListener('click', function () { if (vals) vals.next(); });
   $('bplay').addEventListener('click', function () { if (vals) vals.togglePlay(); });
@@ -248,6 +255,7 @@ def build():
 <button type="button" class="tb" role="tab" id="tab-flags" aria-selected="false">のぼり</button>
 </div>
 <span class="upd">{last} 更新</span>
+<label class="tw" id="twbox">ねじり<input id="twist" type="range" min="-1.2" max="1.2" step="0.05" value="{D.TWIST}"><span class="zl" id="twl"></span></label>
 <div class="zoom">
 <button type="button" class="tb" id="zout" aria-label="小さく">−</button>
 <span class="zl" id="zl">100%</span>
