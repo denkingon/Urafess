@@ -227,6 +227,7 @@
 .account .ac-top { display: flex; justify-content: flex-start; margin-left: -8px; }
 .account .ac-back { flex-direction: row !important; gap: 8px !important; text-decoration: none; color: var(--tsuki); }
 .account .ac-back .ja, .account .ac-back .en { display: inline; }
+.account .ac-due { margin: 4px 0 0; padding: 12px 14px; border: 1px solid color-mix(in srgb, #ff6a3d 55%, #2b2e38); border-radius: 12px; color: var(--tsuki); font-size: max(var(--min), 16px); font-weight: 700; line-height: 1.45; }
 .account .ac-name { margin: 4px 0 0; font-size: clamp(30px, 9vw, 40px); font-weight: 900; line-height: 1.2; overflow-wrap: anywhere; }
 .account .ac-h { margin: 18px 0 0; font-size: max(var(--min), 15px); color: var(--tsuki-muted); display: flex; gap: 10px; align-items: baseline; }
 .account .ac-h .ja, .account .ac-h .en { display: inline; }

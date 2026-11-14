@@ -188,6 +188,13 @@ export interface HostSummary {
   wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
   /** 配役の希望：次の配役で先に通る人（前に外れた人）の数 */
   wishPrio?: number;
+  /**
+   * 名前の見張り：今夜の人と、使えない言葉に引っかかる・主催者が手を入れた名簿の人。
+   * hit＝引っかかった言葉、state＝名前の状態、tonight＝今夜に入っている。古いサーバーは送らない
+   */
+  names?: { pid: string; num: number; name: string; hit: string | null; state: 'ok' | 'due' | 'shamed'; tonight: boolean }[];
+  /** 名前に使えない言葉：主催者が足した言葉と、最初から入っている言葉の数 */
+  bans?: { custom: string[]; builtin: number };
 }
 
 /**
@@ -268,7 +275,14 @@ export type HostOp =
    * 写真を見て決める（photo＝写真の印、ok=true で成功・false でやり直し）。決め直してもいい。
    * 成功のとき free=true なら牢屋の人も出す（n＝人数、省くと全員）。1枚の写真で出すのは最初の成功の1回だけ
    */
-  | 'judge';
+  | 'judge'
+  /** 名前を付け直させる（pid＝名簿の人）。付け直すまで名前は「名前を付け直し中」 */
+  | 'name-redo'
+  /** 名前を SHAME_NAME に切り替える（pid＝名簿の人）。本人は変えられない */
+  | 'name-shame'
+  /** 名前に使えない言葉を足す・消す（word） */
+  | 'ban-add'
+  | 'ban-remove';
 
 export type ClientMsg =
   /** 新しく名簿に入って、今夜に入る（名前が名簿にあれば taken が返る） */
@@ -301,6 +315,8 @@ export type ClientMsg =
       rid?: string;
       ok?: boolean;
       title?: string;
+      /** 名前に使えない言葉（ban-add・ban-remove） */
+      word?: string;
       photo?: string;
       free?: boolean;
       /** ミッション成功で出す人数（省くと全員） */
@@ -361,9 +377,12 @@ export interface RosterEntry {
 }
 
 export type ServerMsg =
-  | { t: 'welcome'; pid: string; key: string; num: number; name: string }
+  /** ns＝名前の状態（due＝主催者に付け直すよう言われた・shamed＝主催者が名前を変えた）。ふつうは付かない */
+  | { t: 'welcome'; pid: string; key: string; num: number; name: string; ns?: 'due' | 'shamed' }
   /** この合い鍵の人は名簿にいるが、今夜にはまだ入っていない（名前のボタンを出す） */
-  | { t: 'known'; name: string }
+  | { t: 'known'; name: string; ns?: 'due' | 'shamed' }
+  /** 入れた名前に使えない言葉が入っている（名前の入力に戻す） */
+  | { t: 'bad-name' }
   /** その名前は名簿のほかの人のもの（「前の◯◯？」と聞く） */
   | { t: 'taken'; name: string }
   /** 「前の◯◯に戻る」の行方。waiting＝主催者がつなぐのを待っている、denied＝主催者が断った */

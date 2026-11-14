@@ -94,7 +94,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   rolesBox.hidden = true;
   const lobbyNote = make('p', 'note hq-lobby-note');
   panel.map.append(old('[data-k="glow"]'), old('[data-k="area"]'));
-  panel.people.append(old('[data-k="asklist"]'), lobbyNote, rolesBox, old('[data-k="cap"]'), old('[data-k="duplist"]'));
+  panel.people.append(old('[data-k="asklist"]'), lobbyNote, rolesBox, old('[data-k="cap"]'), old('[data-k="duplist"]'), old('[data-k="names"]'));
   panel.mission.append(old('[data-k="missionPhoto"]'));
 
   // デッキ：時間（＋−）・鬼と逃走者（＋−）・鬼のマイク・固定の札／そろい具合／夜とやり直し／記録
@@ -318,6 +318,8 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       const onMap = (input.mates?.people ?? []).filter((m) => serverNow - m.at <= MATES_STALE_MS);
       const outside = areaPts && glowPhase(game, serverNow) === 'live' ? onMap.filter((m) => isFarOutside(areaPts, m)) : [];
       if (outside.length) items.push(`<span>範囲の外：${esc(outside.map((m) => m.name).join('・'))}</span><button type="button" data-go="map">地図</button>`);
+      const badNames = (host.names ?? []).filter((n) => n.hit);
+      if (badNames.length) items.push(`<span>気になる名前：${esc(badNames.map((n) => n.name).join('・'))}</span><button type="button" data-go="people">人</button>`);
       if (host.dupNames.length) items.push(`<span>同じ名前：${esc(host.dupNames.map((d) => d.name).join('・'))}</span><button type="button" data-go="people">人</button>`);
       if (!old('[data-k="old"]').hidden) items.push('<span>前の夜のまま。集める前に新しい夜を始める</span><button type="button" data-go="deck">デッキ</button>');
       once('strip', items.length ? `${items.length}|${items[0]}` : '', () => {
@@ -331,7 +333,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
           i.textContent = String(n);
         });
       badge('mission', pending.length);
-      badge('people', (host.reclaims ?? []).length + host.dupNames.length);
+      badge('people', (host.reclaims ?? []).length + host.dupNames.length + badNames.length);
       badge('map', outside.length);
 
       // 配役済み：役ごとの名前（捕獲と牢屋の一覧は、試合が始まってから出る）

@@ -27,6 +27,7 @@ import { createOverview } from './overview';
 import { AREA_MAX_PTS, AREA_MIN_PTS, isFarOutside } from '../../shared/area';
 import { distanceM } from '../../shared/run';
 import { bigFontSize } from './phone';
+import { esc } from '../ui';
 
 /** 主催者画面の大きい数字・文字の上限（「逃走者の勝ち」など長いときは枠に収まるまで縮める） */
 const HOST_BIG_MAX_PX = 56;
@@ -65,6 +66,7 @@ export interface HostActions {
       rid?: string;
       ok?: boolean;
       title?: string;
+      word?: string;
       photo?: string;
       free?: boolean;
       n?: number;
@@ -232,6 +234,20 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       </details>
     </section>
     <div class="dups" data-k="duplist"></div>
+    <section class="cap-host names-host" data-k="names">
+      <div class="cap-host-head"><b>名前の見張り</b><span data-k="namesNow"></span></div>
+      <p class="note">使えない言葉の入った名前は、入るときと名前を変えるときに自動で弾く。すり抜けた名前はここで直す：「付け直させる」＝その人のスマホに名前を入れ直す画面が出る（試合中でも）／「切り替える」＝「不適切な名前にしたために名前を変更されたやつ」になり、本人は変えられない（戻すには「付け直させる」）。</p>
+      <div class="names-list" data-k="nameList"></div>
+      <details class="names-ban">
+        <summary data-k="banSum">名前に使えない言葉</summary>
+        <p class="note">最初から入っている言葉のほかに足せる。名前のどこかに入っていれば弾く。頭に = を付けると、その言葉ちょうどの名前（または区切った1語）だけ弾く（例：=しね はシネマを弾かない）。ひらがな・カタカナ・全角半角・空白や記号の違いは同じとみなす。</p>
+        <form class="names-ban-form" data-k="banForm">
+          <input type="text" data-k="banInput" maxlength="20" placeholder="例：うんこ" aria-label="足す言葉">
+          <button type="submit">足す</button>
+        </form>
+        <div class="names-ban-list" data-k="banList"></div>
+      </details>
+    </section>
     <div class="spacer"></div>
     <button type="button" class="wide" data-op="csv">記録をCSVで保存（誰が・誰を・何分に）</button>
     <details class="key-change" data-k="keyChange">
@@ -406,6 +422,30 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     if (pid && confirm(`${target.dataset.label} を参加者から外す。よいか？`)) actions.command('remove', { pid });
   });
 
+  // 名前の見張り
+  q('nameList').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+    if (!b?.dataset.pid) return;
+    const name = b.dataset.name ?? '';
+    if (b.dataset.nop === 'redo') {
+      if (confirm(`「${name}」に名前を付け直させる。付け直すまで名前は「名前を付け直し中」になる。よいか？`)) actions.command('name-redo', { pid: b.dataset.pid });
+    } else if (b.dataset.nop === 'shame') {
+      if (confirm(`「${name}」の名前を「不適切な名前にしたために名前を変更されたやつ」に切り替える。本人は変えられない。よいか？`)) actions.command('name-shame', { pid: b.dataset.pid });
+    }
+  });
+  q('banForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = q('banInput') as HTMLInputElement;
+    const word = input.value.trim();
+    if (!word) return;
+    actions.command('ban-add', { word });
+    input.value = '';
+  });
+  q('banList').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+    if (b?.dataset.word !== undefined && confirm(`「${b.dataset.word}」を使えない言葉から外す。よいか？`)) actions.command('ban-remove', { word: b.dataset.word });
+  });
+
   // ミッション
   const missionForm = q('missionForm') as HTMLFormElement;
   const missionTitle = q('missionTitle') as HTMLInputElement;
@@ -521,6 +561,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
 
   let lastDupKey = '';
   let lastCapKey = '';
+  let lastNamesKey = '';
   let lastAskKey = '';
   // 走ると光る：主催者の画面にも光の地図（真ん中はこの画面の場所。たいてい広場）
   const board = createLightsBoard({ listMax: 6, start: 'all', labelMax: 60 });
@@ -848,6 +889,32 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         if (album.open) void showAlbum();
       }
 
+      const namesKey = JSON.stringify([host.names ?? null, host.bans ?? null]);
+      if (namesKey !== lastNamesKey) {
+        lastNamesKey = namesKey;
+        const names = host.names ?? [];
+        q('names').hidden = !host.names;
+        const flagged = names.filter((n) => n.hit || n.state !== 'ok');
+        q('namesNow').textContent = flagged.length ? `気になる名前 ${flagged.length}` : '';
+        const STATE: Record<string, string> = { due: '付け直し待ち', shamed: '切り替えた' };
+        q('nameList').innerHTML = names.length
+          ? names
+              .map((n) => {
+                const tag = n.hit ? `<em class="names-hit">「${esc(n.hit)}」に引っかかる</em>` : n.state !== 'ok' ? `<em>${STATE[n.state]}</em>` : '';
+                const where = n.tonight ? '' : '<small>今夜いない</small>';
+                const d = `data-pid="${esc(n.pid)}" data-name="${esc(n.name)}"`;
+                const redo = n.state === 'due' ? '' : `<button type="button" ${d} data-nop="redo">付け直させる</button>`;
+                const shame = n.state === 'shamed' ? '' : `<button type="button" ${d} data-nop="shame">切り替える</button>`;
+                return `<div class="names-row${n.hit ? ' is-hit' : ''}"><span class="names-name">${esc(n.name)}${tag}${where}</span>${redo}${shame}</div>`;
+              })
+              .join('')
+          : '<p class="note">今夜の人はまだいない</p>';
+        const bans = host.bans ?? { custom: [], builtin: 0 };
+        q('banSum').textContent = `名前に使えない言葉（最初から ${bans.builtin}・足した ${bans.custom.length}）`;
+        q('banList').innerHTML = bans.custom
+          .map((w) => `<button type="button" class="names-chip" data-word="${esc(w)}" aria-label="${esc(w)} を外す">${esc(w)} ×</button>`)
+          .join('');
+      }
       const dupKey = JSON.stringify(host.dupNames);
       if (dupKey !== lastDupKey) {
         lastDupKey = dupKey;

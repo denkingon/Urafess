@@ -549,3 +549,18 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .area-btns button { flex: 1 1 30%; min-height: 44px; font-size: 16px; }
 .area-btns button.primary { flex-basis: 100%; font-weight: 900; }
 .area-host.is-locked .area-map { opacity: 0.6; }
+
+/* 名前の見張り（主催者） */
+.names-list { display: flex; flex-direction: column; gap: 6px; }
+.names-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.names-row.is-hit { border-left: 3px solid #ff6a3d; padding-left: 8px; }
+.names-name { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.names-name em { font-style: normal; font-size: 12px; color: var(--quiet); }
+.names-name em.names-hit { color: #ff6a3d; font-weight: 700; }
+.names-name small { font-size: 12px; color: var(--quiet); }
+.names-row button { min-height: 44px; padding: 0 12px; font-size: 14px; white-space: nowrap; }
+.names-ban-form { display: flex; gap: 8px; margin: 8px 0; }
+.names-ban-form input { flex: 1 1 auto; min-width: 0; }
+.names-ban-form button { flex: 0 0 auto; min-height: 44px; padding: 0 14px; white-space: nowrap; }
+.names-ban-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.names-chip { min-height: 36px; padding: 0 10px; font-size: 13px; }
