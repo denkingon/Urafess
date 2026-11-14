@@ -113,7 +113,8 @@ export function summarizeAccount(events: readonly AccountEvent[], pid: string): 
       case 'enter':
         if (e.pid === pid) myNights.add(nightKeyOf(e.at));
         break;
-      case 'role': {
+      case 'role':
+      case 'recast': {
         const role = e.pid === pid ? parseRole(e.data) : null;
         if (role) roleOf.set(round, { role, at: e.at });
         break;
