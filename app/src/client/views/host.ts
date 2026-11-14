@@ -18,6 +18,7 @@ import {
 import { isDone, positionAt } from '../../shared/schedule';
 import { MISSION_DEFAULT_TITLE, MISSION_TITLE_MAX, PHOTO_STATUS_NAME, PHOTO_STORE_MAX_BYTES, type PhotoStatus } from '../../shared/mission';
 import { glowPhase, hostStatus } from '../../shared/viewmodel';
+import { checkNewHostKey, HOST_KEY_MIN } from '../../shared/hostkey';
 import type { ClientState } from '../core/game-client';
 import type { Sensors } from '../sense';
 import { createLightsBoard } from './glow';
@@ -73,7 +74,11 @@ export interface HostActions {
   photo(id: string): Promise<string | null>;
   /** 全部の夜の写真の一覧 */
   album(): Promise<AlbumData>;
+  /** 主催者の合言葉を変える。ok＝変えた（このスマホは新しい合言葉を覚える） */
+  changeKey(value: string): Promise<KeyChangeResult>;
 }
+
+export type KeyChangeResult = 'ok' | 'short' | 'long' | 'denied' | 'offline';
 
 export interface AlbumData {
   bytes: number;
@@ -219,6 +224,16 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     <div class="dups" data-k="duplist"></div>
     <div class="spacer"></div>
     <button type="button" class="wide" data-op="csv">記録をCSVで保存（誰が・誰を・何分に）</button>
+    <details class="key-change" data-k="keyChange">
+      <summary>合言葉を変える</summary>
+      <form>
+        <label for="newkey">新しい合言葉</label>
+        <input id="newkey" name="newkey" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="done" required>
+        <p class="note">${HOST_KEY_MIN}文字以上（空白は数えない）。空白・大文字小文字・全角半角は、どう打っても合う。変えたあとも、最初に決めた合言葉は予備の鍵として効く（忘れたときに入れるように）。</p>
+        <p class="note" data-k="keyResult" role="status" hidden></p>
+        <button type="submit">合言葉を変える</button>
+      </form>
+    </details>
     <p class="note" data-k="foot"></p>
   `;
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
@@ -262,6 +277,43 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       actions.command('mic', { mic: b.dataset.mic as 'always' | 'hold' });
     }),
   );
+
+  // 合言葉を変える：打った字を見せて確かめてから送る。変わったら、このスマホは新しい合言葉を覚える
+  const keyForm = q('keyChange').querySelector('form')!;
+  const keyInput = keyForm.querySelector('input')!;
+  const keySubmit = keyForm.querySelector('button')!;
+  const keyResult = (message: string | null) => {
+    q('keyResult').hidden = !message;
+    q('keyResult').textContent = message ?? '';
+  };
+  keyInput.addEventListener('input', () => keyResult(null));
+  keyForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const value = keyInput.value.trim();
+    if (!value || keySubmit.disabled) return;
+    if (checkNewHostKey(value) === 'short') return keyResult(`短い。${HOST_KEY_MIN}文字以上にする（空白は数えない）`);
+    if (checkNewHostKey(value) === 'long') return keyResult('長すぎる。');
+    if (!confirm(`主催者の合言葉を「${value}」に変える。よいか？`)) return;
+    keySubmit.disabled = true;
+    keyResult('変えている…');
+    void actions.changeKey(value).then((r) => {
+      keySubmit.disabled = false;
+      if (r === 'ok') {
+        keyInput.value = '';
+        keyResult(`変えた。新しい合言葉は「${value}」。このスマホは覚えた。ほかのスマホは、次に聞かれたときに新しい合言葉を打つ`);
+        return;
+      }
+      keyResult(
+        r === 'short'
+          ? `短い。${HOST_KEY_MIN}文字以上にする（空白は数えない）`
+          : r === 'long'
+            ? '長すぎる。'
+            : r === 'denied'
+              ? '変えられなかった（このスマホの合言葉が古い）。画面を開き直して、入り直してからもう一度'
+              : 'つながらない。電波を確かめて、もう一度押す',
+      );
+    });
+  });
 
   btn('csv').addEventListener('click', () => {
     const b = btn('csv');
