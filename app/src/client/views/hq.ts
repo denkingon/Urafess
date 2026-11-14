@@ -5,6 +5,7 @@ import { HOLD_MIN_MS, MATES_SEND_EVERY_MS, MATES_STALE_MS, PHASES, RESCUE_IMMUNE
 import { formatClock, isDone, positionAt } from '../../shared/schedule';
 import { glowPhase, hostStatus } from '../../shared/viewmodel';
 import type { Sensors } from '../sense';
+import { setFramePad } from './overview';
 import { createHost, type HostActions, type HostInput, type HostScreen } from './host';
 
 /**
@@ -43,6 +44,8 @@ function make<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, html =
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () => void): HostScreen {
+  // 地図は遊ぶ範囲ぴったりではなく、周りも見えるように余白を広げる
+  setFramePad(0.26);
   const inner = createHost(actions, sensors);
   // 前の画面の根っこをそのまま使う（中の部品は、この根っこの下にある限り前のしくみのまま動く）
   const el = inner.el;
