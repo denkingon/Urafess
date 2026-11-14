@@ -492,3 +492,21 @@
 /* 地の色（役の色を混ぜた闇）を透かして、後ろの地図を見せる。字と絵はそのまま */
 .has-backdrop .player { background: color-mix(in srgb, var(--ground) var(--veil, 45%), transparent); }
 .has-backdrop .join { background: color-mix(in srgb, var(--yami) var(--veil, 45%), transparent); }
+
+/* ---------- 司令塔 ---------- */
+.player .radar-lead { stroke: var(--tsuki); }
+.player .radar-light[data-lead="runner"] .radar-dot { fill: var(--tsuki); }
+.player .radar-light[data-lead="oni"] .radar-lead { stroke: var(--shu); }
+.player .radar-light[data-lead="oni"] .radar-dot { fill: var(--shu); }
+.player .ov-lead { stroke: var(--tsuki); }
+.player .ov-pt.is-oni .ov-lead { stroke: var(--shu); }
+.player .glow-lead { border-color: var(--tsuki); }
+.player .glow-lead.is-oni { border-color: var(--shu); }
+.player .lead-strip { border-color: var(--sen); color: var(--tsuki); font-size: max(var(--min), 16px); text-align: left; }
+.player .lead-strip b { font-size: max(var(--min), 17px); }
+.player .lead-strip span { color: var(--tsuki-muted); }
+.player .lead-strip[data-tone="mine"] { border-color: var(--tsuki); background: var(--raised); }
+.player .lead-strip[data-tone="down"] { border-color: var(--shu); color: var(--shu); }
+.player .lead-strip[data-tone="down"] span { color: var(--shu); }
+.player .lead-strip[data-tone="up"] { border-color: var(--chikko); color: var(--chikko); background: var(--raised); }
+.player .lead-strip[data-tone="up"] span { color: var(--tsuki); }

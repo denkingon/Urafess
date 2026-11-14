@@ -16,11 +16,13 @@ import type {
   GlowEntry,
   HostCapture,
   HostCastEntry,
+  HostLead,
   HostPhoto,
   HostOp,
   HostSummary,
   MateEntry,
   MatesScope,
+  MeLead,
   MeView,
   MissionView,
   NoticeKind,
@@ -88,6 +90,8 @@ import { bannedHit, BAN_MAX_WORDS, DEFAULT_BANNED, isSpecialName, normalizeBanWo
 import { nameKey, normalizeName } from '../shared/names';
 import { castStatsAll, cleanTag, TAGS_MAX, type CastEvent, type CastStat } from '../shared/cast';
 import { distanceM } from '../shared/run';
+import { cryptoRandomInt } from '../shared/allocate';
+import { DEFAULT_LEAD_RULES, isLeadRules, leadDown, leadSight, patchLeadRules, type LeadRules } from '../shared/lead';
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
 import type { ProbeHub } from './probe';
@@ -144,6 +148,18 @@ interface GameState {
   wishMode: WishMode;
   /** いまの配役を決めたときの希望の数（くじだけで決めた配役・配役前は null） */
   wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
+  /** 司令塔：札と、いまの配役の司令塔。古い保存データには無いので load で補う */
+  lead?: LeadState;
+}
+
+/** 司令塔の札と席。席（oni・runner）は assignId の配役のもの（配役が変われば引き直す） */
+interface LeadState {
+  rules: LeadRules;
+  assignId: number;
+  oni: string | null;
+  runner: string | null;
+  /** 逃走者の司令塔が、この配役で初めて捕まった時刻（まだなら null） */
+  fellAt: number | null;
 }
 
 /** ミッションの写真1枚（中身の画像は SQLite にだけ置き、ここには持たない） */
@@ -647,6 +663,10 @@ export class GameRoom extends DurableObject<Env> {
     // 配役の希望を入れる前の版で作った部屋には、決め方が無い
     if (!isWishMode(this.game.wishMode)) this.game.wishMode = DEFAULT_WISH_MODE;
     if (this.game.wishStat === undefined) this.game.wishStat = null;
+    // 司令塔を入れる前の版で作った部屋には、札が無い（外してある形で補う）
+    if (!this.game.lead || !isLeadRules(this.game.lead.rules)) {
+      this.game.lead = { rules: { ...DEFAULT_LEAD_RULES }, assignId: 0, oni: null, runner: null, fellAt: null };
+    }
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -2084,6 +2104,7 @@ export class GameRoom extends DurableObject<Env> {
     // 捕まった人は光らない。全体の地図からも消える
     this.endRun(runner.pid, Date.now(), 'caught');
     this.dropSpot(runner.pid);
+    this.leadCaught(runner, at);
     this.notify(runner.pid, 'caught', oni ?? undefined, via);
     if (oni) this.notify(oni.pid, 'captured', runner, via);
     // 最後の1人が牢屋に入ったら、ゲームを終わらせる（その中で配り直す）
@@ -2222,6 +2243,7 @@ export class GameRoom extends DurableObject<Env> {
         if (h.start <= now) h.used = true;
       }
     }
+    this.leadFreed(jailed, now, false);
     this.notify(jailed.pid, 'freed', rescuer ?? undefined, via);
     if (rescuer) this.notify(rescuer.pid, 'saved', jailed, via);
     this.broadcastNow();
@@ -2375,7 +2397,16 @@ export class GameRoom extends DurableObject<Env> {
     for (const r of [...this.runs.values()].sort((a, b) => a.since - b.since)) {
       const p = this.people.get(r.pid);
       if (!p) continue;
-      runs.push({ num: p.num, name: p.name, lat: r.lat, lon: r.lon, acc: r.acc, since: r.since, at: r.at });
+      const lead = this.seenLeadRole(p);
+      runs.push({ num: p.num, name: p.name, lat: r.lat, lon: r.lon, acc: r.acc, since: r.since, at: r.at, ...(lead ? { lead } : {}) });
+    }
+    // 司令塔は走っていなくても光る（見る代わりに見られる）。位置は全体の地図のために届いているものを使う
+    for (const role of ['oni', 'runner'] as const) {
+      const p = this.seenLead(role);
+      if (!p || this.runs.has(p.pid)) continue;
+      const sp = this.spots.get(p.pid);
+      if (!sp) continue;
+      runs.push({ num: p.num, name: p.name, lat: sp.lat, lon: sp.lon, acc: sp.acc, since: sp.at, at: sp.at, lead: role });
     }
     return { t: 'glow', s: now, runs };
   }
@@ -2415,6 +2446,8 @@ export class GameRoom extends DurableObject<Env> {
     const had = this.spots.has(p.pid);
     this.spots.set(p.pid, { pid: p.pid, lat: pos.lat, lon: pos.lon, acc: pos.acc, at: now });
     this.flushMatesSoon(!had);
+    // 司令塔の位置は、全員の光の地図にも出る
+    if (this.seenLeadRole(p)) this.flushGlowSoon(!had);
   }
 
   // ---------- 範囲の外で失格 ----------
@@ -2479,7 +2512,9 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private dropSpot(pid: string): void {
-    if (this.spots.delete(pid)) this.flushMatesSoon(true);
+    if (!this.spots.delete(pid)) return;
+    this.flushMatesSoon(true);
+    if (this.lead().rules.on) this.flushGlowSoon(true);
   }
 
   /** 段階が終わった・届かなくなった・捕まった・外された人の位置を消す（合図・主催者の操作のたびに見る） */
@@ -2494,7 +2529,10 @@ export class GameRoom extends DurableObject<Env> {
         changed = true;
       }
     }
-    if (changed) this.flushMatesSoon(true);
+    if (changed) {
+      this.flushMatesSoon(true);
+      if (this.lead().rules.on) this.flushGlowSoon(true);
+    }
   }
 
   /** まとめて配る。urgent（地図に人が増えた・消えた）は次の一瞬で、位置の更新だけなら MATES_BROADCAST_MS ごと */
@@ -2512,12 +2550,17 @@ export class GameRoom extends DurableObject<Env> {
     );
   }
 
-  /** この接続に見せてよい範囲。主催者は全員、参加者は同じ役（捕まった逃走者も仲間は見える）、それ以外は誰も */
-  private matesScope(att: Attachment | null): MatesScope {
-    if (att?.host) return 'all';
+  /**
+   * この接続に見せてよいもの。主催者は全員。参加者は同じ役の仲間（捕まった逃走者も仲間は見える）。
+   * 司令塔を入れているときは、仲間が見えるのは司令塔だけで、逃走者の司令塔が落ちている間は鬼に逃走者も見える（shared/lead.ts）。
+   * key＝同じ中身になる接続をまとめる印
+   */
+  private matesView(att: Attachment | null): { scope: MatesScope; key: string; mates: boolean; foes: boolean } {
+    if (att?.host) return { scope: 'all', key: 'all', mates: true, foes: false };
     const p = this.inRound(att?.pid);
-    if (!p || (p.role !== 'oni' && p.role !== 'runner')) return 'none';
-    return p.role;
+    if (!p || (p.role !== 'oni' && p.role !== 'runner')) return { scope: 'none', key: 'none', mates: false, foes: false };
+    const v = leadSight(this.lead().rules, p.role, this.leadPid(p.role) === p.pid, this.leadIsDown());
+    return { scope: p.role, key: `${p.role}:${v.mates ? 1 : 0}${v.foes ? 1 : 0}`, mates: v.mates, foes: v.foes };
   }
 
   /** 範囲ごとの中身（役を組み立てるのは主催者の分だけ） */
@@ -2534,18 +2577,25 @@ export class GameRoom extends DurableObject<Env> {
     return lists;
   }
 
+  /** その接続に送る人たち。相手（逃走者）を見せるときは、役を付けて送る（仲間とちがう色で出すため） */
+  private matesPeople(v: { scope: MatesScope; mates: boolean; foes: boolean }, lists: Record<MatesScope, MateEntry[]>): MateEntry[] {
+    if (v.scope === 'all') return lists.all;
+    if (v.scope === 'none') return [];
+    return [...(v.mates ? lists[v.scope] : []), ...(v.foes ? lists.runner.map((e) => ({ ...e, role: 'runner' as const })) : [])];
+  }
+
   private broadcastMates(): void {
     const now = Date.now();
     const lists = this.matesLists();
-    const msgs = new Map<MatesScope, string>();
+    const msgs = new Map<string, string>();
     for (const ws of this.ctx.getWebSockets()) {
       const att = ws.deserializeAttachment() as Attachment | null;
       if (!att?.pid && !att?.host) continue;
-      const scope = this.matesScope(att);
-      let msg = msgs.get(scope);
+      const v = this.matesView(att);
+      let msg = msgs.get(v.key);
       if (!msg) {
-        msg = JSON.stringify({ t: 'mates', s: now, scope, people: lists[scope] } satisfies ServerMsg);
-        msgs.set(scope, msg);
+        msg = JSON.stringify({ t: 'mates', s: now, scope: v.scope, people: this.matesPeople(v, lists) } satisfies ServerMsg);
+        msgs.set(v.key, msg);
       }
       try {
         ws.send(msg);
@@ -2557,8 +2607,127 @@ export class GameRoom extends DurableObject<Env> {
 
   private sendMatesTo(ws: WebSocket, now: number): void {
     if (this.spots.size === 0 && !this.glowOpen(now)) return;
-    const scope = this.matesScope(ws.deserializeAttachment() as Attachment | null);
-    this.send(ws, { t: 'mates', s: now, scope, people: this.matesLists()[scope] });
+    const v = this.matesView(ws.deserializeAttachment() as Attachment | null);
+    this.send(ws, { t: 'mates', s: now, scope: v.scope, people: this.matesPeople(v, this.matesLists()) });
+  }
+
+  // ---------- 司令塔 ----------
+
+  private lead(): LeadState {
+    return this.game.lead!;
+  }
+
+  /** 司令塔の席を書き換えて保存する（版番号は進めない。主催者の操作の中では commit が進める） */
+  private setLead(patch: Partial<LeadState>): void {
+    this.game = { ...this.game, lead: { ...this.lead(), ...patch } };
+    this.saveGame();
+  }
+
+  /** いまの配役での、その側の司令塔（しくみを外してある・いない・外された・役が変わったなら null） */
+  private leadPid(role: RoleId): string | null {
+    const l = this.lead();
+    if (!l.rules.on || l.assignId !== this.game.assignId) return null;
+    const p = this.inRound(l[role]);
+    return p && p.role === role ? p.pid : null;
+  }
+
+  /** 逃走者の司令塔が落ちている */
+  private leadIsDown(): boolean {
+    const l = this.lead();
+    const pid = this.leadPid('runner');
+    const p = pid ? this.people.get(pid) : undefined;
+    if (!p) return false;
+    return leadDown(l.rules, this.isCaught(p), l.fellAt);
+  }
+
+  /** 相手に見えている司令塔（札が入っていて、牢屋にいない）。その側にいなければ null */
+  private seenLead(role: RoleId): Participant | null {
+    const l = this.lead();
+    if (!l.rules.on || !l.rules.seen) return null;
+    const pid = this.leadPid(role);
+    const p = pid ? this.people.get(pid) : undefined;
+    return p && !this.isCaught(p) ? p : null;
+  }
+
+  private seenLeadRole(p: Participant): RoleId | null {
+    return isRoleId(p.role) && this.seenLead(p.role)?.pid === p.pid ? p.role : null;
+  }
+
+  /** くじ：その側の、いま配役に入っている人から1人（except の人は外す。ほかに誰もいなければその人のまま） */
+  private drawLead(role: RoleId, except: string | null = null): Participant | null {
+    const all = [...this.people.values()].filter((p) => this.inRound(p.pid) && p.role === role).sort((a, b) => a.num - b.num);
+    const pool = all.filter((p) => p.pid !== except);
+    const from = pool.length ? pool : all;
+    return from.length ? from[cryptoRandomInt(from.length)] : null;
+  }
+
+  /** その側の司令塔を決めて残す。逃走者の司令塔が替わったら、落ちたことは消す（新しい人がいま牢屋なら、落ちている） */
+  private seatLead(role: RoleId, p: Participant, how: 'lot' | 'host', now: number): void {
+    const l = this.lead();
+    // 配役が変わっていたら、前の配役の席は引き継がない
+    const base = l.assignId !== this.game.assignId ? { oni: null, runner: null, fellAt: null } : { oni: l.oni, runner: l.runner, fellAt: l.fellAt };
+    const next = { ...base, assignId: this.game.assignId, [role]: p.pid };
+    if (role === 'runner') next.fellAt = this.isCaught(p) ? (p.caughtAt ?? now) : null;
+    this.setLead(next);
+    this.log('lead-set', { p, at: now, data: { role, how } });
+  }
+
+  /** 司令塔がいない側を、くじで埋める（配役のあと・札を入れたとき・司令塔が外された／別の役へ動かされたとき） */
+  private syncLeads(now: number): void {
+    const l = this.lead();
+    if (!l.rules.on || this.game.assignId === 0) return;
+    let changed = false;
+    for (const role of ['oni', 'runner'] as const) {
+      if (this.leadPid(role)) continue;
+      const p = this.drawLead(role);
+      if (!p) continue;
+      this.seatLead(role, p, 'lot', now);
+      changed = true;
+    }
+    if (changed) this.leadChanged();
+  }
+
+  /** 見えるものが変わった：全体の地図と光を配り直す（画面の文は、このあとの配り直しで届く） */
+  private leadChanged(): void {
+    this.flushMatesSoon(true);
+    this.flushGlowSoon(true);
+  }
+
+  /** 逃走者が捕まった：司令塔なら「落ちた」を残して、地図を配り直す */
+  private leadCaught(runner: Participant, at: number): void {
+    if (this.leadPid('runner') !== runner.pid) return;
+    const l = this.lead();
+    if (l.fellAt === null) this.setLead({ fellAt: at });
+    this.log('lead-down', { p: runner, at, data: { dark: l.rules.dark, expose: l.rules.expose, restore: l.rules.restore } });
+    this.leadChanged();
+  }
+
+  /** 逃走者が牢屋から出た：司令塔なら地図を配り直す。undo＝主催者が捕獲そのものを取り消した（落ちたことも消す） */
+  private leadFreed(runner: Participant, now: number, undo: boolean): void {
+    if (this.leadPid('runner') !== runner.pid) return;
+    const l = this.lead();
+    if (undo && l.fellAt !== null) this.setLead({ fellAt: null });
+    if (undo || l.rules.restore) this.log('lead-back', { p: runner, at: now, data: { undo } });
+    this.leadChanged();
+  }
+
+  private meLead(p: Participant): MeLead | null {
+    const l = this.lead();
+    if (!l.rules.on || !isRoleId(p.role)) return null;
+    const pid = this.leadPid(p.role);
+    const down = this.leadIsDown();
+    const v = leadSight(l.rules, p.role, pid === p.pid, down);
+    return { mine: pid === p.pid, name: pid ? (this.people.get(pid)?.name ?? null) : null, map: v.map, down, foes: v.foes };
+  }
+
+  private hostLead(): HostLead | null {
+    if (!this.lead().rules.on || this.game.assignId === 0) return null;
+    const seat = (role: RoleId) => {
+      const pid = this.leadPid(role);
+      const p = pid ? this.people.get(pid) : undefined;
+      return p ? { pid: p.pid, name: p.name } : null;
+    };
+    return { oni: seat('oni'), runner: seat('runner'), down: this.leadIsDown() };
   }
 
   /** このスマホで、動きのセンサー・位置が使えるか */
@@ -2641,6 +2810,8 @@ export class GameRoom extends DurableObject<Env> {
       this.sql.exec(`UPDATE participants SET removed = 1 WHERE pid = ?`, p.pid);
       this.log('remove', { p, at: now });
       this.endRun(p.pid, now, 'out');
+      // 外された人が司令塔だったら、その側はくじで引き直す
+      this.syncLeads(now);
       // 外にいた最後の逃走者が外されたら、全員が牢屋にいることになる
       if (!this.checkAllCaught(now, now)) this.broadcastNow();
       this.refreshAutoResult();
@@ -2723,6 +2894,8 @@ export class GameRoom extends DurableObject<Env> {
       runner.caughtVia = null;
       if (by) this.catches.set(by.pid, Math.max(0, (this.catches.get(by.pid) ?? 0) - 1));
       this.rescueHolds.delete(runner.pid);
+      // 取り消した捕獲が司令塔のものなら、落ちたことも無かったことにする
+      this.leadFreed(runner, now, true);
       // 取り消した捕獲で「全員が牢屋」になっていたなら、それも取り消す（時間はそのまま。結果はアプリが決め直す）
       if (g.allCaughtAt != null && !everyoneJailed(this.gameView().counts)) {
         this.commit({ allCaughtAt: null });
@@ -2848,6 +3021,8 @@ export class GameRoom extends DurableObject<Env> {
           p.wishMissPrev = missBase.get(pid) ?? 0;
           p.wishMiss = missAfter.get(pid) ?? 0;
         }
+        // 司令塔は配役のたびに引き直す（主催者はそのあと指名で替えられる）
+        this.syncLeads(now);
         break;
       }
       case 'start':
@@ -2911,6 +3086,8 @@ export class GameRoom extends DurableObject<Env> {
           }
         }
         this.commit({ stage: 'assigned', timer: null, result: null, allCaughtAt: null, resultAuto: false, shrink: null });
+        // やり直し：司令塔は同じ人のまま、落ちたことだけ消す
+        if (this.game.lead && this.game.lead.fellAt !== null) this.setLead({ fellAt: null });
         break;
       }
       case 'end': {
@@ -3024,6 +3201,39 @@ export class GameRoom extends DurableObject<Env> {
             ? { ...g.wishStat, missed: inRound.filter((p) => p.wish !== null && p.role !== p.wish).length }
             : g.wishStat;
         this.commit(movers.length > 0 ? { counts, wishStat } : {});
+        // 司令塔を別の役へ動かしたら、その人は司令塔でなくなる。空いた側はくじで引き直す
+        if (movers.length > 0) this.syncLeads(now);
+        break;
+      }
+      case 'lead': {
+        // 司令塔の札：いつでも変えられる（試合中に入れても外しても、そのときから全員に効く）
+        const rules = patchLeadRules(this.lead().rules, msg.lead);
+        if (!rules) return this.reject(ws, att, op, 'bad-input');
+        const before = this.lead().rules;
+        if (JSON.stringify(rules) === JSON.stringify(before)) break;
+        this.commit({ lead: { ...this.lead(), rules } });
+        this.log('lead', { at: now, data: { ...rules } });
+        this.syncLeads(now);
+        this.leadChanged();
+        break;
+      }
+      case 'lead-pick':
+      case 'lead-draw': {
+        if (!this.lead().rules.on) return this.reject(ws, att, op, 'not-allowed');
+        if (op === 'lead-pick') {
+          const p = this.inRound(msg.pid);
+          if (!p || !isRoleId(p.role)) return this.reject(ws, att, op, 'not-found');
+          if (this.leadPid(p.role) === p.pid) break;
+          this.commit({});
+          this.seatLead(p.role, p, 'host', now);
+        } else {
+          if (!isRoleId(msg.role)) return this.reject(ws, att, op, 'bad-input');
+          const picked = this.drawLead(msg.role, this.leadPid(msg.role));
+          if (!picked) return this.reject(ws, att, op, 'not-found');
+          this.commit({});
+          this.seatLead(msg.role, picked, 'lot', now);
+        }
+        this.leadChanged();
         break;
       }
       case 'tag': {
@@ -3106,6 +3316,7 @@ export class GameRoom extends DurableObject<Env> {
           allCaughtAt: null,
           counts: { oni: 0, runner: 0 },
           wishStat: null,
+          lead: { ...this.lead(), assignId: 0, oni: null, runner: null, fellAt: null },
           night: g.night + 1,
           nightAt: now,
           shrink: null,
@@ -3450,6 +3661,7 @@ export class GameRoom extends DurableObject<Env> {
       jail: g.jail ?? null,
       wishMode: g.wishMode,
       ...this.wishCounts(),
+      lead: this.lead().rules,
     };
   }
 
@@ -3512,6 +3724,7 @@ export class GameRoom extends DurableObject<Env> {
       // 役が決まってからゲームの終わりまで、その配役の人は希望を変えられないので、その間はこれで合っている
       wishMissed: live && g.wishStat != null && p.wish !== null && p.role !== null && p.role !== p.wish,
       hostCast: p.pin !== null,
+      lead: live ? this.meLead(p) : null,
     };
   }
 
@@ -3644,6 +3857,7 @@ export class GameRoom extends DurableObject<Env> {
         ),
       names: this.watchNames(active),
       bans: { custom: [...this.bans], builtin: DEFAULT_BANNED.length },
+      lead: this.hostLead(),
     };
   }
 

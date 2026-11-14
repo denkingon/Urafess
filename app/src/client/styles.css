@@ -696,3 +696,19 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 /* 地図の外にいる人：ふちに寄せ、点線の輪で「この先にいる」 */
 .ov-pt.is-edge .ov-dot, .ov-me.is-edge .ov-me-ring { stroke-dasharray: 3 3; }
 .ov-pt.is-edge, .ov-me.is-edge { opacity: 0.75; }
+
+/* ---------- 司令塔 ---------- */
+.radar-lead { fill: none; stroke: var(--ink); stroke-width: 1.6; }
+.radar-light[data-lead="oni"] .radar-lead { stroke: var(--shu); }
+.radar-light[data-lead="oni"] .radar-dot { fill: var(--shu); }
+.ov-lead { fill: none; stroke: var(--ink); stroke-width: 2; }
+.ov-pt.is-oni .ov-lead { stroke: var(--shu); }
+.glow-lead { flex: none; display: inline-block; width: 12px; height: 12px; margin: 0 4px; border: 2px solid var(--ink); transform: rotate(45deg); }
+.glow-lead.is-oni { border-color: var(--shu); }
+.lead-strip { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 8px 12px; border: 1.5px solid var(--line, #3a3a3a); border-radius: 10px; font-size: 16px; line-height: 1.4; flex: none; }
+.lead-strip b { font-weight: 900; font-size: 17px; }
+.lead-strip span { color: var(--quiet); }
+.lead-strip[data-tone="mine"] { border-color: var(--ink); }
+.lead-strip[data-tone="down"] { border-color: var(--shu); color: var(--shu); }
+.lead-strip[data-tone="down"] span { color: inherit; }
+.lead-strip[data-tone="up"] { border-color: var(--ink); background: #1b1b1b; }
