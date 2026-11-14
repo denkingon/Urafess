@@ -12,7 +12,8 @@ import { Sensors } from './sense';
 import { callAccount, createAccount, errorText } from './views/account';
 import { createCapture } from './views/capture';
 import { createGlow } from './views/glow';
-import { createHost } from './views/host';
+import { createHost, type HostActions } from './views/host';
+import { createHQ } from './views/hq';
 import { createJail } from './views/jail';
 import { createInstall, type InstallScreen } from './views/install';
 import { createJoin, type EntryMode } from './views/join';
@@ -389,14 +390,16 @@ function startLab(): void {
 // ---------- 主催者 ----------
 
 function startHost(token: string): void {
-  const client = makeClient({ kind: 'host', token });
+  // 合言葉を変えたら、つなぎ直しとヘッダーも新しい合言葉を使う（mode は GameClient がつなぎ直すたびに読む）
+  const mode = { kind: 'host' as const, token };
+  const client = makeClient(mode);
   // 合言葉に日本語が入っていると、そのままではヘッダーに載せられない（記録の保存と写真が送る前に失敗する）
   const hostHeaders = { 'x-host-token': encodeHostKey(token) };
   startUpdateChecks(() => !inMatch(client.state.game?.stage));
   const photos = createPhotoLoader(gameId, () => hostHeaders);
   // 走ると光る：主催者の画面の地図の真ん中（位置）と向き。主催者は光らない
   const sensors = new Sensors();
-  const host = createHost({
+  const hostActions: HostActions = {
     command: (op, extra) => client.command(op, extra),
     downloadLog: async () => {
       const res = await fetch(`/api/game/${gameId}/log`, { headers: hostHeaders, cache: 'no-store' });
@@ -416,7 +419,45 @@ function startHost(token: string): void {
       if (!res.ok) throw new Error(`photos ${res.status}`);
       return res.json();
     },
-  }, sensors);
+    changeKey: async (value) => {
+      try {
+        const res = await fetch(`/api/game/${gameId}/key`, {
+          method: 'POST',
+          headers: { ...hostHeaders, 'content-type': 'application/json' },
+          body: JSON.stringify({ key: value }),
+          cache: 'no-store',
+        });
+        if (res.status === 204) {
+          mode.token = value;
+          hostHeaders['x-host-token'] = encodeHostKey(value);
+          storage.set('urafess:host-token', value);
+          return 'ok';
+        }
+        if (res.status === 403) return 'denied';
+        if (res.status === 400) return ((await res.json().catch(() => null)) as { error?: string } | null)?.error === 'long' ? 'long' : 'short';
+        return 'offline';
+      } catch {
+        return 'offline';
+      }
+    },
+  };
+  // 本部（新しい主催者画面）：前の画面は残してあり、この端末で切りかえる（/host?hq=1 でも本部になる）
+  if (params.get('hq') === '1') storage.set('urafess:hq', '1');
+  const useHQ = storage.get('urafess:hq') === '1';
+  const setHQ = (on: boolean) => {
+    if (on) storage.set('urafess:hq', '1');
+    else storage.remove('urafess:hq');
+    location.replace(location.pathname + (gameId === 'main' ? '' : `?g=${gameId}`));
+  };
+  const host = useHQ ? createHQ(hostActions, sensors, () => setHQ(false)) : createHost(hostActions, sensors);
+  if (!useHQ) {
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'ghost';
+    go.textContent = '新しい本部 HQ を試す';
+    go.addEventListener('click', () => setHQ(true));
+    host.el.querySelector('.host-head')?.after(go);
+  }
   root.replaceChildren(host.el);
   loop(() => {
     const s = client.state;
@@ -424,7 +465,7 @@ function startHost(token: string): void {
     if (s.phase === 'denied') {
       screenKeeper.set(false);
       storage.remove('urafess:host-token');
-      showTokenForm(WRONG_KEY, token);
+      showTokenForm(WRONG_KEY, mode.token);
       return false;
     }
     if (s.host && storage.get(HOST_DEVICE_KEY) !== '1') storage.set(HOST_DEVICE_KEY, '1');

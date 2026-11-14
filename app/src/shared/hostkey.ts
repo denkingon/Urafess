@@ -4,6 +4,13 @@
  * （「urafess with no 前例」は「Urafesswithno前例」と打っても合う）。
  */
 
+/**
+ * 主催者画面で決める合言葉の長さ（そろえたあとの字数）。
+ * 当てずっぽうを止めるしくみが無い（何回でも試せる）ので、短いものは受けない
+ */
+export const HOST_KEY_MIN = 8;
+export const HOST_KEY_MAX = 64;
+
 /** くらべる前の形にそろえる：全角半角をそろえ（NFKC）、小文字にし、空白を全部とる */
 export function normalizeHostKey(value: string): string {
   return value.normalize('NFKC').toLowerCase().replace(/\s+/gu, '');
@@ -33,4 +40,13 @@ export function hostKeyCandidates(raw: string | null | undefined): string[] {
   } catch {
     return [raw];
   }
+}
+
+/** 主催者画面で決める新しい合言葉が使えるか。short＝短すぎる、long＝長すぎる */
+export function checkNewHostKey(value: unknown): 'ok' | 'short' | 'long' {
+  if (typeof value !== 'string') return 'short';
+  const n = [...normalizeHostKey(value)].length;
+  if (n < HOST_KEY_MIN) return 'short';
+  if (n > HOST_KEY_MAX) return 'long';
+  return 'ok';
 }
