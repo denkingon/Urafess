@@ -1,5 +1,6 @@
 import './hq.css';
 import { AREA_OUT_CONFIRM_MS, AREA_OUT_MARGIN_M, isFarOutside } from '../../shared/area';
+import { zoneAt } from '../../shared/shrink';
 import { HOLD_MIN_MS, MATES_SEND_EVERY_MS, MATES_STALE_MS, PHASES, RESCUE_IMMUNE_MS, RUN_STALE_MS, RUN_STOP_MS } from '../../shared/rules';
 import { formatClock, isDone, positionAt } from '../../shared/schedule';
 import { glowPhase, hostStatus } from '../../shared/viewmodel';
@@ -359,7 +360,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       }
       const pending = (host.photos ?? []).filter((p) => p.status === 'pending');
       if (pending.length) items.push(`<span>写真が届いた：${esc(pending.map((p) => p.name).join('・'))}</span><button type="button" class="hq-wait" data-go="mission">見て決める</button>`);
-      const areaPts = game.area?.pts ?? null;
+      const areaPts = zoneAt(game.area, game.shrink, game.timer, serverNow);
       const onMap = (input.mates?.people ?? []).filter((m) => serverNow - m.at <= MATES_STALE_MS);
       const outside = areaPts && glowPhase(game, serverNow) === 'live' ? onMap.filter((m) => isFarOutside(areaPts, m)) : [];
       if (outside.length) items.push(`<span>範囲の外：${esc(outside.map((m) => m.name).join('・'))}</span><button type="button" data-go="map">地図</button>`);

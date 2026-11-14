@@ -35,6 +35,7 @@ import type {
 } from '../shared/protocol';
 import { decideWinner, everyoneJailed } from '../shared/jail';
 import { cleanAreaPts, isValidAreaPts, type Area } from '../shared/area';
+import { cleanShrinkPlan, DEFAULT_SHRINK_PLAN, extraStep, isShrinkPlan, makeLive, type ShrinkLive, type ShrinkPlan } from '../shared/shrink';
 import {
   CAMPUS_CENTER,
   CLAIM_GRACE_MS,
@@ -120,6 +121,10 @@ interface GameState {
   micMode: MicMode;
   /** 遊ぶ範囲（主催者がゲームの前に描く）。新しい夜を始めても残る。古い保存データには無い */
   area?: Area | null;
+  /** 範囲の縮み方（主催者が試合の前に決める）。新しい夜でも残る。古い保存データには無い */
+  shrinkPlan?: ShrinkPlan;
+  /** このラウンドの縮小（試合を始めたときに決まり、配役・やり直しで消える）。古い保存データには無い */
+  shrink?: ShrinkLive | null;
   /** 牢屋の場所（主催者がゲームの前に描く）。新しい夜を始めても残る。古い保存データには無い */
   jail?: Area | null;
   /** 次に名簿に入る人の番号（名簿に入った順。画面には出さない。部屋を空にしても戻さない） */
@@ -371,6 +376,8 @@ interface RescueHold {
 
 const LOBBY_BROADCAST_MS = 300;
 const HOST_UPDATE_MS = 500;
+/** 範囲の外で失格の知らせを、スマホの遅れ・電波の詰まりの分だけ、ゲームの段階が終わったあとでも受け付ける */
+const DQ_GRACE_MS = 5_000;
 /** 押した時刻として受け付けるのは、届いた時刻からこれだけ前まで（電波の詰まり・つなぎ直しの送り直しで遅れて届く分） */
 const PRESS_MAX_DELAY_MS = 60_000;
 /** 同じ鬼が同じ音を何度も聞き取ったとき、記録し直すまでの間隔（逃走者のスマホは繰り返し鳴らす） */
@@ -411,6 +418,10 @@ export class GameRoom extends DurableObject<Env> {
   private readonly runs = new Map<string, RunRec>();
   /** 今の配役で、鬼 → 捕まえた回数（解放されても減らない。主催者の取り消しでだけ減る） */
   private readonly catches = new Map<string, number>();
+  /** 範囲の外で失格を数えた人（配役の番号つき。同じ配役のうちは1回だけ） */
+  private readonly dqSeen = new Map<string, number>();
+  /** 失格のあと牢屋に出頭した人（配役の番号つき。記録を1回にするための印） */
+  private readonly dqDone = new Map<string, number>();
   /** 今の配役で、逃走者 → 牢屋から出した人数 */
   private readonly rescues = new Map<string, number>();
   /** 「助けて」「助ける」の長押し（人 → 最近の分） */
@@ -646,6 +657,8 @@ export class GameRoom extends DurableObject<Env> {
     this.loadPhotos();
     if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
     if (this.game.area === undefined) this.game.area = null;
+    if (!isShrinkPlan(this.game.shrinkPlan)) this.game.shrinkPlan = { ...DEFAULT_SHRINK_PLAN };
+    if (this.game.shrink === undefined) this.game.shrink = null;
     if (this.game.jail === undefined) this.game.jail = null;
     // 配役の希望を入れる前の版で作った部屋には、決め方が無い
     if (!isWishMode(this.game.wishMode)) this.game.wishMode = DEFAULT_WISH_MODE;
@@ -1071,6 +1084,12 @@ export class GameRoom extends DurableObject<Env> {
         return;
       case 'pos':
         this.onPos(att, msg, now);
+        return;
+      case 'dq':
+        this.onDq(att, now);
+        return;
+      case 'dq-ok':
+        this.onDqReport(att, now);
         return;
       case 'wish':
         this.onWish(ws, att, msg.role, now);
@@ -1704,6 +1723,11 @@ export class GameRoom extends DurableObject<Env> {
     return p.role === 'runner' && p.caughtAssign === this.game.assignId && this.game.assignId > 0;
   }
 
+  /** 牢屋にいて、仲間の助けで出られる人（範囲の外で失格した人は捕まった扱いだが、出られない） */
+  private isJailed(p: Participant): boolean {
+    return this.isCaught(p) && p.caughtVia !== 'out';
+  }
+
   /** 押した時刻：スマホの見積もり（サーバー時刻）を使うが、未来や古すぎる値は届いた時刻に寄せる */
   private pressAt(raw: unknown, now: number): number {
     const at = Number(raw);
@@ -2103,7 +2127,7 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 牢屋の人のスマホが、助けに来た人の「助ける番号」を拾った → その瞬間に解放 */
   private onJailHeard(jailed: Participant, code: string, now: number): void {
-    if (!this.isCaught(jailed) || !this.rescueOpen(now)) return;
+    if (!this.isJailed(jailed) || !this.rescueOpen(now)) return;
     const g = this.game;
     let rescuer: Participant | null = null;
     for (const q of this.people.values()) {
@@ -2174,10 +2198,10 @@ export class GameRoom extends DurableObject<Env> {
     // 押している途中の長押しは、まだ終わっていない（押し始めの時刻がサーバーの今に寄せられて同じ値になっても、重なりとみなす）
     const overlaps = (h: RescueHold) => h.start <= (mine.end ?? Infinity) && (h.end ?? Infinity) >= mine.start;
     const g = this.game;
-    const iAmJailed = this.isCaught(p);
+    const iAmJailed = this.isJailed(p);
     if (!iAmJailed && !this.canRescue(p, now)) return;
     const others = [...this.people.values()]
-      .filter((q) => q.pid !== p.pid && !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isCaught(q) !== iAmJailed)
+      .filter((q) => q.pid !== p.pid && !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isJailed(q) !== iAmJailed)
       .map((q) => ({ q, h: this.rescueHoldsOf(q.pid, now).filter((h) => !h.used && overlaps(h)).sort((a, b) => a.start - b.start)[0] }))
       .filter((x) => x.h && (iAmJailed ? this.canRescue(x.q, now) : true))
       .sort((a, b) => a.h!.start - b.h!.start);
@@ -2191,7 +2215,7 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 牢屋から出す。保存してから、本人と助けた人に知らせ、全員の人数を配り直す */
   private freeFromJail(jailed: Participant, rescuer: Participant | null, via: RescueVia, now: number, data: Record<string, unknown>): void {
-    if (!this.isCaught(jailed)) return;
+    if (!this.isJailed(jailed)) return;
     const freeUntil = now + RESCUE_IMMUNE_MS;
     const prev = { by: jailed.caughtBy, at: jailed.caughtAt, jailMs: jailed.caughtAt !== null ? now - jailed.caughtAt : null };
     this.ctx.storage.transactionSync(() => {
@@ -2424,6 +2448,67 @@ export class GameRoom extends DurableObject<Env> {
     this.flushMatesSoon(!had);
     // 司令塔の位置は、全員の光の地図にも出る
     if (this.seenLeadRole(p)) this.flushGlowSoon(!had);
+  }
+
+  // ---------- 範囲の外で失格 ----------
+
+  /** 失格を受け付けるのは、逃げ始めてからゲームの終わりまで（スマホの遅れ分 DQ_GRACE_MS は見る）。範囲が決まっていて、止めていないとき */
+  private dqOpen(now: number): boolean {
+    const g = this.game;
+    if (!g.area || g.stage !== 'timer' || !g.timer || g.timer.status !== 'running') return false;
+    const inWindow = (t: number) => {
+      const pos = positionAt(g.timer!, t);
+      return pos.kind === 'phase' && pos.index >= 1 && pos.index <= CAPTURE_PHASE_INDEX;
+    };
+    return inWindow(now) || inWindow(now - DQ_GRACE_MS);
+  }
+
+  /**
+   * 範囲の外に20秒いた人（スマホが決めて送ってくる）。逃走者は「捕まった」扱い（牢屋の助けでは出られない）、鬼は記録だけ。
+   * 同じ配役のうちは1回だけ数える
+   */
+  private onDq(att: Attachment, now: number): void {
+    const p = this.inRound(att.pid);
+    if (!p || !this.dqOpen(now)) return;
+    const assignId = this.game.assignId;
+    // 出頭済みなら、遅れて届いた失格の送り直しは捨てる（サーバーを入れ替えて印が消えたあとも、牢屋の状態で分かる）
+    if (this.dqSeen.get(p.pid) === assignId || this.dqDone.get(p.pid) === assignId || p.caughtVia === 'reported') return;
+    this.dqSeen.set(p.pid, assignId);
+    this.log('dq', { p, at: now, data: { role: p.role, wasCaught: this.isCaught(p) } });
+    if (p.role !== 'runner') return;
+    if (!this.isCaught(p)) {
+      this.recordCapture(p, null, now, 'out', { dq: true });
+    } else if (p.caughtVia !== 'out') {
+      // すでに牢屋にいる人が失格した：捕まった扱いのまま、助けでは出られなくする
+      this.sql.exec(`UPDATE participants SET caught_via = 'out' WHERE pid = ?`, p.pid);
+      p.caughtVia = 'out';
+      this.rescueHolds.delete(p.pid);
+      this.claims.delete(p.pid);
+      this.broadcastNow();
+    }
+  }
+
+  /**
+   * 失格のあと、牢屋に出頭した（本人が長押しで伝える）。逃走者は「捕まった」のまま、ふつうの牢屋の人になる（仲間の助けで出られる）。
+   * 鬼は記録だけ。何度届いても1回だけ。スマホが先に解いて、サーバーはあとから揃える（つなぎ直しの送り直し）
+   */
+  private onDqReport(att: Attachment, now: number): void {
+    const p = this.inRound(att.pid);
+    if (!p) return;
+    const assignId = this.game.assignId;
+    const first = this.dqDone.get(p.pid) !== assignId;
+    if (p.role === 'runner' && this.isCaught(p) && p.caughtVia === 'out') {
+      this.dqDone.set(p.pid, assignId);
+      this.log('dq-ok', { p, at: now, data: { role: p.role } });
+      this.sql.exec(`UPDATE participants SET caught_via = 'reported' WHERE pid = ?`, p.pid);
+      p.caughtVia = 'reported';
+      this.broadcastNow();
+      return;
+    }
+    if (p.role === 'oni' && first && this.dqSeen.get(p.pid) === assignId) {
+      this.dqDone.set(p.pid, assignId);
+      this.log('dq-ok', { p, at: now, data: { role: p.role } });
+    }
   }
 
   private dropSpot(pid: string): void {
@@ -2890,6 +2975,7 @@ export class GameRoom extends DurableObject<Env> {
           allCaughtAt: null,
           counts: { oni, runner },
           wishStat,
+          shrink: null,
           ...this.missionReset(now, 'assign'),
         };
         this.ctx.storage.transactionSync(() => {
@@ -2944,8 +3030,13 @@ export class GameRoom extends DurableObject<Env> {
         // 主催者の指名は、この試合のためのもの。始まったら消す（次の配役はまっさらから）
         this.sql.exec(`UPDATE participants SET pin = NULL WHERE pin IS NOT NULL`);
         for (const p of this.people.values()) p.pin = null;
-        this.commit({ stage: 'timer', timer: startTimer(g.durations, now), result: null });
-        this.log('start', { at: now, data: { durations: g.durations } });
+        {
+          // 範囲の縮小：縮む先（毎回ランダムならここで引く）と、時間の段をこのラウンドの分だけ決める
+          const shrink = makeLive(g.shrinkPlan, g.area?.pts, g.durations, Math.random);
+          this.commit({ stage: 'timer', timer: startTimer(g.durations, now), result: null, shrink });
+          this.log('start', { at: now, data: { durations: g.durations } });
+          if (shrink && shrink.steps.length) this.log('shrink-plan', { at: now, data: { center: shrink.center, steps: shrink.steps.length } });
+        }
         break;
       case 'pause':
         if (g.stage !== 'timer' || !g.timer || g.timer.status !== 'running' || timerDone) {
@@ -2994,7 +3085,7 @@ export class GameRoom extends DurableObject<Env> {
             p.caughtVia = null;
           }
         }
-        this.commit({ stage: 'assigned', timer: null, result: null, allCaughtAt: null, resultAuto: false });
+        this.commit({ stage: 'assigned', timer: null, result: null, allCaughtAt: null, resultAuto: false, shrink: null });
         // やり直し：司令塔は同じ人のまま、落ちたことだけ消す
         if (this.game.lead && this.game.lead.fellAt !== null) this.setLead({ fellAt: null });
         break;
@@ -3193,6 +3284,22 @@ export class GameRoom extends DurableObject<Env> {
         this.log(kind, { at: now, data: { pts: place.pts } });
         break;
       }
+      case 'shrink-plan': {
+        // 縮み方：遊ぶ範囲と同じく、試合中（時間が0になる前）は変えない
+        if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        if (!isShrinkPlan(msg.plan)) return this.reject(ws, att, op, 'bad-input');
+        const plan = cleanShrinkPlan(msg.plan);
+        if (JSON.stringify(plan) === JSON.stringify(g.shrinkPlan)) break;
+        this.commit({ shrinkPlan: plan });
+        this.log('shrink-plan', { at: now, data: { ...plan } });
+        break;
+      }
+      case 'shrink-now': {
+        // 主催者の手で今すぐ1段（予告のあと縮む）。逃げ始めてからゲームの終わりまで
+        const res = this.addShrinkStep('host', now, {});
+        if (res !== true) return this.reject(ws, att, op, res);
+        break;
+      }
       case 'clear': {
         // 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。
         // 名簿・時間の設定・名簿の番号は残す。試合中はできない
@@ -3212,6 +3319,7 @@ export class GameRoom extends DurableObject<Env> {
           lead: { ...this.lead(), assignId: 0, oni: null, runner: null, fellAt: null },
           night: g.night + 1,
           nightAt: now,
+          shrink: null,
           ...this.missionReset(now, 'clear'),
         };
         this.dropJail();
@@ -3336,8 +3444,28 @@ export class GameRoom extends DurableObject<Env> {
         }
       }
     }
+    // 成功で範囲も縮める（主催者が縮み方で選んでいれば）。1枚の写真で縮むのは1回だけ。範囲・試合の外なら何もしない
+    if (msg.ok && this.game.shrinkPlan?.mission && this.game.shrink && !this.game.shrink.byPhoto.includes(ph.id)) {
+      this.addShrinkStep('mission', now, { photo: ph.id, by: ph.name });
+    }
     // 成功したかどうかは全員に見せる
     this.broadcastNow();
+  }
+
+  /**
+   * 範囲を1段縮める（ミッション・主催者）。予告を今から始める。逃げ始めてからゲームの終わりまで（止めている間も）。
+   * 縮めたら true、できなければ理由
+   */
+  private addShrinkStep(why: 'mission' | 'host', now: number, data: { photo?: string; by?: string }): true | 'not-allowed' {
+    const g = this.game;
+    if (!g.area || !g.shrink || g.stage !== 'timer' || !g.timer) return 'not-allowed';
+    const pos = positionAt(g.timer, now);
+    if (pos.kind !== 'phase' || pos.index < 1 || pos.index > CAPTURE_PHASE_INDEX) return 'not-allowed';
+    const step = extraStep(elapsedAt(g.timer, now), why);
+    const byPhoto = data.photo ? [...g.shrink.byPhoto, data.photo] : g.shrink.byPhoto;
+    this.commit({ shrink: { ...g.shrink, steps: [...g.shrink.steps, step], byPhoto } });
+    this.log('shrink', { at: now, data: { why, at: step.at, ...data } });
+    return true;
   }
 
   /**
@@ -3349,7 +3477,7 @@ export class GameRoom extends DurableObject<Env> {
     const pos = g.stage === 'timer' && g.timer ? positionAt(g.timer, now) : null;
     if (!pos || pos.kind !== 'phase' || pos.index !== CAPTURE_PHASE_INDEX || g.allCaughtAt != null) return 'not-allowed';
     const jailed = [...this.people.values()]
-      .filter((q) => !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isCaught(q))
+      .filter((q) => !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isJailed(q))
       .sort((a, b) => (a.caughtAt ?? 0) - (b.caughtAt ?? 0) || a.num - b.num);
     if (jailed.length === 0) return 'nobody-jailed';
     const out = n === null ? jailed : jailed.slice(0, n);
@@ -3528,6 +3656,8 @@ export class GameRoom extends DurableObject<Env> {
       resultAuto: g.resultAuto === true,
       micMode: g.micMode,
       area: g.area ?? null,
+      shrinkPlan: g.shrinkPlan ?? DEFAULT_SHRINK_PLAN,
+      shrink: g.shrink ?? null,
       jail: g.jail ?? null,
       wishMode: g.wishMode,
       ...this.wishCounts(),

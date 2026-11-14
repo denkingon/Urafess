@@ -1,4 +1,5 @@
-import { AREA_OUT_MARGIN_M, AreaWatch, checkArea, isFarOutside, JAIL_ARRIVE_M } from '../../shared/area';
+import { AREA_DQ_MS, AREA_OUT_MARGIN_M, AreaWatch, checkArea, isFarOutside, JAIL_ARRIVE_M } from '../../shared/area';
+import { zoneAt, type ZoneNow } from '../../shared/shrink';
 import type { GlowEntry } from '../../shared/protocol';
 import { MATES_STALE_MS, RUN_STALE_MS } from '../../shared/rules';
 import { bearingDeg, compassName, compassNameEn, distanceM, distanceText, distanceTextEn, type LatLon } from '../../shared/run';
@@ -43,7 +44,8 @@ export interface BoardInput {
   /** 自分の役（全体の地図の自分の印と、仲間の色に使う） */
   myKind?: OvKind;
   /** 遊ぶ範囲（全体の地図に線を引き、外を暗くする）。外にいる人は輪で囲む */
-  area?: [number, number][] | null;
+  /** 遊ぶ範囲：頂点の並び、または縮小の入った今の範囲（zoneAt） */
+  area?: [number, number][] | ZoneNow | null;
   /** 牢屋の場所（全体の地図に「牢屋」を出す） */
   jail?: [number, number][] | null;
   /** 自分が範囲の外にいる（見張りが決めた） */
@@ -242,7 +244,18 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
         }
         // 範囲の外にいる人（届いた位置だけで見る。光っている相手は数えない）
         if (area) for (const p of points) if (p.kind !== 'unknown') p.out = isFarOutside(area, p.pos);
-        ov.update({ me: me ? { ...me, acc: meAcc ?? 0 } : null, meKind: myKind ?? 'unknown', meLit, points, labelMax, area: area ?? null, jail: jail ?? null, meOut });
+        const z = area && !Array.isArray(area) ? area : null;
+        ov.update({
+          me: me ? { ...me, acc: meAcc ?? 0 } : null,
+          meKind: myKind ?? 'unknown',
+          meLit,
+          points,
+          labelMax,
+          area: Array.isArray(area) ? area : (z?.pts ?? null),
+          jail: jail ?? null,
+          meOut,
+          zone: z ? { inner: z.inner, next: z.next, center: z.center } : null,
+        });
       }
 
       // 一覧：近い順（自分の位置が分からなければ、光った順）
@@ -328,6 +341,10 @@ export interface GlowDeps {
   sensors: Sensors;
   /** 参加者の画面の外枠。光っている間 is-lit を付ける（ひとことの場所に「光っている」が出る） */
   root?: HTMLElement;
+  /** 範囲の外で失格になった（失格の画面が出ている間、10秒ごとに呼ばれる。サーバーへ伝える） */
+  onDisqualified?: () => void;
+  /** 失格のあと牢屋に出頭した（長押しが終わった。サーバーへ伝える。サーバーが追いつくまで10秒ごとに呼ばれる） */
+  onReported?: () => void;
 }
 
 export interface GlowScreen {
@@ -383,7 +400,7 @@ export function leadStrip(state: ClientState): { tone: 'mine' | 'crew' | 'down' 
   return { tone: 'crew', head: [`司令塔 ${name}`, `COMMANDER ${name}`], body: ['地図は司令塔だけが見られる', 'Only the commander has the map'] };
 }
 
-export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
+export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDeps): GlowScreen {
   const el = document.createElement('section');
   el.className = 'glow';
   el.innerHTML = `
@@ -396,26 +413,131 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
     <div class="area-out" data-k="out" role="alert" hidden>
       <svg class="area-out-arrow" viewBox="-20 -20 40 40" aria-hidden="true"><path d="M0,-15 L11,6 L3,3 L3,15 L-3,15 L-3,3 L-11,6 Z"/></svg>
       <div class="area-out-text"><b data-k="outWord"></b><span data-k="outWhere"></span></div>
+      <div class="area-out-dq"><b class="u" data-k="dqSec"></b><span data-k="dqLbl"></span></div>
+      <i class="area-out-bar" data-k="dqBar"></i>
+    </div>
+    <div class="zone-chip" data-k="zone" role="status" hidden>
+      <svg class="zone-chip-icon" viewBox="-12 -12 24 24" aria-hidden="true"><rect x="-10" y="-10" width="20" height="20" rx="2"/><rect x="-5" y="-5" width="10" height="10" rx="1"/></svg>
+      <span class="zone-chip-word" data-k="zoneWord"></span>
+      <b class="u zone-chip-sec" data-k="zoneSec"></b>
     </div>
     <div class="area-out jail-go" data-k="jailGo" role="status" hidden>
       <svg class="area-out-arrow" viewBox="-20 -20 40 40" aria-hidden="true"><path d="M0,-15 L11,6 L3,3 L3,15 L-3,15 L-3,3 L-11,6 Z"/></svg>
       <div class="area-out-text"><b data-k="jailWord"></b><span data-k="jailWhere"></span></div>
     </div>
   `;
+  // 失格の画面：参加者の画面いっぱいに被せる（捕獲・牢屋の操作も隠れる）
+  const dq = document.createElement('div');
+  dq.className = 'dq';
+  dq.setAttribute('role', 'alertdialog');
+  dq.hidden = true;
+  dq.innerHTML = `
+    <svg class="dq-x" viewBox="-60 -60 120 120" aria-hidden="true"><circle r="52"/><path d="M-26,-26 L26,26 M26,-26 L-26,26"/></svg>
+    <b class="dq-word u">${say(['失格', 'DISQUALIFIED'])}</b>
+    <p class="dq-why">${sent([`範囲の外に${AREA_DQ_MS / 1000}秒いた`, `${AREA_DQ_MS / 1000} seconds out of bounds`])}</p>
+    <p class="dq-order">${sent(['牢屋へ出頭せよ', 'Report to the jail'])}</p>
+    <button type="button" class="dq-report" aria-label="牢屋に着いた（長押し）">
+      <i class="dq-report-fill"></i>
+      <span class="dq-report-text">${say(['牢屋に着いた', "I'M AT THE JAIL"])}</span>
+      <span class="dq-report-hint">${sent(['長押し', 'Hold'])}</span>
+    </button>
+  `;
+  (root ?? el).append(dq);
+  // 「牢屋に着いた」は長押し（押し間違いで失格が解けないように）。押し切ったら失格を解く
+  const REPORT_HOLD_MS = 1500;
+  const reportBtn = dq.querySelector('.dq-report') as HTMLButtonElement;
+  let holdTimer: number | undefined;
+  const endHold = () => {
+    if (holdTimer !== undefined) window.clearTimeout(holdTimer);
+    holdTimer = undefined;
+    reportBtn.classList.remove('is-holding');
+  };
+  reportBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (holdTimer !== undefined) return;
+    reportBtn.classList.add('is-holding');
+    holdTimer = window.setTimeout(() => {
+      endHold();
+      watch.forgive();
+      if (dqKey) writeDq(`${dqKey}:ok`);
+      lastReportSend = Date.now();
+      onReported?.();
+      dqShown = false;
+      dq.hidden = true;
+      root?.classList.remove('is-dq');
+      vibrate(120);
+    }, REPORT_HOLD_MS);
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) reportBtn.addEventListener(ev, endHold);
+  reportBtn.addEventListener('contextmenu', (e) => e.preventDefault());
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
   const ask = el.querySelector('.glow-ask') as HTMLButtonElement;
   const note = q('note');
   const litChip = root?.querySelector('[data-k="lit"]') as HTMLElement | null;
   const board = createLightsBoard({ listMax: 1, start: 'all', labelMax: 8, bilingual: true });
   el.append(board.el);
+  // 範囲が縮む知らせは地図の上に重ねる（「戻れ」の帯と並んでも、地図の高さを取らない）
+  board.el.querySelector('.ov')?.append(q('zone'));
   const outBox = q('out');
   const outArrow = el.querySelector('.area-out-arrow') as SVGElement;
+  const dqBar = q('dqBar');
   const watch = new AreaWatch();
+  const zoneBox = q('zone');
+  let lastZoneKind = 'idle';
   const jailBox = q('jailGo');
   const jailArrow = jailBox.querySelector('.area-out-arrow') as SVGElement;
   let lastOutBuzz = 0;
   const leadBox = q('lead');
   let lastTone = '';
+  let lastSecBuzz = -1;
+  /** 失格は「今の配役」ごと。同じ配役のうちは、アプリを開き直しても失格のまま */
+  let dqKey: string | null = null;
+  let dqShown = false;
+  let lastDqSend = 0;
+  let lastReportSend = 0;
+  const DQ_STORE = 'urafess.dq';
+  const readDq = (): string | null => {
+    try {
+      return localStorage.getItem(DQ_STORE);
+    } catch {
+      return null;
+    }
+  };
+  const writeDq = (k: string) => {
+    try {
+      localStorage.setItem(DQ_STORE, k);
+    } catch {
+      // 保存できない端末（開いている間は失格のまま）
+    }
+  };
+  /** 失格の画面を出す・隠す。出すのは逃げ始めからゲームが終わって広場に戻るまで（結果発表では隠す） */
+  const applyDq = (view: PhoneView, state: ClientState) => {
+    const gk = state.game ? `${state.game.gameId}:${state.game.assignId}` : null;
+    if (gk && gk !== dqKey) {
+      dqKey = gk;
+      watch.clearDq();
+      const saved = readDq();
+      if (saved === gk) watch.disqualified = true;
+      else if (saved === `${gk}:ok`) watch.forgive();
+    }
+    if (watch.disqualified && dqKey && readDq() !== dqKey) writeDq(dqKey);
+    const show = watch.disqualified && view.step >= 3 && view.step <= 5 && view.ended !== true;
+    // サーバーへ伝える：出ている間、つながっていれば10秒ごと（つなぎ直しても届く。サーバーは1回だけ数える）
+    if (show && !view.offline && Date.now() - lastDqSend > 10_000) {
+      lastDqSend = Date.now();
+      onDisqualified?.();
+    }
+    // 出頭済みなのに、サーバーでは失格の牢屋のまま（送りそびれた）なら、10秒ごとに送り直す
+    if (watch.exempt && state.me?.caught?.via === 'out' && !view.offline && Date.now() - lastReportSend > 10_000) {
+      lastReportSend = Date.now();
+      onReported?.();
+    }
+    if (show === dqShown) return;
+    dqShown = show;
+    dq.hidden = !show;
+    if (root) root.classList.toggle('is-dq', show);
+    if (show) vibrate([700, 150, 700]);
+  };
 
   ask.addEventListener('click', () => {
     // このタップの中で許可を聞く（iPhone はタップの直後でないと聞けない）
@@ -429,10 +551,11 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
   return {
     el,
     update(view, state, serverNow) {
+      applyDq(view, state);
       if (el.dataset.glow !== view.glow) el.dataset.glow = view.glow;
       setHidden(el, view.glow === 'none');
       if (view.glow === 'none') {
-        root?.classList.remove('is-lit');
+        root?.classList.remove('is-lit', 'is-out', 'is-dq-soon');
         return;
       }
       const now = Date.now();
@@ -464,7 +587,8 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
       const pos = sensors.position(now);
 
       // 遊ぶ範囲の見張り：逃げ始めてからゲームの終わりまで（止めている間・見学は見ない）。外なら戻る向きと距離
-      const area = state.game?.area?.pts ?? null;
+      // 範囲の縮小が入っていれば、今の範囲（全員が同じ時計で同じ形を出す）
+      const area = zoneAt(state.game?.area, state.game?.shrink, state.game?.timer, serverNow ?? now);
       const bounded = view.role !== 'なし' && (view.step === 3 || view.step === 4) && !view.paused;
       // 牢屋の場所：捕まった人には、範囲の外の「戻れ」の代わりに牢屋への向きと距離（着いたら「牢屋に着いた」）
       const jail = state.game?.jail?.pts ?? null;
@@ -491,9 +615,45 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
       }
       const out = bounded && !toJail && watch.feed(area, pos ? { lat: pos.lat, lon: pos.lon } : null, now);
       if (!bounded || toJail) watch.reset();
-      setHidden(outBox, !out);
-      if (root && root.classList.contains('is-out') !== out) root.classList.toggle('is-out', out);
-      if (out && pos && watch.last) {
+      applyDq(view, state);
+      // 範囲が縮む知らせ：予告（次の範囲の線が出ている）と、縮んでいる間。予告が始まった瞬間に一度震える
+      const zs = area && (view.step === 3 || view.step === 4) ? area.status : null;
+      const zoneOn = !!zs && zs.kind !== 'idle';
+      setHidden(zoneBox, !zoneOn);
+      if (zs && zs.kind !== 'idle') {
+        zoneBox.dataset.kind = zs.kind;
+        const word: Pair =
+          zs.kind === 'warn'
+            ? zs.why === 'mission'
+              ? ['ミッション成功。範囲が縮む', 'MISSION DONE. ZONE SHRINKS IN']
+              : ['範囲が縮む', 'ZONE SHRINKS IN']
+            : ['範囲が縮んでいる', 'ZONE SHRINKING'];
+        setHTML(q('zoneWord'), say(word));
+        setHTML(q('zoneSec'), esc(String(Math.ceil(zs.leftMs / 1000))));
+        if (zs.kind === 'warn' && lastZoneKind !== 'warn') vibrate([200, 100, 200]);
+      }
+      lastZoneKind = zs?.kind ?? 'idle';
+      const showOut = out && !watch.disqualified;
+      setHidden(outBox, !showOut);
+      if (root && root.classList.contains('is-out') !== showOut) root.classList.toggle('is-out', showOut);
+      // 失格までの数え：「戻れ」が出た時点から AREA_DQ_MS。最後の5秒は縁の脈が速くなり、1秒ごとに震える
+      const left = showOut ? watch.dqLeftMs(now) : null;
+      const sec = left === null ? -1 : Math.ceil(left / 1000);
+      const soon = left !== null && left <= 5_000;
+      if (root && root.classList.contains('is-dq-soon') !== soon) root.classList.toggle('is-dq-soon', soon);
+      outBox.classList.toggle('no-dq', showOut && left === null);
+      if (left !== null) {
+        setHTML(q('dqSec'), esc(String(sec)));
+        setHTML(q('dqLbl'), say(['失格まで', 'DQ IN']));
+        dqBar.style.transform = `scaleX(${(left / AREA_DQ_MS).toFixed(3)})`;
+        if (soon && sec !== lastSecBuzz) {
+          lastSecBuzz = sec;
+          vibrate(150);
+        }
+      } else {
+        lastSecBuzz = -1;
+      }
+      if (showOut && pos && watch.last) {
         const to = watch.last.nearest;
         const deg = bearingDeg(pos, to);
         const head = sensors.heading(now);

@@ -44,6 +44,8 @@ const KIND_NAME: Record<string, string> = {
   cast: '主催者の指名',
   recast: '主催者が役を動かした',
   area: '遊ぶ範囲',
+  dq: '範囲の外で失格',
+  'dq-ok': '失格のあと牢屋に出頭した',
   'jail-place': '牢屋の場所',
   remove: '外す',
   clear: '新しい夜を始める',
