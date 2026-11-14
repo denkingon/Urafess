@@ -216,6 +216,69 @@
 .join .me { background: var(--tsuki); color: var(--yami); min-height: 112px; font-size: 34px; }
 .join .me:disabled { background: transparent; color: var(--tsuki-muted); border: 1px solid #2b2e38; }
 .join button.quiet { color: var(--tsuki-muted); font-size: max(var(--min), 14px); display: flex; flex-direction: column; align-items: center; gap: 2px; }
+/* 前のスマホから移す：6桁は URAJI で大きく */
+.join input.code { height: 64px; font-size: 34px; letter-spacing: .3em; text-align: center; }
+
+/* ---------- 自分のページ（ステータスと設定） ---------- */
+.account { padding-top: calc(16px + env(safe-area-inset-top)); gap: 16px; padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
+.account [hidden] { display: none !important; }
+.account .ac-top { display: flex; justify-content: flex-start; margin-left: -8px; }
+.account .ac-back { flex-direction: row !important; gap: 8px !important; text-decoration: none; color: var(--tsuki); }
+.account .ac-back .ja, .account .ac-back .en { display: inline; }
+.account .ac-name { margin: 4px 0 0; font-size: clamp(30px, 9vw, 40px); font-weight: 900; line-height: 1.2; overflow-wrap: anywhere; }
+.account .ac-h { margin: 18px 0 0; font-size: max(var(--min), 15px); color: var(--tsuki-muted); display: flex; gap: 10px; align-items: baseline; }
+.account .ac-h .ja, .account .ac-h .en { display: inline; }
+.account .ac-loading { color: var(--tsuki-muted); font-size: max(var(--min), 15px); }
+/* 来た夜：大きい数と、夜の帯（来た夜は月白の丸、来ていない夜は輪だけ） */
+.account .ac-nights { border: 1px solid #2b2e38; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.account .ac-big { display: flex; align-items: baseline; gap: 12px; }
+.account .ac-big > .u { font-size: 72px; line-height: .9; }
+.account .ac-unit { display: flex; flex-direction: column; color: var(--tsuki-muted); font-size: max(var(--min), 16px); font-weight: 700; }
+.account .ac-strip { display: flex; flex-wrap: wrap; gap: 10px 6px; }
+.account .ac-n { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 40px; }
+.account .ac-n i { display: block; width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid #4c4d55; }
+.account .ac-n.here i { background: var(--tsuki); border-color: var(--tsuki); }
+.account .ac-n span { font-family: "URAJI", "Hiragino Sans", system-ui, sans-serif; font-weight: 900; font-size: max(calc(var(--min) * 1.2), 19px); color: #4c4d55; }
+.account .ac-n.here span { color: var(--tsuki); }
+/* 役と捕獲：数は URAJI。鬼は朱と角、逃走者は月白の点 */
+.account .ac-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.account .ac-grid .ac-tile { grid-column: span 2; padding: 12px 10px; }
+.account .ac-grid .ac-tile.oni, .account .ac-grid .ac-tile.run { grid-column: span 3; padding: 12px 14px; }
+.account .ac-tile { border: 1px solid #2b2e38; border-radius: 16px; padding: 12px 14px; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto 1fr; align-items: center; align-content: start; column-gap: 10px; }
+.account .ac-tile .ac-lbl { align-self: start; }
+.account .ac-tile > .u { grid-column: 2; font-size: 44px; line-height: 1; }
+.account .ac-tile .ac-lbl { grid-column: 1 / -1; margin-top: 6px; overflow-wrap: anywhere; color: var(--tsuki-muted); font-size: max(var(--min), 14px); font-weight: 700; line-height: 1.25; }
+.account .ac-tile .ac-ic { grid-row: 1; grid-column: 1; }
+.account .ac-tile .ac-ic .gl { width: 30px; height: 30px; }
+.account .ac-tile.oni { color: var(--shu, #ff6a3d); border-color: color-mix(in srgb, #ff6a3d 45%, #2b2e38); }
+.account .ac-tile.oni .ac-lbl { color: color-mix(in srgb, #ff6a3d 75%, #a29d93); }
+.account .ac-tile:not(.oni):not(.run) > .u { grid-column: 1 / -1; }
+/* 設定 */
+.account .ac-set { border-top: 1px solid #2b2e38; padding-top: 16px; }
+.account .ac-set form { margin-top: 0; }
+.account .ac-row { display: flex; gap: 8px; }
+.account .ac-row input { flex: 1 1 auto; min-width: 0; }
+.account .ac-row button[type="submit"] { flex: 0 0 auto; min-height: 52px; border-radius: 10px; padding: 0 16px; font-size: max(var(--min), 16px); }
+.account .ac-code { display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center; }
+.account .ac-digits { font-size: clamp(48px, 16vw, 72px); line-height: 1; letter-spacing: .08em; }
+.account .ac-digits .sp { display: inline-block; width: .35em; }
+.account button.danger { color: var(--shu, #ff6a3d) !important; border-color: color-mix(in srgb, #ff6a3d 50%, #2b2e38) !important; }
+.account button:disabled { color: #4c4d55 !important; border-color: #2b2e38 !important; }
+
+/* 参加者の画面の「自分のページ」（試合の外だけ） */
+.phone.player .p-mine { order: 3; align-self: center; margin-top: 12px; min-height: 44px; border: none; background: transparent; color: var(--tsuki-muted); font-size: max(var(--min), 15px); font-weight: 700; display: flex; flex-direction: column; align-items: center; gap: 2px; text-decoration: none; }
+.phone.player .p-mine[hidden] { display: none; }
+
+/* 主催者の入口への道。一度主催者で入ったスマホにだけ、入室の右上のすみに出す（並びの外なので、入室の高さは変わらない）。
+   出していないスマホでは題の長押しで開くので、題は長押ししても字の選択やメニューが出ないようにする */
+.join h1 { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
+.join { position: relative; }
+.join a.door { position: absolute; top: calc(4px + env(safe-area-inset-top)); right: 8px; min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 12px; color: var(--tsuki-muted); opacity: .6; font-size: var(--min); text-decoration: none; }
+.join a.door .ja, .join a.door .en { display: inline; }
+.join a.door .en.u:not(.solo) { font-size: calc(var(--min) * 1.2); line-height: 1; }
+/* 合言葉の画面から参加者の画面へ戻る道 */
+.join a.quiet { align-self: center; min-height: 44px; display: flex; align-items: center; padding: 0 16px; color: var(--tsuki-muted); font-size: max(var(--min), 14px); text-decoration: underline; text-underline-offset: 3px; }
+.join a.door:focus-visible, .join a.quiet:focus-visible { outline: 2px solid var(--tsuki); outline-offset: 3px; opacity: 1; }
 
 /* ---------- 走ると光る ---------- */
 /*
@@ -352,3 +415,21 @@
 .phone.player.is-glow .slot > .mission-card .mission-shoot { width: auto; min-height: 44px; padding: 0 16px; font-size: max(var(--min), 16px); align-self: center; }
 .phone.player.is-glow .slot > .mission-card .mission-mine, .phone.player.is-glow .slot > .mission-card .mission-ok { grid-column: 1 / -1; font-size: max(var(--min), 16px); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .phone.player.is-glow .slot > .mission-card .mission-mine:not(:empty) ~ .mission-ok { display: none; }
+
+/* ---------- 背景の地図（?bg=off でなければ body に .has-backdrop がつく）。値は「裏フェス 地図 つまみ」で決めた形 ---------- */
+.backdrop { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; background: #0b0c10; }
+.bd-svg { width: 100%; height: 100%; display: block; }
+.bd-green { fill: #0d0f12; }
+.bd-water { fill: #101822; }
+.bd-plaza { fill: #1c1e27; }
+.bd-road, .bd-path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.bd-road { stroke: #20222b; stroke-width: 6; }
+.bd-road.big { stroke-width: 9.6; }
+.bd-path { stroke: #2c2f3a; stroke-width: 2; }
+.bd-path.steps { stroke-dasharray: 1.2 1.6; stroke-linecap: butt; }
+.bd-bld { fill: #ff6a3d; }
+.backdrop-credit { position: fixed; left: 8px; bottom: calc(2px + env(safe-area-inset-bottom)); z-index: 2; font-size: 12px; line-height: 1.2; color: #a29d93; opacity: .8; text-decoration: none; }
+.has-backdrop #app { position: relative; z-index: 1; }
+/* 地の色（役の色を混ぜた闇）を透かして、後ろの地図を見せる。字と絵はそのまま */
+.has-backdrop .player { background: color-mix(in srgb, var(--ground) var(--veil, 45%), transparent); }
+.has-backdrop .join { background: color-mix(in srgb, var(--yami) var(--veil, 45%), transparent); }

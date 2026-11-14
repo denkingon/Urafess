@@ -1,5 +1,6 @@
 import './styles.css';
 import { RunReporter } from '../shared/run';
+import { encodeHostKey } from '../shared/hostkey';
 import { MATES_SEND_EVERY_MS } from '../shared/rules';
 import { bootQuiet, connectingView, participantView, type PhoneView } from '../shared/viewmodel';
 import { GameClient, type KeyValueStore } from './core/game-client';
@@ -9,6 +10,7 @@ import { AnnounceChime } from './sound/chime';
 import { SoundEmitter } from './sound/emitter';
 import { SoundListener } from './sound/listener';
 import { Sensors } from './sense';
+import { callAccount, createAccount, errorText } from './views/account';
 import { createAnnounce } from './views/announce';
 import { createCapture } from './views/capture';
 import { createGlow } from './views/glow';
@@ -18,6 +20,7 @@ import { createInstall, type InstallScreen } from './views/install';
 import { createJoin, type EntryMode } from './views/join';
 import { createLab } from './views/lab';
 import { createMission, createPhotoLoader } from './views/mission';
+import { mountBackdrop } from './views/backdrop';
 import { createRunLab } from './views/lab-run';
 import { createPhone } from './views/phone';
 import { createScreenKeeper } from './wake-lock';
@@ -39,6 +42,10 @@ const storage: KeyValueStore = {
 
 const root = document.getElementById('app')!;
 
+/** このスマホは主催者で入ったことがある（入室の右上に「主催者 HOST」を出す印。合言葉を変えても残る） */
+const HOST_DEVICE_KEY = 'urafess:host-device';
+const WRONG_KEY = '合言葉が違う。打った字はそのまま残してある';
+
 /** 試合中（配役〜タイマー）は画面を消さない */
 const screenKeeper = createScreenKeeper();
 const inMatch = (stage: string | undefined) => stage === 'assigned' || stage === 'timer';
@@ -46,7 +53,7 @@ const inMatch = (stage: string | undefined) => stage === 'assigned' || stage ===
 if (isLab) {
   startLab();
 } else if (isHost) {
-  // 主催者用の合言葉は URL の ?token= で一度渡せば、この端末に覚えさせて URL からは消す
+  // 主催者用の合言葉は、合言葉の欄に打つ（一度通ればこの端末が覚える）。URL の ?token= で渡してもいい（URL からは消す）
   const fromUrl = params.get('token');
   if (fromUrl) {
     storage.set('urafess:host-token', fromUrl);
@@ -57,6 +64,8 @@ if (isLab) {
   if (!token) showTokenForm();
   else startHost(token);
 } else {
+  // 背景の地図：参加者の画面の後ろに SFC の地図を敷く（?bg=off で消せる）
+  if (params.get('bg') !== 'off') mountBackdrop();
   const path = installPath();
   if (path === 'line' && escapeLine()) {
     // LINE が外のブラウザで開き直す。この画面はこのまま閉じられる
@@ -151,17 +160,48 @@ function sessionSet(k: string, v: string): void {
 function startPlayer(): void {
   const client = makeClient({ kind: 'player' });
   startUpdateChecks(() => !(client.state.phase === 'ready' && inMatch(client.state.game?.stage)));
+  // 自分のページ（ステータスと設定）。開いている間は、試合が始まるまでこちらを出す
+  let accountOpen = false;
+  const account = createAccount({
+    gameId,
+    identity: () => client.state.identity,
+    renamed: (name) => client.setName(name),
+    forget: () => {
+      accountOpen = false;
+      client.forget();
+    },
+    close: () => {
+      accountOpen = false;
+    },
+  });
+  const openAccount = () => {
+    if (!client.state.identity) return;
+    accountOpen = true;
+    account.open();
+  };
   const join = createJoin({
     join: (name) => client.join(name),
     enter: () => client.enter(),
     forget: () => client.forget(),
     reclaim: () => client.reclaim(),
     backToName: (message) => client.backToName(message),
+    openAccount,
+    take: async (code) => {
+      const r = await callAccount<{ pid: string; key: string; num: number; name: string }>(gameId, 'POST', null, { op: 'take', code });
+      if (!r.ok) return errorText(r.error);
+      client.adopt(r.value);
+      return null;
+    },
+  }, {
+    href: `/host${gameId === 'main' ? '' : `?g=${gameId}`}`,
+    // 一度主催者で入ったスマホにだけ、右上に「主催者 HOST」を出す
+    visible: storage.get(HOST_DEVICE_KEY) === '1' || !!storage.get('urafess:host-token'),
   });
   // 入室画面が最後に出していた姿（「入っている…」の間も、押した画面のまま待つ）
   let entryMode: EntryMode = 'name';
   let askedPersist = false;
   const phone = createPhone();
+  phone.mine.addEventListener('click', openAccount);
   // 捕獲：逃走者のスマホは長押しの間3桁を鳴らし、鬼のスマホはマイクで聞く
   const emitter = new SoundEmitter();
   const listener = new SoundListener();
@@ -259,6 +299,17 @@ function startPlayer(): void {
       askedPersist = true;
       void navigator.storage?.persist?.().catch(() => false);
     }
+    if (accountOpen) {
+      // 試合が始まった（今夜に入っている）・このスマホが名前を忘れた → 自分のページを閉じる
+      const inGame = s.phase === 'ready' && inMatch(s.game?.stage);
+      if (!s.identity || inGame) {
+        accountOpen = false;
+      } else {
+        show(account.el);
+        account.update(false);
+        return;
+      }
+    }
     const mode = entryModeOf(s.phase);
     if (mode || s.phase === 'joining') {
       if (mode) entryMode = mode;
@@ -275,12 +326,14 @@ function startPlayer(): void {
       show(phone.el);
       const waiting = connectingView(s.online);
       lastView = waiting;
+      phone.mine.hidden = true;
       phone.update(waiting);
       mission.update(null, null);
       glow.update(waiting, s, client.serverNow());
       return;
     }
     show(phone.el);
+    phone.mine.hidden = inMatch(s.game.stage);
     const serverNow = client.serverNow() ?? Date.now();
     const view = participantView(s.game, s.me, serverNow, s.online);
     lastView = view;
@@ -346,14 +399,16 @@ function startLab(): void {
 
 function startHost(token: string): void {
   const client = makeClient({ kind: 'host', token });
+  // 合言葉に日本語が入っていると、そのままではヘッダーに載せられない（記録の保存と写真が送る前に失敗する）
+  const hostHeaders = { 'x-host-token': encodeHostKey(token) };
   startUpdateChecks(() => !inMatch(client.state.game?.stage));
-  const photos = createPhotoLoader(gameId, () => ({ 'x-host-token': token }));
+  const photos = createPhotoLoader(gameId, () => hostHeaders);
   // 走ると光る：主催者の画面の地図の真ん中（位置）と向き。主催者は光らない
   const sensors = new Sensors();
   const host = createHost({
     command: (op, extra) => client.command(op, extra),
     downloadLog: async () => {
-      const res = await fetch(`/api/game/${gameId}/log`, { headers: { 'x-host-token': token }, cache: 'no-store' });
+      const res = await fetch(`/api/game/${gameId}/log`, { headers: hostHeaders, cache: 'no-store' });
       if (!res.ok) throw new Error(`log ${res.status}`);
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a');
@@ -366,7 +421,7 @@ function startHost(token: string): void {
     },
     photo: (id) => photos.get(id),
     album: async () => {
-      const res = await fetch(`/api/game/${gameId}/photos`, { headers: { 'x-host-token': token }, cache: 'no-store' });
+      const res = await fetch(`/api/game/${gameId}/photos`, { headers: hostHeaders, cache: 'no-store' });
       if (!res.ok) throw new Error(`photos ${res.status}`);
       return res.json();
     },
@@ -384,9 +439,10 @@ function startHost(token: string): void {
     if (s.phase === 'denied') {
       screenKeeper.set(false);
       storage.remove('urafess:host-token');
-      showTokenForm('合言葉が違う。');
+      showTokenForm(WRONG_KEY, token);
       return false;
     }
+    if (s.host && storage.get(HOST_DEVICE_KEY) !== '1') storage.set(HOST_DEVICE_KEY, '1');
     host.update({
       game: s.game,
       host: s.host,
@@ -400,25 +456,73 @@ function startHost(token: string): void {
   });
 }
 
-function showTokenForm(error?: string): void {
+
+/**
+ * 主催者の入口。合言葉は見える字で打つ（伏せ字の欄だと、スマホは日本語のキーボードに切り替えられない）。
+ * 空白・大文字小文字・全角半角はどう打っても合う。合っているのを確かめてから、この端末に覚えさせる
+ */
+function showTokenForm(error?: string, tried = ''): void {
   const el = document.createElement('main');
-  el.className = 'phone join';
+  el.className = 'phone join host-door';
   el.innerHTML = `
     <h1>主催者</h1>
     <form>
       <label for="token">主催者用の合言葉</label>
-      <input id="token" type="password" autocomplete="off" required>
-      <p class="error" ${error ? '' : 'hidden'}>${error ?? ''}</p>
+      <input id="token" name="token" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go" required>
+      <p class="note">空白・大文字小文字・全角半角は、どう打っても合う。一度入れば、このスマホが覚える</p>
+      <p class="error" role="alert" hidden></p>
       <button type="submit">入る</button>
-    </form>`;
-  el.querySelector('form')!.addEventListener('submit', (e) => {
+    </form>
+    <div class="spacer"></div>
+    <a class="quiet" href="/${gameId === 'main' ? '' : `?g=${gameId}`}">参加者の画面へ</a>`;
+  const input = el.querySelector('input')!;
+  const errorEl = el.querySelector('.error') as HTMLElement;
+  const submit = el.querySelector('button')!;
+  const showError = (message: string | null) => {
+    errorEl.hidden = !message;
+    errorEl.textContent = message ?? '';
+  };
+  input.value = tried;
+  showError(error ?? null);
+  let busy = false;
+  // 打ち直しはじめたら「違う」を消す
+  input.addEventListener('input', () => showError(null));
+  el.querySelector('form')!.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const value = (el.querySelector('input') as HTMLInputElement).value.trim();
-    if (!value) return;
-    storage.set('urafess:host-token', value);
-    location.reload();
+    const value = input.value.trim();
+    if (!value || busy) return;
+    busy = true;
+    submit.disabled = true;
+    submit.textContent = '確かめている…';
+    showError(null);
+    const verdict = await checkHostKey(value);
+    if (verdict === 'ok' || verdict === 'unknown') {
+      // unknown＝確かめる口が無いサーバー。前と同じく、つないでから決まる
+      storage.set('urafess:host-token', value);
+      location.reload();
+      return;
+    }
+    busy = false;
+    submit.disabled = false;
+    submit.textContent = '入る';
+    showError(verdict === 'wrong' ? WRONG_KEY : 'つながらない。電波を確かめて、もう一度「入る」を押す');
+    input.focus();
+    if (verdict === 'wrong') input.select();
   });
   root.replaceChildren(el);
+  setTimeout(() => input.focus(), 0);
+}
+
+/** 合言葉が合っているかをサーバーに聞く。覚える前に確かめるので、間違えても打った字が消えない */
+async function checkHostKey(value: string): Promise<'ok' | 'wrong' | 'offline' | 'unknown'> {
+  try {
+    const res = await fetch(`/api/game/${gameId}/key`, { headers: { 'x-host-token': encodeHostKey(value) }, cache: 'no-store' });
+    if (res.status === 204) return 'ok';
+    if (res.status === 403) return 'wrong';
+    return 'unknown';
+  } catch {
+    return 'offline';
+  }
 }
 
 // ---------- 共通 ----------
