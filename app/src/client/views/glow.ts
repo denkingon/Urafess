@@ -300,6 +300,8 @@ export interface GlowDeps {
   sensors: Sensors;
   /** 参加者の画面の外枠。光っている間 is-lit を付ける（ひとことの場所に「光っている」が出る） */
   root?: HTMLElement;
+  /** 範囲の外で失格になった（失格の画面が出ている間、10秒ごとに呼ばれる。サーバーへ伝える） */
+  onDisqualified?: () => void;
 }
 
 export interface GlowScreen {
@@ -322,7 +324,7 @@ function senseProblem(s: Sensors): Pair | null {
   return null;
 }
 
-export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
+export function createGlow({ sensors, root, onDisqualified }: GlowDeps): GlowScreen {
   const el = document.createElement('section');
   el.className = 'glow';
   el.innerHTML = `
@@ -364,6 +366,7 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
   /** 失格は「今の配役」ごと。同じ配役のうちは、アプリを開き直しても失格のまま */
   let dqKey: string | null = null;
   let dqShown = false;
+  let lastDqSend = 0;
   const DQ_STORE = 'urafess.dq';
   const readDq = (): string | null => {
     try {
@@ -389,6 +392,11 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
     }
     if (watch.disqualified && dqKey && readDq() !== dqKey) writeDq(dqKey);
     const show = watch.disqualified && view.step >= 3 && view.step <= 5 && view.ended !== true;
+    // サーバーへ伝える：出ている間、つながっていれば10秒ごと（つなぎ直しても届く。サーバーは1回だけ数える）
+    if (show && !view.offline && Date.now() - lastDqSend > 10_000) {
+      lastDqSend = Date.now();
+      onDisqualified?.();
+    }
     if (show === dqShown) return;
     dqShown = show;
     dq.hidden = !show;

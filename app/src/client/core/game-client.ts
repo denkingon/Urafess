@@ -350,6 +350,11 @@ export class GameClient {
     this.send({ t: 'sense', motion, geo });
   }
 
+  /** 範囲の外に20秒いて失格になったことを伝える（同じ配役のうちは何度送ってもサーバーが1回だけ数える） */
+  disqualified(): void {
+    this.send({ t: 'dq' });
+  }
+
   /** 逃走者が「捕まった」を取り下げる */
   cancelClaim(): void {
     this.pending = { kind: 'cancel', at: this.deps.now() };

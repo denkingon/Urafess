@@ -308,6 +308,8 @@ interface RescueHold {
 
 const LOBBY_BROADCAST_MS = 300;
 const HOST_UPDATE_MS = 500;
+/** 範囲の外で失格の知らせを、スマホの遅れ・電波の詰まりの分だけ、ゲームの段階が終わったあとでも受け付ける */
+const DQ_GRACE_MS = 5_000;
 /** 押した時刻として受け付けるのは、届いた時刻からこれだけ前まで（電波の詰まり・つなぎ直しの送り直しで遅れて届く分） */
 const PRESS_MAX_DELAY_MS = 60_000;
 /** 同じ鬼が同じ音を何度も聞き取ったとき、記録し直すまでの間隔（逃走者のスマホは繰り返し鳴らす） */
@@ -345,6 +347,8 @@ export class GameRoom extends DurableObject<Env> {
   private readonly runs = new Map<string, RunRec>();
   /** 今の配役で、鬼 → 捕まえた回数（解放されても減らない。主催者の取り消しでだけ減る） */
   private readonly catches = new Map<string, number>();
+  /** 範囲の外で失格を数えた人（配役の番号つき。同じ配役のうちは1回だけ） */
+  private readonly dqSeen = new Map<string, number>();
   /** 今の配役で、逃走者 → 牢屋から出した人数 */
   private readonly rescues = new Map<string, number>();
   /** 「助けて」「助ける」の長押し（人 → 最近の分） */
@@ -948,6 +952,9 @@ export class GameRoom extends DurableObject<Env> {
       case 'pos':
         this.onPos(att, msg, now);
         return;
+      case 'dq':
+        this.onDq(att, now);
+        return;
     }
   }
 
@@ -1225,6 +1232,11 @@ export class GameRoom extends DurableObject<Env> {
 
   private isCaught(p: Participant): boolean {
     return p.role === 'runner' && p.caughtAssign === this.game.assignId && this.game.assignId > 0;
+  }
+
+  /** 牢屋にいて、仲間の助けで出られる人（範囲の外で失格した人は捕まった扱いだが、出られない） */
+  private isJailed(p: Participant): boolean {
+    return this.isCaught(p) && p.caughtVia !== 'out';
   }
 
   /** 押した時刻：スマホの見積もり（サーバー時刻）を使うが、未来や古すぎる値は届いた時刻に寄せる */
@@ -1625,7 +1637,7 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 牢屋の人のスマホが、助けに来た人の「助ける番号」を拾った → その瞬間に解放 */
   private onJailHeard(jailed: Participant, code: string, now: number): void {
-    if (!this.isCaught(jailed) || !this.rescueOpen(now)) return;
+    if (!this.isJailed(jailed) || !this.rescueOpen(now)) return;
     const g = this.game;
     let rescuer: Participant | null = null;
     for (const q of this.people.values()) {
@@ -1696,10 +1708,10 @@ export class GameRoom extends DurableObject<Env> {
     // 押している途中の長押しは、まだ終わっていない（押し始めの時刻がサーバーの今に寄せられて同じ値になっても、重なりとみなす）
     const overlaps = (h: RescueHold) => h.start <= (mine.end ?? Infinity) && (h.end ?? Infinity) >= mine.start;
     const g = this.game;
-    const iAmJailed = this.isCaught(p);
+    const iAmJailed = this.isJailed(p);
     if (!iAmJailed && !this.canRescue(p, now)) return;
     const others = [...this.people.values()]
-      .filter((q) => q.pid !== p.pid && !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isCaught(q) !== iAmJailed)
+      .filter((q) => q.pid !== p.pid && !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isJailed(q) !== iAmJailed)
       .map((q) => ({ q, h: this.rescueHoldsOf(q.pid, now).filter((h) => !h.used && overlaps(h)).sort((a, b) => a.start - b.start)[0] }))
       .filter((x) => x.h && (iAmJailed ? this.canRescue(x.q, now) : true))
       .sort((a, b) => a.h!.start - b.h!.start);
@@ -1713,7 +1725,7 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 牢屋から出す。保存してから、本人と助けた人に知らせ、全員の人数を配り直す */
   private freeFromJail(jailed: Participant, rescuer: Participant | null, via: RescueVia, now: number, data: Record<string, unknown>): void {
-    if (!this.isCaught(jailed)) return;
+    if (!this.isJailed(jailed)) return;
     const freeUntil = now + RESCUE_IMMUNE_MS;
     const prev = { by: jailed.caughtBy, at: jailed.caughtAt, jailMs: jailed.caughtAt !== null ? now - jailed.caughtAt : null };
     this.ctx.storage.transactionSync(() => {
@@ -1934,6 +1946,43 @@ export class GameRoom extends DurableObject<Env> {
     const had = this.spots.has(p.pid);
     this.spots.set(p.pid, { pid: p.pid, lat: pos.lat, lon: pos.lon, acc: pos.acc, at: now });
     this.flushMatesSoon(!had);
+  }
+
+  // ---------- 範囲の外で失格 ----------
+
+  /** 失格を受け付けるのは、逃げ始めてからゲームの終わりまで（スマホの遅れ分 DQ_GRACE_MS は見る）。範囲が決まっていて、止めていないとき */
+  private dqOpen(now: number): boolean {
+    const g = this.game;
+    if (!g.area || g.stage !== 'timer' || !g.timer || g.timer.status !== 'running') return false;
+    const inWindow = (t: number) => {
+      const pos = positionAt(g.timer!, t);
+      return pos.kind === 'phase' && pos.index >= 1 && pos.index <= CAPTURE_PHASE_INDEX;
+    };
+    return inWindow(now) || inWindow(now - DQ_GRACE_MS);
+  }
+
+  /**
+   * 範囲の外に20秒いた人（スマホが決めて送ってくる）。逃走者は「捕まった」扱い（牢屋の助けでは出られない）、鬼は記録だけ。
+   * 同じ配役のうちは1回だけ数える
+   */
+  private onDq(att: Attachment, now: number): void {
+    const p = this.inRound(att.pid);
+    if (!p || !this.dqOpen(now)) return;
+    const assignId = this.game.assignId;
+    if (this.dqSeen.get(p.pid) === assignId) return;
+    this.dqSeen.set(p.pid, assignId);
+    this.log('dq', { p, at: now, data: { role: p.role, wasCaught: this.isCaught(p) } });
+    if (p.role !== 'runner') return;
+    if (!this.isCaught(p)) {
+      this.recordCapture(p, null, now, 'out', { dq: true });
+    } else if (p.caughtVia !== 'out') {
+      // すでに牢屋にいる人が失格した：捕まった扱いのまま、助けでは出られなくする
+      this.sql.exec(`UPDATE participants SET caught_via = 'out' WHERE pid = ?`, p.pid);
+      p.caughtVia = 'out';
+      this.rescueHolds.delete(p.pid);
+      this.claims.delete(p.pid);
+      this.broadcastNow();
+    }
   }
 
   private dropSpot(pid: string): void {
@@ -2510,7 +2559,7 @@ export class GameRoom extends DurableObject<Env> {
     const pos = g.stage === 'timer' && g.timer ? positionAt(g.timer, now) : null;
     if (!pos || pos.kind !== 'phase' || pos.index !== CAPTURE_PHASE_INDEX || g.allCaughtAt != null) return 'not-allowed';
     const jailed = [...this.people.values()]
-      .filter((q) => !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isCaught(q))
+      .filter((q) => !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isJailed(q))
       .sort((a, b) => (a.caughtAt ?? 0) - (b.caughtAt ?? 0) || a.num - b.num);
     if (jailed.length === 0) return 'nobody-jailed';
     const out = n === null ? jailed : jailed.slice(0, n);

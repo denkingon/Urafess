@@ -317,7 +317,12 @@ export type ClientMsg =
   /** このスマホで、動きのセンサーと位置が使えるか（変わったときと、つなぎ直したときに送る。主催者画面に数が出る） */
   | { t: 'sense'; motion: SenseState; geo: SenseState }
   /** 全体の地図：自分の位置（ゲームの段階の間だけ MATES_SEND_EVERY_MS ごとに送る。段階の外・捕まった人の分は、サーバーが捨てる） */
-  | { t: 'pos'; lat: number; lon: number; acc: number };
+  | { t: 'pos'; lat: number; lon: number; acc: number }
+  /**
+   * 遊ぶ範囲の外に20秒いて失格になった（スマホが自分で決める）。逃走者は「捕まった」扱いで牢屋の助けでは出られず、鬼は記録だけ。
+   * 同じ配役のうちは何度送っても1回だけ数える（つなぎ直しの送り直し用）
+   */
+  | { t: 'dq' };
 
 /**
  * 本人だけに出す短い知らせ（画面の帯・振動）。状態そのものは snap の me で届く。
