@@ -6,11 +6,19 @@ import {
   PHOTO_STATUS_NAME,
   photosRevealed,
 } from '../../shared/mission';
-import type { GameView, MeView, MissionOk } from '../../shared/protocol';
+import { checkArea } from '../../shared/area';
+import { inZone } from '../../shared/mission';
+import type { GameView, MeView, MissionOk, MissionView } from '../../shared/protocol';
+import { HOLD_MIN_MS } from '../../shared/rules';
+import { bearingDeg, compassName, distanceText, type LatLon } from '../../shared/run';
+import { formatClock } from '../../shared/schedule';
 
 /**
- * ミッション（集合写真）の参加者の画面（見た目の層）。
- * - 札（長押しの上）：ミッションの題・「写真を撮る」・自分の写真の状態・成功した人の名前（全員に見える）
+ * ミッションの参加者の画面（見た目の層）。種類は3つ（集合写真・合流・範囲）で、札の形は同じ：
+ * 題｜押すもの（写真を撮る・合流の長押し・残り時間）、その下に自分の状態と全体の状態。
+ * - 集合写真：「写真を撮る」・自分の写真の状態・成功した人の名前（全員に見える）
+ * - 合流：組の相手の名前と、2人で同時に押す「合流」の長押し。鬼には「誰と誰が合流しようとしているか」
+ * - 範囲：集まる人数・残り時間・いま中にいる人数・自分が中か外か。範囲は全体の地図に蓄光の面で出る（鬼にも）
  * - 写真の並び（結果発表の間、真ん中）：成功した写真を全員に見せる
  */
 
@@ -136,6 +144,142 @@ export interface MissionDeps {
   /** 合い鍵（名簿の人）。無ければ送れない */
   identity(): { pid: string; key: string } | null;
   serverNow(): number;
+  /** 合流の長押し（押し始め・離した。時刻はスマホの時計） */
+  meetStart?(localAt: number): void;
+  meetEnd?(localAt: number): void;
+  /** 自分の位置（範囲の中か外かを自分のスマホで見る）。取れていなければ null */
+  position?(): LatLon | null;
+}
+
+function vibrate(pattern: number | number[]): void {
+  try {
+    navigator.vibrate?.(pattern);
+  } catch {
+    // 震えない端末
+  }
+}
+
+/** 札に出す中身（種類ごとに組み立てる。見た目は同じ形） */
+interface CardText {
+  title: string;
+  state: string;
+  /** 右に出すもの：shoot＝写真を撮る、meet＝合流の長押し、clock＝残り時間、none＝何も */
+  action: 'shoot' | 'meet' | 'clock' | 'none';
+  clock: string;
+  mine: string;
+  mineState: string;
+  ok: string;
+}
+
+/** 残り時間の字（締め切りなし・締め切ったあとは空。止めている間は「止」） */
+function leftText(mission: MissionView, game: GameView, now: number): string {
+  if (!mission.open || !mission.until) return '';
+  if (game.timer?.status === 'paused') return '止';
+  return formatClock(mission.until - now);
+}
+
+/** 合流の札 */
+export function meetCard(mission: MissionView, game: GameView, me: MeView, now: number, holding: boolean): CardText {
+  const meet = mission.meet;
+  const my = me.meet && me.meet.missionId === mission.id ? me.meet : null;
+  const clock = leftText(mission, game, now);
+  const left = clock ? `（残り ${clock}）` : '';
+  const done = mission.done ?? null;
+  const base: CardText = { title: mission.title, state: mission.open ? '受け付け中' : '締め切った', action: 'none', clock, mine: '', mineState: '', ok: '' };
+  // 全体の状態（全員に同じ。鬼にも見える）
+  if (meet) {
+    const one = meet.scope === 'one' ? meet.pairs?.[0] : undefined;
+    if (one) {
+      const who = one.names.join('と');
+      base.ok = one.okAt !== null ? `成功：${who}が合流した${done?.freed ? `。牢屋から${done.freed}人出た` : ''}` : mission.open ? '' : `失敗：${who}は合流できなかった`;
+    } else {
+      base.ok = `合流した組 ${meet.ok}/${meet.groups}${!mission.open && done?.freed ? `。牢屋から${done.freed}人出た` : ''}`;
+    }
+  }
+  if (my && me.role === 'runner') {
+    const names = my.with.map((w) => w.name).join('・');
+    base.title = `${names}と合流しろ`;
+    if (my.okAt !== null) {
+      base.mine = '合流した。成功。';
+      base.mineState = 'ok';
+    } else if (!mission.open) {
+      base.mine = '締め切った。合流できなかった。';
+      base.mineState = 'no';
+    } else if (me.caught) {
+      base.mine = '牢屋にいる間は合流できない。';
+    } else if (my.with.length > 0 && my.with.every((w) => w.jailed)) {
+      base.mine = `${names}は牢屋にいる。先に助ける。${left}`;
+    } else {
+      base.action = 'meet';
+      base.mine = holding
+        ? `${names}も同時に長押し。`
+        : `${my.with.length > 1 ? 'どちらかと' : ''}2人で同時に長押し${left}`;
+    }
+    return base;
+  }
+  // 鬼・組に入っていない人：誰と誰が合流しようとしているか（札は1行なので短く）
+  const pairs = meet?.pairs;
+  const oni = me.role === 'oni';
+  base.title =
+    pairs && pairs.length === 1
+      ? `${pairs[0].names.join('×')}${oni ? 'の合流を止めろ' : 'を合流させろ'}`
+      : oni
+        ? `合流を止めろ（${meet?.groups ?? 0}組）`
+        : `仲間が合流しようとしている（${meet?.groups ?? 0}組）`;
+  if (mission.open) {
+    base.action = clock ? 'clock' : 'none';
+    base.mine = oni
+      ? pairs && pairs.length > 1
+        ? pairs.filter((x) => x.okAt === null).map((x) => x.names.join('×')).join('、')
+        : '2人が会う前に捕まえる。'
+      : pairs && pairs.length === 1 && me.role === 'runner'
+        ? '2人が会えるように助ける。'
+        : '';
+  }
+  return base;
+}
+
+/** 範囲の札。pos＝自分の位置（取れていなければ null） */
+export function zoneCard(mission: MissionView, game: GameView, me: MeView, now: number, pos: LatLon | null): CardText {
+  const zone = mission.zone!;
+  const clock = leftText(mission, game, now);
+  const done = mission.done ?? null;
+  const base: CardText = {
+    title: `範囲に${zone.need}人集まれ`,
+    state: mission.open ? '受け付け中' : '締め切った',
+    action: mission.open ? 'clock' : 'none',
+    clock,
+    mine: '',
+    mineState: '',
+    ok: '',
+  };
+  if (!mission.open) {
+    if (!done) base.ok = '締め切った（判定なし）。';
+    else if (done.ok) {
+      base.mine = `成功：${done.count}人が集まった${done.freed ? `。牢屋から${done.freed}人出た` : ''}`;
+      base.mineState = 'ok';
+    } else {
+      base.mine = `失敗：集まったのは${done.count}/${zone.need}人`;
+      base.mineState = 'no';
+    }
+    return base;
+  }
+  let self = '';
+  if (me.role === 'runner' && !me.caught) {
+    if (!pos) self = '・地図の光る枠へ';
+    else if (inZone(zone.pts, pos)) self = '・自分は中';
+    else {
+      const c = checkArea(zone.pts, pos);
+      self = `・自分は外（${compassName(bearingDeg(pos, c.nearest))} ${distanceText(c.edgeM)}）`;
+    }
+  } else if (me.role === 'runner') {
+    self = '・牢屋の人は数えない';
+  } else if (me.role === 'oni') {
+    self = '・地図の光る枠';
+  }
+  // 試合を止めている間は位置が届かないので、人数は出さない（締め切りも止まっている）
+  base.mine = clock === '止' ? '試合を止めている。締め切りも止まっている。' : `いま中に ${zone.now ?? 0}/${zone.need}人${self}`;
+  return base;
 }
 
 export interface MissionScreen {
@@ -154,6 +298,8 @@ export function createMission(deps: MissionDeps): MissionScreen {
     <div class="mission-head"><span class="mission-tag">ミッション</span><span class="mission-state" data-k="state"></span></div>
     <div class="mission-title" data-k="title"></div>
     <button type="button" class="primary mission-shoot" data-k="shoot">写真を撮る</button>
+    <button type="button" class="mission-meet" data-k="meet" hidden><span class="mission-meet-fill"></span><b data-k="meetLabel">合流</b></button>
+    <div class="mission-clock u" data-k="clock" hidden></div>
     <input type="file" accept="image/*" capture="environment" data-k="file" hidden>
     <p class="mission-mine" data-k="mine" aria-live="polite"></p>
     <p class="mission-ok" data-k="ok" aria-live="polite"></p>
@@ -175,6 +321,53 @@ export function createMission(deps: MissionDeps): MissionScreen {
   let missionId: number | null = null;
   let last = '';
   let lastGallery = '';
+
+  // 合流の長押し（牢屋の「助ける」と同じ押し方：HOLD_MIN_MS 押し続けたら送り、離したら終わり）
+  const meetBtn = q('meet') as HTMLButtonElement;
+  let pressing: { id: number; at: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  let holding = false;
+  const endPress = () => {
+    if (!pressing) return;
+    clearTimeout(pressing.timer);
+    pressing = null;
+    if (holding) {
+      holding = false;
+      deps.meetEnd?.(Date.now());
+    }
+    card.classList.remove('is-pressing', 'is-holding');
+    last = '';
+  };
+  meetBtn.addEventListener('pointerdown', (e) => {
+    if (meetBtn.hidden || pressing) return;
+    e.preventDefault();
+    try {
+      meetBtn.setPointerCapture(e.pointerId);
+    } catch {
+      // 取れなくても動く
+    }
+    pressing = {
+      id: e.pointerId,
+      at: Date.now(),
+      timer: setTimeout(() => {
+        if (!pressing) return;
+        holding = true;
+        card.classList.add('is-holding');
+        deps.meetStart?.(pressing.at);
+        vibrate(20);
+        last = '';
+      }, HOLD_MIN_MS),
+    };
+    card.classList.add('is-pressing');
+  });
+  const release = (e: PointerEvent) => {
+    if (pressing && e.pointerId === pressing.id) endPress();
+  };
+  meetBtn.addEventListener('pointerup', release);
+  meetBtn.addEventListener('pointercancel', release);
+  meetBtn.addEventListener('lostpointercapture', release);
+  meetBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+  /** 震わせるのは変わった瞬間だけ：自分の組が合流した・ミッションの結果が出た */
+  let seen: { id: number; met: boolean; done: boolean } | null = null;
 
   shoot.addEventListener('click', () => {
     error = null;
@@ -263,12 +456,53 @@ export function createMission(deps: MissionDeps): MissionScreen {
       const mission = game?.mission ?? null;
       const ended = game?.stage === 'ended';
       card.hidden = !mission || ended || !me || me.removed;
-      missionId = mission?.open ? mission.id : null;
+      const kind = mission?.kind ?? 'photo';
+      missionId = mission?.open && kind === 'photo' ? mission.id : null;
       const okList = (game?.missionOk ?? []).filter((x) => x.missionId === mission?.id);
       const revealed = !!game && !!mission && !ended && photosRevealed(game, deps.serverNow());
       gallery.hidden = !revealed || okList.length === 0;
       if (!gallery.hidden && mission) renderGallery(okList, mission.title);
-      if (card.hidden || !mission || !me) return;
+      if (card.hidden || !mission || !me) {
+        endPress();
+        return;
+      }
+      card.dataset.kind = kind;
+      if (kind !== 'photo' && game) {
+        const now = deps.serverNow();
+        const text =
+          kind === 'zone' && mission.zone
+            ? zoneCard(mission, game, me, now, deps.position?.() ?? null)
+            : meetCard(mission, game, me, now, holding);
+        // 変わった瞬間に震わせる（開いたときにもう決まっていた分は震わせない）
+        const met = !!me.meet && me.meet.missionId === mission.id && me.meet.okAt !== null;
+        const done = !!mission.done;
+        if (seen && seen.id === mission.id) {
+          if (met && !seen.met) vibrate([60, 40, 60, 40, 120]);
+          else if (done && !seen.done) vibrate(mission.done?.ok ? [60, 40, 60, 40, 120] : [200]);
+        } else if (mission.open) {
+          vibrate([80, 60, 80]);
+        }
+        seen = { id: mission.id, met, done };
+        if (text.action !== 'meet') endPress();
+        const key = JSON.stringify(text);
+        if (key === last) return;
+        last = key;
+        q('title').textContent = text.title;
+        q('state').textContent = text.state;
+        shoot.hidden = true;
+        meetBtn.hidden = text.action !== 'meet';
+        q('meetLabel').textContent = holding ? '待っている…' : '合流';
+        const clockEl = q('clock');
+        clockEl.hidden = text.action !== 'clock' || !text.clock;
+        clockEl.textContent = text.clock;
+        q('mine').textContent = text.mine;
+        q('mine').dataset.state = text.mineState;
+        q('ok').textContent = text.ok;
+        return;
+      }
+      endPress();
+      meetBtn.hidden = true;
+      q('clock').hidden = true;
 
       const mine = (me.sent ?? []).filter((x) => x.missionId === mission.id);
       const latest = mine[mine.length - 1] ?? null;

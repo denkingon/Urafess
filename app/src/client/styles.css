@@ -432,6 +432,15 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .phone.is-glow .mission-card { padding: 8px 12px; gap: 6px; }
 .phone.is-glow .mission-title { font-size: 16px; }
 .phone.is-glow .mission-shoot { min-height: 48px; font-size: 16px; }
+/* 合流の長押し・残り時間（種類が違っても札の形は同じ） */
+.mission-meet { position: relative; overflow: hidden; min-height: 64px; border-radius: 12px; border: 3px dashed #b8ff5a; background: transparent; color: #b8ff5a; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.mission-meet b { position: relative; font-size: 22px; font-weight: 900; }
+.mission-meet-fill { position: absolute; inset: 0; background: #b8ff5a; opacity: 0.25; transform: scaleX(0); transform-origin: left; }
+.mission-card.is-pressing .mission-meet-fill { transform: scaleX(1); transition: transform 0.5s linear; }
+.mission-card.is-holding .mission-meet { background: #b8ff5a; color: #0b0c10; border-style: solid; }
+.mission-card.is-holding .mission-meet-fill { opacity: 0; }
+.mission-clock { font-size: 34px; line-height: 1; text-align: center; color: #b8ff5a; font-variant-numeric: tabular-nums; }
+.mission-card[data-kind="meet"], .mission-card[data-kind="zone"] { border-color: #b8ff5a; }
 .mission-gallery { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
 .mission-gallery-head { font-size: 16px; font-weight: 900; }
 .mission-strip:has(figure:only-child) figure { flex-basis: 100%; }
@@ -441,6 +450,36 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .mission-strip figcaption { font-size: 16px; color: var(--quiet); }
 
 /* 主催者：ミッション */
+/* ミッションの種類（集合写真・合流・範囲）：題・締め切り・「成功で牢屋から」は同じ場所、種類ごとの決めごとだけ下に出す */
+.mission-kinds { display: flex; gap: 0; }
+.mission-kinds button { flex: 1; min-height: 52px; border-radius: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 4px 6px; }
+.mission-kinds button:first-child { border-radius: 10px 0 0 10px; }
+.mission-kinds button:last-child { border-radius: 0 10px 10px 0; }
+.mission-kinds button + button { border-left: none; }
+.mission-kinds button b { font-size: 16px; font-weight: 900; }
+.mission-kinds button span { font-size: 12px; color: var(--quiet); }
+.mission-kinds button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+.mission-kinds button[aria-selected="true"] span { color: var(--bg); }
+.mission-opts { display: flex; flex-direction: column; gap: 10px; }
+.mission-opts[hidden], .mission-opts [hidden] { display: none; }
+.mission-opt { display: flex; align-items: center; gap: 8px; font-size: 16px; flex-wrap: wrap; }
+.mission-opt .seg { display: flex; flex: 1; }
+.mission-opt .seg button { flex: 1; min-height: 44px; font-size: 16px; border-radius: 0; }
+.mission-opt .seg button:first-child { border-radius: 10px 0 0 10px; }
+.mission-opt .seg button:last-child { border-radius: 0 10px 10px 0; border-left: none; }
+.mission-opt .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.mission-opt input[type="number"] { width: 72px; min-height: 44px; font-size: 16px; }
+.mission-opt select { min-height: 44px; font-size: 16px; }
+.mission-host .zone-map { height: min(90vw, 420px); }
+.mission-host .zone-map .ov { height: 100%; }
+.mission-live { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.mission-live[hidden] { display: none; }
+.mission-live > b { font-size: 16px; }
+.mission-live .note { margin: 0; }
+.mission-live-row { display: flex; justify-content: space-between; gap: 10px; font-size: 16px; }
+.mission-live-row em { font-style: normal; color: var(--quiet); text-align: right; }
+.mission-live-row.is-ok span { font-weight: 900; }
+.mission-live-row.is-ok em { color: var(--ink); }
 .mission-host .cap-host-head { flex-wrap: wrap; }
 .mission-host .cap-host-head b { white-space: nowrap; }
 .mission-host form { display: flex; gap: 8px; }
@@ -573,6 +612,14 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
   paint-order: stroke; stroke: #0b0c10; stroke-width: 4px; stroke-linejoin: round;
 }
 .ov-draft-line.is-jail { stroke-dasharray: 6 4; }
+/* ミッションの範囲：蓄光の面と点線（遊ぶ範囲の月白の線・牢屋の月白の面と、色で分ける） */
+.ov-zone { fill: rgba(184, 255, 90, 0.2); stroke: #b8ff5a; stroke-width: 3; stroke-dasharray: 3 5; stroke-linecap: round; stroke-linejoin: round; animation: ov-zone-pulse 1.6s ease-in-out infinite; }
+.ov-zone-name {
+  font-size: 16px; font-weight: 900; fill: #b8ff5a; font-family: inherit;
+  paint-order: stroke; stroke: #0b0c10; stroke-width: 4px; stroke-linejoin: round;
+}
+@keyframes ov-zone-pulse { 50% { fill-opacity: 0.08; } }
+@media (prefers-reduced-motion: reduce) { .ov-zone { animation: none; } }
 /* 牢屋への向き：月白の帯（範囲の外の朱と分ける）。着いたら枠だけ */
 .area-out.jail-go { background: #f1ede4; }
 .area-out.jail-go.is-arrived { background: transparent; color: #f1ede4; border: 2px solid #f1ede4; }

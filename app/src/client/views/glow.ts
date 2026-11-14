@@ -45,6 +45,8 @@ export interface BoardInput {
   jail?: [number, number][] | null;
   /** 自分が範囲の外にいる（見張りが決めた） */
   meOut?: boolean;
+  /** ミッションの範囲（全体の地図に蓄光の面で出す） */
+  zone?: [number, number][] | null;
 }
 
 export interface BoardOptions {
@@ -139,7 +141,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
 
   return {
     el,
-    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, jail, meOut }) {
+    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, jail, meOut, zone }) {
       const now = serverNow ?? Date.now();
       const all: GlowEntry[] = (glow?.runs ?? []).filter((r) => now - r.at <= RUN_STALE_MS);
       const meListed = myNum !== null && all.some((r) => r.num === myNum);
@@ -224,7 +226,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
         }
         // 範囲の外にいる人（届いた位置だけで見る。光っている相手は数えない）
         if (area) for (const p of points) if (p.kind !== 'unknown') p.out = isFarOutside(area, p.pos);
-        ov.update({ me: me ? { ...me, acc: meAcc ?? 0 } : null, meKind: myKind ?? 'unknown', meLit, points, labelMax, area: area ?? null, jail: jail ?? null, meOut });
+        ov.update({ me: me ? { ...me, acc: meAcc ?? 0 } : null, meKind: myKind ?? 'unknown', meLit, points, labelMax, area: area ?? null, jail: jail ?? null, meOut, zone: zone ?? null });
       }
 
       // 一覧：近い順（自分の位置が分からなければ、光った順）
@@ -458,6 +460,7 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
         area,
         jail,
         meOut: out,
+        zone: openZone(state.game),
       });
       // 光っている間は、ひとことの場所に「光っている」（全員の一覧に自分が入ったら「…」が取れる）
       const shown = view.glow === 'live' && lit;
@@ -469,4 +472,10 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
       }
     },
   };
+}
+
+/** いま開いている範囲のミッションの頂点（無ければ null） */
+export function openZone(game: ClientState['game'] | null | undefined): [number, number][] | null {
+  const m = game?.mission;
+  return m?.open && m.kind === 'zone' && m.zone ? m.zone.pts : null;
 }

@@ -214,15 +214,22 @@ function startPlayer(): void {
   const wish = createWish({ client });
   phone.slot.append(wish.el);
   // ミッション（集合写真）：題と「写真を撮る」は長押しの上に、成功した写真は結果発表の間だけ真ん中に
+  // 走ると光る・全体の地図のセンサー（ミッションの「範囲」も、自分が中か外かをこの位置で見る）
+  const sensors = new Sensors();
   const mission = createMission({
     gameId,
     identity: () => client.state.identity,
     serverNow: () => client.serverNow() ?? Date.now(),
+    meetStart: (at) => client.meetStart(at),
+    meetEnd: (at) => client.meetEnd(at),
+    position: () => {
+      const p = sensors.position(Date.now());
+      return p ? { lat: p.lat, lon: p.lon } : null;
+    },
   });
   phone.slot.prepend(mission.card);
   phone.stage.prepend(mission.gallery);
   // 走ると光る：走っているかはこのスマホが決め、光っている間だけ位置を送る
-  const sensors = new Sensors();
   const glow = createGlow({ sensors, root: phone.el });
   phone.stage.append(glow.el);
   const reporter = new RunReporter();

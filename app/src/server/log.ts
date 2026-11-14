@@ -63,6 +63,10 @@ const KIND_NAME: Record<string, string> = {
   photo: '写真を送った',
   'photo-ok': '写真：成功',
   'photo-no': '写真：やり直し',
+  'meet-hold': '合流の長押し',
+  meet: 'ミッション：合流した',
+  'mission-zone': 'ミッション：範囲の判定',
+  'mission-free': 'ミッション成功で牢屋から出した',
 };
 
 /** 走ると光る：消えた理由 */

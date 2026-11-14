@@ -1,4 +1,4 @@
-import { VIA_NAME } from '../../shared/capture';
+import { CAPTURE_PHASE_INDEX, captureOpenAt, VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
 import { allocateCounts } from '../../shared/allocate';
 import {
@@ -16,13 +16,24 @@ import {
   START_LEAD_MS,
   type WishMode,
 } from '../../shared/rules';
-import { isDone, positionAt } from '../../shared/schedule';
-import { MISSION_DEFAULT_TITLE, MISSION_TITLE_MAX, PHOTO_STATUS_NAME, PHOTO_STORE_MAX_BYTES, type PhotoStatus } from '../../shared/mission';
+import { formatClock, isDone, positionAt } from '../../shared/schedule';
+import {
+  MISSION_DEFAULT_TITLES,
+  MISSION_KIND_NAME,
+  MISSION_TITLE_MAX,
+  missionClock,
+  PHOTO_STATUS_NAME,
+  PHOTO_STORE_MAX_BYTES,
+  ZONE_NEED_MAX,
+  type MeetScope,
+  type MissionKind,
+  type PhotoStatus,
+} from '../../shared/mission';
 import { glowPhase, hostStatus, wishNote } from '../../shared/viewmodel';
 import { checkNewHostKey, HOST_KEY_MIN } from '../../shared/hostkey';
 import type { ClientState } from '../core/game-client';
 import type { Sensors } from '../sense';
-import { createLightsBoard } from './glow';
+import { createLightsBoard, openZone } from './glow';
 import { createOverview } from './overview';
 import { AREA_MAX_PTS, AREA_MIN_PTS, isFarOutside } from '../../shared/area';
 import { distanceM } from '../../shared/run';
@@ -71,6 +82,11 @@ export interface HostActions {
       photo?: string;
       free?: boolean;
       n?: number;
+      kind?: MissionKind;
+      scope?: MeetScope;
+      zone?: [number, number][];
+      need?: number;
+      secs?: number | null;
     },
   ): void;
   /** 1イベント＝1行の記録を CSV で保存する */
@@ -100,6 +116,9 @@ const REASONS: Record<string, string> = {
   'not-allowed': '今の段階ではできない操作。',
   'no-participants': 'まだ誰も入室していない。',
   'nobody-jailed': '牢屋に誰もいない。',
+  'not-game': '合流は配役のあと〜ゲームの段階の間、範囲は追跡が始まってからゲームの段階の間にだけ出せる。',
+  'too-few': '捕まっていない逃走者が2人いない。',
+  'bad-zone': '範囲の形が正しくない。地図を押して角を3つ以上足す。',
   'bad-input': '入力が正しくない。',
   'not-found': 'その人は見つからない（もう待っていない・つながっていない）。',
 };
@@ -216,11 +235,41 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     </section>
     <section class="cap-host mission-host" data-k="missionPhoto">
       <div class="cap-host-head"><b>ミッション</b><span data-k="missionNow"></span></div>
+      <div class="mission-kinds" role="tablist" aria-label="ミッションの種類" data-k="missionKinds">
+        <button type="button" role="tab" data-kind="photo" aria-selected="true"><b>集合写真</b><span>撮って送る</span></button>
+        <button type="button" role="tab" data-kind="meet" aria-selected="false"><b>合流</b><span>2人で長押し</span></button>
+        <button type="button" role="tab" data-kind="zone" aria-selected="false"><b>範囲</b><span>締め切りに集まる</span></button>
+      </div>
       <form data-k="missionForm">
-        <input type="text" maxlength="${MISSION_TITLE_MAX}" placeholder="${MISSION_DEFAULT_TITLE}" data-k="missionTitle" aria-label="ミッションの題">
+        <input type="text" maxlength="${MISSION_TITLE_MAX}" placeholder="${MISSION_DEFAULT_TITLES.photo}" data-k="missionTitle" aria-label="ミッションの題">
         <button type="submit" data-k="missionGo">ミッションを出す</button>
       </form>
-      <button type="button" class="ghost" data-k="missionClose" hidden>締め切る（成功した写真はそのまま）</button>
+      <div class="mission-opts" data-k="missionOpts" hidden>
+        <div class="mission-opt" data-for="meet">
+          <span>組</span>
+          <div class="seg" data-k="meetScope">
+            <button type="button" data-scope="all" aria-pressed="true">全員を2人組に</button>
+            <button type="button" data-scope="one" aria-pressed="false">1組だけ</button>
+          </div>
+        </div>
+        <label class="mission-opt" data-for="zone">集まる人数
+          <input type="number" min="1" max="${ZONE_NEED_MAX}" step="1" value="3" inputmode="numeric" data-k="zoneNeed">人
+        </label>
+        <label class="mission-opt">締め切り
+          <select data-k="missionSecs" aria-label="締め切りまでの時間"></select>
+        </label>
+        <div data-for="zone">
+          <p class="note">地図を押して角を足していく（3つ以上）。出すと、鬼にも逃走者にも地図に光る枠が出る。描いた形はこのスマホが覚えている。</p>
+          <div class="area-map zone-map" data-k="zoneMap"></div>
+          <div class="area-btns">
+            <button type="button" data-zone="undo">1つ戻す</button>
+            <button type="button" data-zone="redo">描き直す</button>
+          </div>
+        </div>
+        <p class="note" data-k="kindNote"></p>
+      </div>
+      <div class="mission-live" data-k="missionLive" hidden></div>
+      <button type="button" class="ghost" data-k="missionClose" hidden>締め切る</button>
       <label class="mission-free-pick">「成功」で牢屋から
         <select data-k="missionFree" aria-label="成功で牢屋から出す人数">
           <option value="all" selected>全員を出す</option>
@@ -230,7 +279,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
           <option value="0">出さない</option>
         </select>
       </label>
-      <p class="note">届いた写真を見て「成功」か「やり直し」を押す。成功は全員の画面に名前が出る。ゲームの段階なら、上で選んだ人数を牢屋から出す（入った順。1枚の写真で1回だけ）。写真そのものは結果発表で全員の画面に出る。</p>
+      <p class="note" data-k="photoNote">届いた写真を見て「成功」か「やり直し」を押す。成功は全員の画面に名前が出る。ゲームの段階なら、上で選んだ人数を牢屋から出す（入った順。1枚の写真で1回だけ）。写真そのものは結果発表で全員の画面に出る。</p>
       <div class="photo-grid" data-k="photoGrid"></div>
       <details class="album" data-k="album">
         <summary>写真（全部の夜）</summary>
@@ -455,15 +504,146 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   const missionForm = q('missionForm') as HTMLFormElement;
   const missionTitle = q('missionTitle') as HTMLInputElement;
   let missionOpen = false;
+  // 種類をまとめて扱う層：題・締め切り・「成功で牢屋から」はどの種類も同じ場所。種類ごとの決めごとだけ下に出す
+  let missionKind: MissionKind = 'photo';
+  let meetScope: MeetScope = 'all';
+  const ZONE_KEY = 'urafess:zone-draft';
+  let zoneDraft: [number, number][] = [];
+  try {
+    const kept = JSON.parse(localStorage.getItem(ZONE_KEY) ?? '[]') as unknown;
+    if (Array.isArray(kept) && kept.every((p) => Array.isArray(p) && p.length === 2 && p.every((v) => typeof v === 'number' && Number.isFinite(v)))) {
+      zoneDraft = (kept as [number, number][]).slice(0, AREA_MAX_PTS);
+    }
+  } catch {
+    // 覚えていなければ、描くところから
+  }
+  const keepZone = () => {
+    try {
+      localStorage.setItem(ZONE_KEY, JSON.stringify(zoneDraft));
+    } catch {
+      // 覚えられなくても、この画面の間は使える
+    }
+  };
+  const SECS: Record<'meet' | 'zone', [string, string][]> = {
+    meet: [['', 'なし'], ['60', '1分'], ['120', '2分'], ['180', '3分'], ['300', '5分']],
+    zone: [['60', '1分'], ['120', '2分'], ['180', '3分'], ['300', '5分'], ['600', '10分']],
+  };
+  const secsPick = q('missionSecs') as HTMLSelectElement;
+  const zoneNeed = q('zoneNeed') as HTMLInputElement;
+  const kindBtns = [...el.querySelectorAll<HTMLButtonElement>('[data-kind]')];
+  const scopeBtns = [...el.querySelectorAll<HTMLButtonElement>('[data-scope]')];
+  let zoneMapKey = '';
+  const zoneMap = createOverview({
+    onTap: (p) => {
+      if (zoneDraft.length >= AREA_MAX_PTS) return;
+      zoneDraft = [...zoneDraft, [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6]];
+      keepZone();
+      drawZone();
+    },
+  });
+  q('zoneMap').append(zoneMap.el);
+  const zoneBtn = (k: string) => el.querySelector(`[data-zone="${k}"]`) as HTMLButtonElement;
+  const drawZone = () => {
+    zoneBtn('undo').disabled = zoneBtn('redo').disabled = zoneDraft.length === 0;
+    if (missionKind !== 'zone') return;
+    zoneMap.update({
+      me: null,
+      meKind: 'unknown',
+      meLit: false,
+      points: [],
+      labelMax: 0,
+      area: saved.area,
+      jail: saved.jail,
+      draft: zoneDraft,
+      draftLayer: 'zone',
+      frameBase: saved.area ? 'area' : 'campus',
+    });
+  };
+  zoneBtn('undo').addEventListener('click', () => {
+    zoneDraft = zoneDraft.slice(0, -1);
+    keepZone();
+    drawZone();
+  });
+  zoneBtn('redo').addEventListener('click', () => {
+    zoneDraft = [];
+    keepZone();
+    drawZone();
+  });
+  const applyKind = () => {
+    for (const b of kindBtns) b.setAttribute('aria-selected', String(b.dataset.kind === missionKind));
+    for (const b of scopeBtns) b.setAttribute('aria-pressed', String(b.dataset.scope === meetScope));
+    q('missionPhoto').dataset.kind = missionKind;
+    missionTitle.placeholder = MISSION_DEFAULT_TITLES[missionKind];
+    q('missionOpts').hidden = missionKind === 'photo';
+    for (const x of el.querySelectorAll<HTMLElement>('[data-k="missionOpts"] [data-for]')) x.hidden = x.dataset.for !== missionKind;
+    q('photoNote').hidden = missionKind !== 'photo';
+    if (missionKind !== 'photo') {
+      const key = missionKind;
+      if (zoneMapKey !== key) {
+        zoneMapKey = key;
+        secsPick.replaceChildren(
+          ...SECS[key].map(([v, label]) => {
+            const o = document.createElement('option');
+            o.value = v;
+            o.textContent = label;
+            o.selected = v === '180';
+            return o;
+          }),
+        );
+      }
+    }
+    lastKindNote = '';
+    drawZone();
+  };
+  let lastKindNote = '';
+  for (const b of kindBtns) {
+    b.addEventListener('click', () => {
+      missionKind = b.dataset.kind as MissionKind;
+      applyKind();
+    });
+  }
+  for (const b of scopeBtns) {
+    b.addEventListener('click', () => {
+      meetScope = b.dataset.scope as MeetScope;
+      applyKind();
+    });
+  }
   missionForm.addEventListener('submit', (e) => {
     e.preventDefault();
-    const title = missionTitle.value.trim() || MISSION_DEFAULT_TITLE;
-    if (missionOpen && !confirm(`いまのミッションを締め切って、「${title}」を出す。よいか？`)) return;
-    actions.command('mission', { title });
+    const typed = missionTitle.value.trim();
+    const title = typed || MISSION_DEFAULT_TITLES[missionKind];
+    if (missionKind === 'photo') {
+      if (missionOpen && !confirm(`いまのミッションを締め切って、「${title}」を出す。よいか？`)) return;
+      actions.command('mission', { title });
+      missionTitle.value = '';
+      return;
+    }
+    // 合流・範囲：成功で牢屋から出す人数は、出すときに決めておく（判定はアプリがする）
+    const pick = (q('missionFree') as HTMLSelectElement).value;
+    const free = pick === '0' ? { free: false } : pick === 'all' ? { free: true } : { free: true, n: Number(pick) };
+    const secs = secsPick.value ? Number(secsPick.value) : null;
+    if (missionKind === 'zone') {
+      const need = Math.round(Number(zoneNeed.value));
+      if (zoneDraft.length < AREA_MIN_PTS) {
+        q('kindNote').textContent = '先に、地図を押して範囲を描く（角を3つ以上）。';
+        lastKindNote = 'x';
+        return;
+      }
+      if (!Number.isInteger(need) || need < 1 || need > ZONE_NEED_MAX) {
+        q('kindNote').textContent = '集まる人数を入れる（1人以上）。';
+        lastKindNote = 'x';
+        return;
+      }
+      if (missionOpen && !confirm(`いまのミッションを締め切って、「${title}」を出す。よいか？`)) return;
+      actions.command('mission', { kind: 'zone', title: typed, zone: zoneDraft, need, secs, ...free });
+    } else {
+      if (missionOpen && !confirm(`いまのミッションを締め切って、「${title}」を出す。よいか？`)) return;
+      actions.command('mission', { kind: 'meet', title: typed, scope: meetScope, secs, ...free });
+    }
     missionTitle.value = '';
   });
   q('missionClose').addEventListener('click', () => {
-    if (confirm('ミッションを締め切る。もう写真は送れなくなる。よいか？')) actions.command('mission-close');
+    if (confirm('ミッションを締め切る。よいか？')) actions.command('mission-close');
   });
   const onPhotoClick = (e: Event) => {
     const t = e.target as HTMLElement;
@@ -563,6 +743,8 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     return fig;
   }
   let lastPhotoKey = '';
+  let lastLiveKey = '';
+  applyKind();
 
   let lastDupKey = '';
   let lastCapKey = '';
@@ -902,6 +1084,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
             myKind: 'unknown',
             area: areaPts,
             jail: game.jail?.pts ?? null,
+            zone: openZone(game),
           });
         }
       }
@@ -914,14 +1097,69 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       const photos = roundPhotos.filter((ph) => ph.missionId === mission?.id);
       const okCount = photos.filter((ph) => ph.status === 'ok').length;
       const waitingCount = photos.filter((ph) => ph.status === 'pending').length;
-      q('missionNow').textContent = mission
-        ? `「${mission.title}」${mission.open ? '受け付け中' : '締め切った'}・届いた ${photos.length}枚・成功 ${okCount}枚${waitingCount ? `・見ていない ${waitingCount}枚` : ''}`
-        : 'まだ出していない';
-      const canIssue = game.stage !== 'ended';
-      missionTitle.disabled = !canIssue;
+      const curKind: MissionKind = mission?.kind ?? 'photo';
+      const left = mission?.open && mission.until ? (game.timer?.status === 'paused' ? '止めている' : `残り ${formatClock(mission.until - serverNow)}`) : '';
+      const openWord = mission?.open ? '受け付け中' : '締め切った';
+      q('missionNow').textContent = !mission
+        ? 'まだ出していない'
+        : curKind === 'meet'
+          ? `合流「${mission.title}」${openWord}・合流した組 ${mission.meet?.ok ?? 0}/${mission.meet?.groups ?? 0}${left ? `・${left}` : ''}`
+          : curKind === 'zone'
+            ? `範囲「${mission.title}」${openWord}${mission.open ? `・いま中に ${mission.zone?.now ?? 0}/${mission.zone?.need ?? 0}人` : ''}${left ? `・${left}` : ''}`
+            : `「${mission.title}」${openWord}・届いた ${photos.length}枚・成功 ${okCount}枚${waitingCount ? `・見ていない ${waitingCount}枚` : ''}`;
+      // 合流・範囲は、役が決まっている間だけ出せる（範囲は、位置が届くゲームの段階だけ）
+      const mClock = missionClock(game, serverNow, CAPTURE_PHASE_INDEX);
+      const kindReady = missionKind === 'photo' ? true : missionKind === 'meet' ? mClock === 'live' : captureOpenAt(game.timer, serverNow) && game.stage === 'timer';
+      const canIssue = game.stage !== 'ended' && kindReady;
+      missionTitle.disabled = game.stage === 'ended';
       const go = q('missionGo') as HTMLButtonElement;
       go.disabled = !canIssue;
-      go.textContent = mission?.open ? '次のミッションを出す' : 'ミッションを出す';
+      go.textContent = mission?.open ? '次に出す' : '出す';
+      go.setAttribute('aria-label', `${MISSION_KIND_NAME[missionKind]}のミッションを${mission?.open ? '次に出す' : '出す'}`);
+      const kindNote =
+        missionKind === 'meet'
+          ? kindReady
+            ? meetScope === 'all'
+              ? '捕まっていない逃走者を、アプリが無作為に2人組にする（奇数なら最後の組だけ3人で、そのうち2人が合えば成功）。それぞれの画面に相手の名前が出て、会って2人で同時に長押しすると成功。1組が成功するたびに、上で選んだ人数を牢屋から出す。組は鬼にも見える。'
+              : '捕まっていない逃走者から、アプリが無作為に2人を選ぶ。誰と誰かは全員（鬼にも）に出る。2人が会って同時に長押しすると成功し、上で選んだ人数を牢屋から出す。'
+            : '合流は、配役のあと〜ゲームの段階の間に出せる。'
+          : missionKind === 'zone'
+            ? kindReady
+              ? '締め切りの瞬間に、範囲の中にいる逃走者（牢屋の外）が決めた人数以上なら成功し、上で選んだ人数を牢屋から出す。範囲と残り時間と「いま何人」は、鬼にも見える。'
+              : '範囲は、追跡が始まってからゲームの段階の間に出せる（位置が届くのがその間だけ）。範囲は先に描いておける。'
+            : '';
+      if (lastKindNote !== kindNote && lastKindNote !== 'x') {
+        lastKindNote = kindNote;
+        q('kindNote').textContent = kindNote;
+      } else if (lastKindNote === 'x' && kindNote !== '' && !kindReady) {
+        lastKindNote = '';
+      }
+      // いまの合流・範囲のミッションのようす
+      const live = q('missionLive');
+      const liveKey = JSON.stringify([mission, host.meets ?? null, host.zoneIn ?? null, curKind === 'photo' ? null : left]);
+      if (liveKey !== lastLiveKey) {
+        lastLiveKey = liveKey;
+        live.hidden = !mission || curKind === 'photo';
+        if (mission && curKind === 'meet') {
+          const done = mission.done ?? null;
+          live.innerHTML =
+            `<b>合流の組</b>` +
+            (host.meets ?? [])
+              .map((x) => {
+                const jailed = x.jailed.length ? `（牢屋：${esc(x.jailed.join('・'))}）` : '';
+                return `<div class="mission-live-row${x.okAt !== null ? ' is-ok' : ''}"><span>${esc(x.names.join(' × '))}</span><em>${x.okAt !== null ? `合流した ${clock(x.okAt)}` : `まだ${jailed}`}</em></div>`;
+              })
+              .join('') +
+            (done ? `<p class="note">${done.ok ? `成功 ${done.count}組` : '成功した組なし'}${done.freed ? `・牢屋から${done.freed}人出た` : ''}</p>` : '');
+        } else if (mission && curKind === 'zone' && mission.zone) {
+          const done = mission.done ?? null;
+          live.innerHTML = mission.open
+            ? `<b>いま中に ${mission.zone.now ?? 0}/${mission.zone.need}人</b><p class="note">${esc((host.zoneIn ?? []).join('・') || 'まだ誰もいない')}</p>`
+            : done
+              ? `<b>${done.ok ? '成功' : '失敗'}：締め切りの瞬間に ${done.count}/${mission.zone.need}人</b>${done.freed ? `<p class="note">牢屋から${done.freed}人出た</p>` : ''}`
+              : `<b>締め切った（判定なし）</b>`;
+        }
+      }
       q('missionClose').hidden = !mission?.open;
       const photoKey = JSON.stringify(roundPhotos.map((ph) => [ph.id, ph.status, ph.freed ?? 0]));
       if (photoKey !== lastPhotoKey) {

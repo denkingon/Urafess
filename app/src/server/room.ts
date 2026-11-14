@@ -2,8 +2,17 @@ import { DurableObject } from 'cloudflare:workers';
 import { assignRoles, assignWithWishes } from '../shared/allocate';
 import { autoPick, CAPTURE_PHASE_INDEX, captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
 import {
+  cleanMissionSecs,
   cleanMissionTitle,
+  inZone,
+  isMissionKind,
   isPhotoId,
+  makeMeetGroups,
+  MEET_PUBLIC_PAIRS_MAX,
+  MISSION_DEFAULT_TITLES,
+  missionClock,
+  ZONE_NEED_MAX,
+  type MissionKind,
   photosRevealed,
   PHOTO_MAX_BYTES,
   PHOTO_PER_PERSON,
@@ -45,6 +54,7 @@ import {
   DURATION_MIN_MS,
   EVIDENCE_VALID_MS,
   HEARTBEAT_EVERY_MS,
+  START_LEAD_MS,
   HOLD_MAX_MS,
   HEARD_SLACK_MS,
   HOLD_UNKNOWN_END_MS,
@@ -128,6 +138,11 @@ interface GameState {
   missionSeq?: number;
   /** ミッション：このラウンドのミッションは、この番号から（配役・新しい夜を始めるで missionSeq + 1 になる） */
   missionFrom?: number;
+  /**
+   * ミッション（合流・範囲）：全員には配らない中身。groups＝合流の組（pid の並び）と合流した時刻、
+   * freed＝このミッションの成功で牢屋から出た人数、pausedAt＝試合を止めた時刻（再開で締め切りをずらす）
+   */
+  missionPriv?: { groups: { pids: string[]; okAt: number | null }[]; freed: number; pausedAt?: number | null } | null;
   /** 逃走者が全員同時に牢屋に入った時刻（その配役は鬼の勝ちで決まり）。古い保存データには無い */
   allCaughtAt?: number | null;
   /** result をアプリが決めた */
@@ -354,6 +369,10 @@ const HEARD_DEDUPE_MS = 5_000;
 const HOLD_SAME_MS = 1_000;
 /** 走ると光る：光の知らせはまとめて配る（何人走っていても、全員へは最大でこの間隔に1回） */
 const GLOW_BROADCAST_MS = 250;
+/** ミッション（範囲）：「いま中にいる人数」を配り直す間隔（人が出入りするたびに全員へ配らない） */
+const ZONE_BROADCAST_MS = 1_500;
+/** ミッション（範囲）：部屋が起きてから、位置が届き直すまで判定を待つ時間（位置は MATES_SEND_EVERY_MS ごとに届く） */
+const ZONE_WARM_MS = 7_000;
 /** 走ると光る：記録に残す位置の間隔 */
 const RUN_PATH_EVERY_MS = 2_000;
 
@@ -391,6 +410,16 @@ export class GameRoom extends DurableObject<Env> {
   private readonly rescueHolds = new Map<string, RescueHold[]>();
   /** 助ける人が最後に1人を出した時刻（1回の長押しで1人） */
   private readonly lastRescueAt = new Map<string, number>();
+  /** ミッション（合流）の長押し（人 → 最近の分。保存しない） */
+  private readonly meetHolds = new Map<string, RescueHold[]>();
+  /** ミッション（範囲）：最後に配った「いま中にいる人数」（変わったときだけ配り直す） */
+  private zoneShown: number | null = null;
+  private zoneTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * この部屋が起きた時刻。位置（spots）は休止で消えるので、起きた直後はまだ全員の位置が届き直していない。
+   * 範囲の判定は、起きてから ZONE_WARM_MS たつまで待つ（届き直す前に「0人」で失敗にしないため）
+   */
+  private readonly bornAt = Date.now();
   /**
    * 主催者の操作が最後に効いたときの版番号。アプリが自分で版番号を進めた（時間が0で結果を決めた・全員が牢屋に入った）だけなら、
    * その前の画面からの操作も受ける（古い画面の二度押し・同時押しだけを断る）
@@ -543,6 +572,11 @@ export class GameRoom extends DurableObject<Env> {
       )`,
     );
     this.sql.exec(`CREATE INDEX IF NOT EXISTS photos_mission ON photos (mission_id)`);
+    // ミッションの種類と中身（あとから足した列。古い行は集合写真）
+    const missionCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(missions)`).toArray().map((r) => r.name));
+    if (!missionCols.has('kind')) this.sql.exec(`ALTER TABLE missions ADD COLUMN kind TEXT NOT NULL DEFAULT 'photo'`);
+    if (!missionCols.has('data')) this.sql.exec(`ALTER TABLE missions ADD COLUMN data TEXT`);
+    if (!missionCols.has('result')) this.sql.exec(`ALTER TABLE missions ADD COLUMN result TEXT`);
     // 成功で牢屋から出した人数（あとから足した列）
     const photoCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(photos)`).toArray().map((r) => r.name));
     if (!photoCols.has('freed')) this.sql.exec(`ALTER TABLE photos ADD COLUMN freed INTEGER NOT NULL DEFAULT 0`);
@@ -613,6 +647,7 @@ export class GameRoom extends DurableObject<Env> {
     }
     if (!Number.isInteger(this.game.missionFrom)) this.game.missionFrom = (this.game.missionSeq ?? 0) + 1;
     if (this.game.mission === undefined) this.game.mission = null;
+    if (this.game.missionPriv === undefined) this.game.missionPriv = null;
     this.loadPhotos();
     if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
     if (this.game.area === undefined) this.game.area = null;
@@ -933,6 +968,8 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    // ミッションの締め切り（合流を締め切る・範囲を判定する）。位置を消す前、結果を決める前に見る
+    this.missionTick(Date.now());
     // 時間が0になっていたら、結果をアプリが決める（合図のついで。合図が止まる前に見る）
     this.finalizeIfDone(Date.now());
     // 光っている人の位置が届かなくなった・ゲームの段階が終わった分を消す（合図のついで）
@@ -963,7 +1000,10 @@ export class GameRoom extends DurableObject<Env> {
     }
     const att = (ws.deserializeAttachment() as Attachment | null) ?? {};
     // 時間が0になったのに結果がまだなら、先に決める（合図が来ない間に届いた操作でも、結果のあとの状態で受ける）
-    if (msg.t !== 'ping' && msg.t !== 'sync') this.finalizeIfDone(now);
+    if (msg.t !== 'ping' && msg.t !== 'sync') {
+      this.missionTick(now);
+      this.finalizeIfDone(now);
+    }
     switch (msg.t) {
       case 'ping':
         // 時計合わせ：受け取った瞬間のサーバー時刻を返す
@@ -1003,6 +1043,7 @@ export class GameRoom extends DurableObject<Env> {
         this.onCmd(ws, att, msg, now);
         // 配役・開始で試合に入ったら合図を始める（止めるのはアラームの側：試合が終わっていたら次を予約しない）
         await this.ensureHeartbeat();
+        await this.ensureMissionAlarm();
         return;
       case 'hold':
         this.onHold(att, msg, now);
@@ -1024,6 +1065,9 @@ export class GameRoom extends DurableObject<Env> {
         return;
       case 'rescue':
         this.onRescue(att, msg, now);
+        return;
+      case 'meet':
+        this.onMeet(att, msg, now);
         return;
       case 'run':
         this.onRun(att, msg, now);
@@ -1048,6 +1092,7 @@ export class GameRoom extends DurableObject<Env> {
       if (!stillOpen) {
         this.endHold(att.pid, Date.now(), 'disconnect');
         this.endRescueHold(att.pid, Date.now());
+        this.endMeetHold(att.pid, Date.now());
       }
     }
     this.scheduleHostUpdate();
@@ -2371,6 +2416,7 @@ export class GameRoom extends DurableObject<Env> {
     const had = this.spots.has(p.pid);
     this.spots.set(p.pid, { pid: p.pid, lat: pos.lat, lon: pos.lon, acc: pos.acc, at: now });
     this.flushMatesSoon(!had);
+    this.zoneChanged(now);
   }
 
   private dropSpot(pid: string): void {
@@ -2748,12 +2794,12 @@ export class GameRoom extends DurableObject<Env> {
         if (g.stage !== 'timer' || !g.timer || g.timer.status !== 'running' || timerDone) {
           return this.reject(ws, att, op, 'not-allowed');
         }
-        this.commit({ timer: pauseTimer(g.timer, now) });
+        this.commit({ timer: pauseTimer(g.timer, now), ...this.missionPaused(now) });
         this.log('pause', { at: now });
         break;
       case 'resume':
         if (g.stage !== 'timer' || !g.timer || g.timer.status !== 'paused') return this.reject(ws, att, op, 'not-allowed');
-        this.commit({ timer: resumeTimer(g.timer, now) });
+        this.commit({ timer: resumeTimer(g.timer, now), ...this.missionResumed(now) });
         this.log('resume', { at: now });
         break;
       case 'skip': {
@@ -2791,7 +2837,9 @@ export class GameRoom extends DurableObject<Env> {
             p.caughtVia = null;
           }
         }
-        this.commit({ stage: 'assigned', timer: null, result: null, allCaughtAt: null, resultAuto: false });
+        // 合流・範囲のミッションは、やり直しで締め切る（判定しない）。集合写真はそのまま
+        const stopped = g.mission?.open && (g.mission.kind === 'meet' || g.mission.kind === 'zone') ? { mission: this.closedMission(now, 'reset') } : {};
+        this.commit({ stage: 'assigned', timer: null, result: null, allCaughtAt: null, resultAuto: false, ...stopped });
         break;
       }
       case 'end': {
@@ -2942,18 +2990,28 @@ export class GameRoom extends DurableObject<Env> {
   // ---------- ミッション（集合写真） ----------
 
   /** 開いているミッションを締め切った形（記録に残す）。開いていなければそのまま */
-  private closedMission(now: number, reason: string): MissionView | null {
+  private closedMission(now: number, reason: string, done?: NonNullable<MissionView['done']>): MissionView | null {
     const cur = this.game.mission ?? null;
     if (!cur || !cur.open) return cur;
-    this.sql.exec(`UPDATE missions SET closed_at = ? WHERE id = ?`, now, cur.id);
-    this.log('mission-close', { at: now, data: { mission: cur.id, title: cur.title, reason } });
-    return { ...cur, open: false };
+    const kind: MissionKind = cur.kind ?? 'photo';
+    const priv = this.game.missionPriv ?? null;
+    // 合流は、締め切った時点で成功した組が1つでもあれば成功。範囲は、判定（done）を渡されたときだけ結果が付く
+    let result = done ?? cur.done ?? null;
+    if (!result && kind === 'meet' && priv) {
+      const ok = priv.groups.filter((x) => x.okAt !== null).length;
+      result = { ok: ok > 0, at: now, freed: priv.freed, count: ok };
+    }
+    this.meetHolds.clear();
+    this.zoneShown = null;
+    this.sql.exec(`UPDATE missions SET closed_at = ?, result = ? WHERE id = ?`, now, result ? JSON.stringify(result) : null, cur.id);
+    this.log('mission-close', { at: now, data: { mission: cur.id, title: cur.title, kind, reason, ...(result ? { result } : {}) } });
+    return kind === 'photo' ? { ...cur, open: false } : { ...cur, open: false, done: result };
   }
 
   /** 配役・新しい夜を始めるで、ミッションを消してラウンドの区切りを進める（GameState に混ぜる形で返す） */
-  private missionReset(now: number, reason: string): Pick<GameState, 'mission' | 'missionFrom'> {
+  private missionReset(now: number, reason: string): Pick<GameState, 'mission' | 'missionFrom' | 'missionPriv'> {
     this.closedMission(now, reason);
-    return { mission: null, missionFrom: (this.game.missionSeq ?? 0) + 1 };
+    return { mission: null, missionPriv: null, missionFrom: (this.game.missionSeq ?? 0) + 1 };
   }
 
   private onMissionCmd(ws: WebSocket, att: Attachment, msg: Extract<ClientMsg, { t: 'cmd' }>, now: number): void {
@@ -2962,23 +3020,70 @@ export class GameRoom extends DurableObject<Env> {
     if (op === 'mission') {
       // 夜の最後（SEE YOU AGAIN）の間は出せない。配役の前（待合室）・試合中・結果発表は出せる
       if (g.stage === 'ended') return this.reject(ws, att, op, 'not-allowed');
-      const title = cleanMissionTitle(msg.title);
+      const kind: MissionKind = msg.kind === undefined ? 'photo' : isMissionKind(msg.kind) ? msg.kind : 'photo';
+      if (msg.kind !== undefined && !isMissionKind(msg.kind)) return this.reject(ws, att, op, 'bad-input');
+      const rawTitle = typeof msg.title === 'string' && msg.title.trim() ? msg.title : MISSION_DEFAULT_TITLES[kind];
+      const title = cleanMissionTitle(rawTitle);
       const id = (g.missionSeq ?? 0) + 1;
+      let view: MissionView = { id, title, at: now, open: true };
+      let priv: GameState['missionPriv'] = null;
+      let data: Record<string, unknown> = {};
+      if (kind !== 'photo') {
+        // 合流・範囲は、役が決まっている間だけ（配役のあと〜ゲームの段階が終わるまで）
+        const clock = missionClock(g, now, CAPTURE_PHASE_INDEX);
+        if (clock !== 'live') return this.reject(ws, att, op, 'not-game');
+        const secs = cleanMissionSecs(msg.secs);
+        if (secs === false) return this.reject(ws, att, op, 'bad-input');
+        // 成功で牢屋から出す人数：free=false で出さない（0）、n を省くと全員（null）
+        let free: number | null = null;
+        if (msg.free === false) free = 0;
+        else if (msg.n !== undefined && msg.n !== null) {
+          const n = Number(msg.n);
+          if (!Number.isInteger(n) || n < 1 || n > 999) return this.reject(ws, att, op, 'bad-input');
+          free = n;
+        }
+        const runners = [...this.people.values()]
+          .filter((q) => !q.removed && q.assignId === g.assignId && q.role === 'runner' && !this.isCaught(q))
+          .sort((a, b) => a.num - b.num);
+        view = { ...view, kind, until: secs === null ? null : now + secs * 1000, free, done: null };
+        if (kind === 'meet') {
+          const scope = msg.scope === 'one' ? 'one' : msg.scope === undefined || msg.scope === 'all' ? 'all' : null;
+          if (!scope) return this.reject(ws, att, op, 'bad-input');
+          const groups = makeMeetGroups(runners.map((q) => q.pid), scope, Math.random);
+          if (groups.length === 0) return this.reject(ws, att, op, 'too-few');
+          priv = { groups: groups.map((pids) => ({ pids, okAt: null })), freed: 0, pausedAt: null };
+          view = { ...view, meet: { scope, groups: groups.length, ok: 0 } };
+          data = { scope, secs, free, groups: groups.map((pids) => pids.map((pid) => this.people.get(pid)?.name ?? '')) };
+        } else {
+          // 範囲：位置が届くのはゲームの段階（追跡が始まってから）だけなので、その間にしか出せない
+          if (!this.glowOpen(now)) return this.reject(ws, att, op, 'not-game');
+          if (secs === null) return this.reject(ws, att, op, 'bad-input');
+          if (!isValidAreaPts(msg.zone, CAMPUS_CENTER)) return this.reject(ws, att, op, 'bad-zone');
+          const need = Number(msg.need);
+          if (!Number.isInteger(need) || need < 1 || need > ZONE_NEED_MAX) return this.reject(ws, att, op, 'bad-input');
+          const pts = cleanAreaPts(msg.zone);
+          priv = { groups: [], freed: 0, pausedAt: null };
+          view = { ...view, zone: { pts, need, now: null } };
+          data = { secs, free, need, pts, runners: runners.length };
+        }
+      }
       this.ctx.storage.transactionSync(() => {
         // 前のミッションが開いていれば締め切る（記録に残る）。ミッションは1つずつ
         this.closedMission(now, 'next');
         this.sql.exec(
-          `INSERT INTO missions (id, night, round, assign_id, title, at) VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO missions (id, night, round, assign_id, title, at, kind, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           id,
           g.night,
           g.round,
           g.assignId,
           title,
           now,
+          kind,
+          kind === 'photo' ? null : JSON.stringify(data),
         );
-        this.game = { ...this.game, missionSeq: id, mission: { id, title, at: now, open: true } };
+        this.game = { ...this.game, missionSeq: id, mission: view, missionPriv: priv };
         this.saveGame();
-        this.log('mission', { at: now, data: { mission: id, title } });
+        this.log('mission', { at: now, data: { mission: id, title, kind, ...data } });
       });
       this.broadcastNow();
       return;
@@ -2992,7 +3097,7 @@ export class GameRoom extends DurableObject<Env> {
       this.broadcastNow();
       return;
     }
-    // judge
+    // judge（集合写真だけ）
     const ph = isPhotoId(msg.photo) ? this.photos.get(msg.photo) : undefined;
     if (!ph) return this.reject(ws, att, op, 'not-found');
     if (typeof msg.ok !== 'boolean') return this.reject(ws, att, op, 'bad-input');
@@ -3047,6 +3152,219 @@ export class GameRoom extends DurableObject<Env> {
     return out.length;
   }
 
+  // ---------- ミッション（合流・範囲） ----------
+
+  /** いま開いている合流・範囲のミッション（無ければ null） */
+  private liveMission(kind: 'meet' | 'zone'): MissionView | null {
+    const m = this.game.mission ?? null;
+    return m && m.open && m.kind === kind ? m : null;
+  }
+
+  /** 試合を止めた：締め切りも止める（止めた時刻を覚えておく） */
+  private missionPaused(now: number): Partial<GameState> {
+    const m = this.game.mission;
+    const priv = this.game.missionPriv;
+    if (!m?.open || !m.until || !priv) return {};
+    return { missionPriv: { ...priv, pausedAt: now } };
+  }
+
+  /** 試合を再開した：止めていた分（と、再開までの2秒）だけ締め切りを後ろへ */
+  private missionResumed(now: number): Partial<GameState> {
+    const m = this.game.mission;
+    const priv = this.game.missionPriv;
+    if (!m?.open || !m.until || !priv || priv.pausedAt == null) return {};
+    return { mission: { ...m, until: m.until + (now + START_LEAD_MS - priv.pausedAt) }, missionPriv: { ...priv, pausedAt: null } };
+  }
+
+  /** 締め切りの瞬間に起きるよう、アラームを締め切りに合わせる（合図のアラームより先なら早める） */
+  private async ensureMissionAlarm(): Promise<void> {
+    const m = this.game.mission;
+    if (!m?.open || !m.until || (m.kind !== 'meet' && m.kind !== 'zone')) return;
+    const cur = await this.ctx.storage.getAlarm();
+    const at = Math.max(m.until, Date.now() + 20);
+    if (cur === null || cur > at) await this.ctx.storage.setAlarm(at);
+  }
+
+  /**
+   * 合流・範囲のミッションの時間を見る（合図・届いた操作のたび）。
+   * 止めている間は何もしない。締め切り・ゲームの段階の終わりで、合流は締め切り、範囲は判定する。
+   * 試合の外へ出た（やり直し・結果）ときは、判定しないで締め切る
+   */
+  private missionTick(now: number): void {
+    const g = this.game;
+    const m = g.mission ?? null;
+    if (!m || !m.open || (m.kind !== 'meet' && m.kind !== 'zone')) return;
+    const clock = missionClock(g, now, CAPTURE_PHASE_INDEX);
+    if (clock === 'paused') return;
+    const timeUp = m.until != null && now >= m.until;
+    if (clock === 'live' && !timeUp) return;
+    if (m.kind === 'zone' && clock !== 'off') {
+      // 起きた直後（位置がまだ届き直していない）の締め切りは、少し待ってから判定する。ゲームの段階が終わったときは待たない（位置はもう来ない）
+      if (clock === 'live' && now - this.bornAt < ZONE_WARM_MS) return;
+      this.judgeZone(now, timeUp ? 'time' : 'game-over');
+      return;
+    }
+    this.ctx.storage.transactionSync(() => {
+      this.game = { ...this.game, mission: this.closedMission(now, timeUp ? 'time' : clock === 'over' ? 'game-over' : 'stage') };
+      this.saveGame();
+    });
+    this.broadcastNow();
+  }
+
+  /** 範囲の中にいる逃走者（牢屋の外・位置が新しい人だけ） */
+  private zoneInside(pts: [number, number][], now: number): Participant[] {
+    const out: Participant[] = [];
+    for (const sp of this.spots.values()) {
+      const p = this.inRound(sp.pid);
+      if (!p || p.role !== 'runner' || this.isCaught(p) || now - sp.at > MATES_STALE_MS) continue;
+      if (inZone(pts, sp)) out.push(p);
+    }
+    return out.sort((a, b) => a.num - b.num);
+  }
+
+  /** 位置が届いた・人が捕まった：範囲の中の人数が変わっていたら、全員に配り直す（まとめて） */
+  private zoneChanged(now: number): void {
+    const m = this.liveMission('zone');
+    if (!m?.zone) return;
+    const n = this.zoneInside(m.zone.pts, now).length;
+    if (n === this.zoneShown || this.zoneTimer) return;
+    this.zoneTimer = setTimeout(() => {
+      this.zoneTimer = null;
+      const cur = this.liveMission('zone');
+      if (cur?.zone && this.zoneInside(cur.zone.pts, Date.now()).length !== this.zoneShown) this.broadcastNow();
+    }, ZONE_BROADCAST_MS);
+  }
+
+  /** 範囲を判定する：いま中にいる逃走者が、決めた人数以上なら成功。成功なら牢屋から出す（決めておいた人数） */
+  private judgeZone(now: number, reason: string): void {
+    const m = this.liveMission('zone');
+    if (!m?.zone) return;
+    const inside = this.zoneInside(m.zone.pts, now);
+    const ok = inside.length >= m.zone.need;
+    this.log('mission-zone', { at: now, data: { mission: m.id, ok, count: inside.length, need: m.zone.need, inside: inside.map((p) => p.name), reason } });
+    let freed = 0;
+    if (ok && m.free !== 0) {
+      const res = this.missionFree(m.free ?? null, now, { mission: m.id, kind: 'zone' });
+      if (typeof res === 'number') freed = res;
+    }
+    this.ctx.storage.transactionSync(() => {
+      const priv = this.game.missionPriv;
+      this.game = {
+        ...this.game,
+        mission: this.closedMission(now, reason, { ok, at: now, freed, count: inside.length }),
+        missionPriv: priv ? { ...priv, freed } : priv,
+      };
+      this.saveGame();
+    });
+    this.broadcastNow();
+  }
+
+  /** 合流の長押しをしてよいか：合流のミッションが開いていて、試合が動いている */
+  private meetOpen(now: number): boolean {
+    return !!this.liveMission('meet') && missionClock(this.game, now, CAPTURE_PHASE_INDEX) === 'live';
+  }
+
+  private meetHoldsOf(pid: string, now: number): RescueHold[] {
+    const list = this.meetHolds.get(pid) ?? [];
+    for (const h of list) if (h.end === null && now - h.start > HOLD_UNKNOWN_END_MS) h.end = h.start + HOLD_UNKNOWN_END_MS;
+    return list.filter((h) => h.end === null || now - h.end <= RESCUE_HOLD_KEEP_MS);
+  }
+
+  /** 合流の長押し。同じ組の2人の長押しが重なった瞬間に、その組は成功 */
+  private onMeet(att: Attachment, msg: Extract<ClientMsg, { t: 'meet' }>, now: number): void {
+    const p = this.inRound(att.pid);
+    if (!p || p.role !== 'runner') return;
+    const at = this.pressAt(msg.at, now);
+    if (msg.on !== true) {
+      this.endMeetHold(p.pid, at, Number.isFinite(Number(msg.start)) ? Number(msg.start) : undefined);
+      return;
+    }
+    const group = this.game.missionPriv?.groups.find((x) => x.pids.includes(p.pid));
+    if (!this.meetOpen(now) || !group || group.okAt !== null || this.isCaught(p)) {
+      this.notify(p.pid, 'closed');
+      return;
+    }
+    const list = this.meetHoldsOf(p.pid, now);
+    const same = list.find((h) => Math.abs(h.start - at) <= HOLD_SAME_MS);
+    if (!same) {
+      for (const h of list) if (h.end === null) h.end = at;
+      list.push({ start: at, end: null });
+      this.meetHolds.set(p.pid, list.slice(-4));
+      this.log('meet-hold', { p, at, data: { on: true, mission: this.game.mission?.id, lagMs: now - at } });
+    }
+    const mine = this.meetHoldsOf(p.pid, now).find((h) => Math.abs(h.start - at) <= HOLD_SAME_MS);
+    if (!mine || mine.used) return;
+    const overlaps = (h: RescueHold) => h.start <= (mine.end ?? Infinity) && (h.end ?? Infinity) >= mine.start;
+    const hit = group.pids
+      .filter((pid) => pid !== p.pid)
+      .map((pid) => this.inRound(pid))
+      .filter((q): q is Participant => !!q && q.role === 'runner' && !this.isCaught(q))
+      .map((q) => ({ q, h: this.meetHoldsOf(q.pid, now).filter((h) => !h.used && overlaps(h)).sort((a, b) => a.start - b.start)[0] }))
+      .filter((x) => x.h)
+      .sort((a, b) => a.h!.start - b.h!.start)[0];
+    if (!hit) return;
+    mine.used = true;
+    hit.h!.used = true;
+    this.meetSucceed(group, p, hit.q, now);
+  }
+
+  private endMeetHold(pid: string, at: number, start?: number): void {
+    const list = this.meetHolds.get(pid);
+    if (!list) return;
+    const h = list.find((x) => x.end === null && (start === undefined || Math.abs(x.start - start) <= HOLD_SAME_MS));
+    if (!h) return;
+    h.end = Math.max(h.start, at);
+    this.log('meet-hold', { p: this.people.get(pid) ?? null, at: h.end, data: { on: false, ms: h.end - h.start } });
+  }
+
+  /** 1組が合流した。記録して、決めておいた人数を牢屋から出す。1組だけのミッション・全部の組が合流したら締め切る */
+  private meetSucceed(group: { pids: string[]; okAt: number | null }, a: Participant, b: Participant, now: number): void {
+    const m = this.liveMission('meet');
+    const priv = this.game.missionPriv;
+    if (!m || !priv || group.okAt !== null) return;
+    group.okAt = now;
+    this.log('meet', { p: a, other: b, via: 'together', at: now, data: { mission: m.id, group: group.pids.map((pid) => this.people.get(pid)?.name ?? '') } });
+    let freed = 0;
+    if (m.free !== 0) {
+      const res = this.missionFree(m.free ?? null, now, { mission: m.id, kind: 'meet', by: `${a.name}・${b.name}` });
+      if (typeof res === 'number') freed = res;
+    }
+    for (const pid of group.pids) this.meetHolds.delete(pid);
+    const okCount = priv.groups.filter((x) => x.okAt !== null).length;
+    const total = priv.freed + freed;
+    const allDone = okCount === priv.groups.length;
+    this.ctx.storage.transactionSync(() => {
+      this.game = { ...this.game, missionPriv: { ...priv, freed: total } };
+      if (allDone) {
+        this.game = { ...this.game, mission: this.closedMission(now, 'done', { ok: true, at: now, freed: total, count: okCount }) };
+      }
+      this.saveGame();
+    });
+    this.notify(a.pid, 'met', b, 'together');
+    this.notify(b.pid, 'met', a, 'together');
+    this.broadcastNow();
+  }
+
+  /** 全員に配るミッション（合流の組の数・名前、範囲のいまの人数を足す） */
+  private missionView(now: number): MissionView | null {
+    const m = this.game.mission ?? null;
+    if (!m) return null;
+    const priv = this.game.missionPriv ?? null;
+    if (m.kind === 'meet' && m.meet && priv) {
+      const ok = priv.groups.filter((x) => x.okAt !== null).length;
+      const pairs =
+        priv.groups.length <= MEET_PUBLIC_PAIRS_MAX
+          ? priv.groups.map((x) => ({ names: x.pids.map((pid) => this.people.get(pid)?.name ?? '？'), okAt: x.okAt }))
+          : undefined;
+      return { ...m, meet: { scope: m.meet.scope, groups: priv.groups.length, ok, ...(pairs ? { pairs } : {}) } };
+    }
+    if (m.kind === 'zone' && m.zone) {
+      const n = m.open ? this.zoneInside(m.zone.pts, now).length : null;
+      return { ...m, zone: { ...m.zone, now: n } };
+    }
+    return m;
+  }
+
   /** 写真を受け取る（POST）・取り出す（GET /photo/<印>） */
   private async onPhotoRequest(request: Request, url: URL, photoId: string | null): Promise<Response> {
     const host = this.isHostRequest(request);
@@ -3083,7 +3401,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!who || !p || p.removed) return Response.json({ error: 'not-in' }, { status: 403 });
     const mission = this.game.mission;
     const mid = Number(url.searchParams.get('m'));
-    if (!mission || !mission.open || mission.id !== mid) return Response.json({ error: 'closed' }, { status: 409 });
+    if (!mission || !mission.open || mission.id !== mid || (mission.kind ?? 'photo') !== 'photo') return Response.json({ error: 'closed' }, { status: 409 });
     const mine = [...this.photos.values()].filter((ph) => ph.pid === p.pid && ph.missionId === mission.id).length;
     if (mine >= PHOTO_PER_PERSON) return Response.json({ error: 'too-many' }, { status: 429 });
     // 大きさを言わない送り方（chunked）は断る。言っても、読みながら上限を超えたらそこで止める（部屋のメモリを守る）
@@ -3207,7 +3525,7 @@ export class GameRoom extends DurableObject<Env> {
       durations: g.durations,
       nightAt: g.nightAt,
       ratio: g.ratio,
-      mission: g.mission ?? null,
+      mission: this.missionView(Date.now()),
       missionOk: [...this.photos.values()]
         .filter((ph) => ph.status === 'ok')
         .map((ph) => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, freed: ph.freed })),
@@ -3231,6 +3549,22 @@ export class GameRoom extends DurableObject<Env> {
       else if (p.wish === 'runner') runner++;
     }
     return { oni, runner };
+  }
+
+  /** 合流のミッションでの自分の組（入っていなければ null） */
+  private myMeet(p: Participant): MeView['meet'] {
+    const m = this.game.mission ?? null;
+    const group = m?.kind === 'meet' ? this.game.missionPriv?.groups.find((x) => x.pids.includes(p.pid)) : undefined;
+    if (!m || !group) return null;
+    return {
+      missionId: m.id,
+      with: group.pids
+        .filter((pid) => pid !== p.pid)
+        .map((pid) => this.people.get(pid))
+        .filter((q): q is Participant => !!q)
+        .map((q) => ({ name: q.name, jailed: this.isCaught(q) })),
+      okAt: group.okAt,
+    };
   }
 
   private meView(pid: string, now = Date.now()): MeView | undefined {
@@ -3263,6 +3597,7 @@ export class GameRoom extends DurableObject<Env> {
       sent: [...this.photos.values()]
         .filter((ph) => ph.pid === p.pid)
         .map((ph) => ({ id: ph.id, missionId: ph.missionId, status: ph.status, at: ph.at })),
+      meet: live ? this.myMeet(p) : null,
       rcode: live && p.role === 'runner' ? p.rcode : null,
       freeUntil: live && p.role === 'runner' && !this.isCaught(p) && p.freeUntil !== null && p.freeUntil > now ? p.freeUntil : null,
       rescues: live && p.role === 'runner' ? (this.rescues.get(p.pid) ?? 0) : 0,
@@ -3362,6 +3697,14 @@ export class GameRoom extends DurableObject<Env> {
         (ph): HostPhoto => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, status: ph.status, bytes: ph.bytes, freed: ph.freed }),
       ),
       photoBytes: this.photoBytes,
+      meets:
+        g.mission?.kind === 'meet'
+          ? (g.missionPriv?.groups ?? []).map((x) => {
+              const ps = x.pids.map((pid) => this.people.get(pid)).filter((q): q is Participant => !!q);
+              return { names: ps.map((q) => q.name), okAt: x.okAt, jailed: ps.filter((q) => this.isCaught(q)).map((q) => q.name) };
+            })
+          : undefined,
+      zoneIn: g.mission?.open && g.mission.kind === 'zone' && g.mission.zone ? this.zoneInside(g.mission.zone.pts, Date.now()).map((q) => q.name) : undefined,
       wishStat: g.stage === 'lobby' ? null : (g.wishStat ?? null),
       wishPrio: active.filter((p) => p.wish !== null && p.wishMiss > 0).length,
       names: this.watchNames(active),
@@ -3435,6 +3778,8 @@ export class GameRoom extends DurableObject<Env> {
     }
     const game = this.gameView();
     const host = this.hostSummary();
+    // 範囲のミッション：全員に配った「いま中にいる人数」を覚えておく（変わったときだけ配り直すため）
+    this.zoneShown = game.mission?.open && game.mission.zone ? game.mission.zone.now : null;
     for (const ws of this.ctx.getWebSockets()) {
       const att = (ws.deserializeAttachment() as Attachment | null) ?? {};
       if (!att.pid && !att.host) continue;

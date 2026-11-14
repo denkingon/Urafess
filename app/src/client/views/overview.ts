@@ -40,10 +40,12 @@ export interface OvInput {
   area?: [number, number][] | null;
   /** 牢屋の場所（決まっている形）。無ければ null。月白の薄い面と「牢屋」の字 */
   jail?: [number, number][] | null;
+  /** ミッションの範囲（決まっている形）。無ければ null。蓄光の面と「ミッション」の字。鬼にも逃走者にも同じものを出す */
+  zone?: [number, number][] | null;
   /** 描いている途中の範囲（主催者が地図を押して足していく点） */
   draft?: [number, number][] | null;
   /** 描いている途中のものがどれか（既定は遊ぶ範囲）。同じものの決まった形を薄くする */
-  draftLayer?: 'area' | 'jail';
+  draftLayer?: 'area' | 'jail' | 'zone';
   /** 枠の決め方：area＝範囲があれば範囲に合わせる（既定）、campus＝いつもキャンパス全体から（範囲を描くとき） */
   frameBase?: 'area' | 'campus';
   /** 自分が範囲の外にいる */
@@ -176,10 +178,11 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     const draftPts = (input.draft ?? []).map(([lat, lon]) => ({ lat, lon }));
     const jailPts = (input.jail ?? []).map(([lat, lon]) => ({ lat, lon }));
     const draftJail = input.draftLayer === 'jail';
+    const zonePts = (input.zone ?? []).map(([lat, lon]) => ({ lat, lon }));
     const all: LatLon[] = [...input.points.map((p) => p.pos), ...(input.me ? [input.me] : [])];
     const editing = input.frameBase === 'campus';
     // 範囲を描くときは、キャンパスと描いた点が全部入る枠。遊ぶときは範囲に合わせる
-    const f = editing ? frameOf([...areaPts, ...jailPts, ...draftPts]) : frameOf([...all, ...jailPts], areaPts.length >= 3 ? areaPts : null);
+    const f = editing ? frameOf([...areaPts, ...jailPts, ...draftPts]) : frameOf([...all, ...jailPts, ...zonePts], areaPts.length >= 3 ? areaPts : null);
     const S = Math.min(w / (f.x1 - f.x0), h / (f.y1 - f.y0)); // 画面の px ／ 世界の 1
     const cx = (f.x0 + f.x1) / 2;
     const cy = (f.y0 + f.y1) / 2;
@@ -197,6 +200,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       input.area,
       input.draft,
       input.jail,
+      input.zone,
       input.draftLayer,
       input.frameBase,
       input.meOut,
@@ -272,6 +276,19 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       const t = svg('text', { x: c.x.toFixed(1), y: c.y.toFixed(1), class: 'ov-jail-name', 'text-anchor': 'middle', 'dominant-baseline': 'central' });
       t.textContent = '牢屋 JAIL';
       areaG.append(svg('path', { d, class: `ov-jail${draftPts.length && draftJail ? ' is-old' : ''}` }), t);
+    }
+    // ミッションの範囲：蓄光の面と点線、真ん中に「ミッション」
+    if (zonePts.length >= 3) {
+      const ring = zonePts.map((p) => px(p));
+      const d = ring.map((q, i) => `${i ? 'L' : 'M'}${q.x.toFixed(1)},${q.y.toFixed(1)}`).join('') + 'Z';
+      // 字は枠の上（中にいる人の点と名前に重ねない）。上に置けなければ枠の下
+      const cx0 = ring.reduce((a, q) => a + q.x / ring.length, 0);
+      const top = Math.min(...ring.map((q) => q.y));
+      const bottom = Math.max(...ring.map((q) => q.y));
+      const ty = top - 11 >= 10 ? top - 11 : Math.min(h - 10, bottom + 12);
+      const t = svg('text', { x: Math.max(44, Math.min(w - 44, cx0)).toFixed(1), y: ty.toFixed(1), class: 'ov-zone-name', 'text-anchor': 'middle', 'dominant-baseline': 'central' });
+      t.textContent = 'ミッション';
+      areaG.append(svg('path', { d, class: 'ov-zone' }), t);
     }
     if (draftPts.length) {
       const ring = draftPts.map((p) => px(p));
