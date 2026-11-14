@@ -82,6 +82,8 @@ import {
   type AccountEvent,
   type AccountView,
 } from '../shared/account';
+import type { NameState } from '../shared/account';
+import { bannedHit, BAN_MAX_WORDS, DEFAULT_BANNED, isSpecialName, normalizeBanWord, REDO_NAME, SHAME_NAME } from '../shared/badnames';
 import { nameKey, normalizeName } from '../shared/names';
 import { castStatsAll, cleanTag, TAGS_MAX, type CastEvent, type CastStat } from '../shared/cast';
 import { distanceM } from '../shared/run';
@@ -114,6 +116,8 @@ interface GameState {
   micMode: MicMode;
   /** 遊ぶ範囲（主催者がゲームの前に描く）。新しい夜を始めても残る。古い保存データには無い */
   area?: Area | null;
+  /** 牢屋の場所（主催者がゲームの前に描く）。新しい夜を始めても残る。古い保存データには無い */
+  jail?: Area | null;
   /** 次に名簿に入る人の番号（名簿に入った順。画面には出さない。部屋を空にしても戻さない） */
   nextNum: number;
   counts: { oni: number; runner: number };
@@ -191,6 +195,8 @@ interface Member {
   lastNight: number;
   /** 主催者が付けた印（男・女・速い…）。主催者の画面にしか出さない */
   tags: string[];
+  /** 名前の状態（主催者が手を入れたか） */
+  nameState: NameState;
 }
 
 type MemberRow = {
@@ -205,6 +211,7 @@ type MemberRow = {
   first_night: number;
   last_night: number;
   tags: string | null;
+  name_state: string | null;
 };
 
 /** 記録に名前を残す相手（今夜の参加者でも、名簿の人でもよい） */
@@ -375,6 +382,8 @@ export class GameRoom extends DurableObject<Env> {
   private castStatCache: { key: string; stats: Map<string, CastStat> } | null = null;
   /** 名前の形 → 名簿の人（同じ形が2人いれば先に入った人） */
   private readonly memberByName = new Map<string, Member>();
+  /** 主催者が足した、名前に使えない言葉 */
+  private bans: string[] = [];
   private readonly claims = new Map<string, Claim>();
   /** 人 → 最近の長押し（古い順） */
   private readonly holds = new Map<string, HoldRec[]>();
@@ -498,6 +507,10 @@ export class GameRoom extends DurableObject<Env> {
     // 主催者が付ける印（配役を決めるときに見る）。すでにある部屋には後から足す
     const memberCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(members)`).toArray().map((r) => r.name));
     if (!memberCols.has('tags')) this.sql.exec(`ALTER TABLE members ADD COLUMN tags TEXT`);
+    // 名前の状態（主催者が「付け直させる」「切り替える」をしたか）
+    if (!memberCols.has('name_state')) this.sql.exec(`ALTER TABLE members ADD COLUMN name_state TEXT NOT NULL DEFAULT 'ok'`);
+    // 主催者が足した、名前に使えない言葉
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS name_bans (word TEXT PRIMARY KEY, at INTEGER NOT NULL)`);
     // 新しいスマホへ移す合言葉（古いスマホに出し、新しいスマホで打つ）。休止をまたいでも残すため保存する
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS handoffs (
@@ -617,6 +630,7 @@ export class GameRoom extends DurableObject<Env> {
     this.loadPhotos();
     if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
     if (this.game.area === undefined) this.game.area = null;
+    if (this.game.jail === undefined) this.game.jail = null;
     // 配役の希望を入れる前の版で作った部屋には、決め方が無い
     if (!isWishMode(this.game.wishMode)) this.game.wishMode = DEFAULT_WISH_MODE;
     if (this.game.wishStat === undefined) this.game.wishStat = null;
@@ -726,10 +740,13 @@ export class GameRoom extends DurableObject<Env> {
         firstNight: r.first_night,
         lastNight: r.last_night,
         tags: parseTags(r.tags),
+        nameState: r.name_state === 'due' || r.name_state === 'shamed' ? r.name_state : 'ok',
       };
       this.members.set(m.pid, m);
-      if (!this.memberByName.has(m.nameKey)) this.memberByName.set(m.nameKey, m);
+      // 主催者が付けた仮の名前・切り替えた名前は何人いてもいい（名前の引き当てには入れない）
+      if (!isSpecialName(m.name) && !this.memberByName.has(m.nameKey)) this.memberByName.set(m.nameKey, m);
     }
+    this.bans = this.sql.exec<{ word: string }>(`SELECT word FROM name_bans ORDER BY at`).toArray().map((r) => r.word);
   }
 
   /** このラウンドの写真の一覧（画像そのものは読まない）と、保存している合計 */
@@ -1122,7 +1139,14 @@ export class GameRoom extends DurableObject<Env> {
         m.pid,
       )
       .toArray();
-    return { name: m.name, since: m.createdAt, stats: summarizeAccount(rows, m.pid), busy: this.inMatchTonight(m.pid) };
+    return {
+      name: m.name,
+      since: m.createdAt,
+      stats: summarizeAccount(rows, m.pid),
+      // 付け直すよう言われた人は、試合中でも付け直せる
+      busy: m.nameState !== 'due' && this.inMatchTonight(m.pid),
+      nameState: m.nameState,
+    };
   }
 
   /** この人につながっている接続（今夜に入っている・名前のボタンを待っている） */
@@ -1143,35 +1167,56 @@ export class GameRoom extends DurableObject<Env> {
     answer: (body: unknown, status?: number) => Response,
     fail: (e: AccountError, status: number) => Response,
   ): Response {
-    if (this.inMatchTonight(m.pid)) return fail('busy', 409);
+    if (m.nameState === 'shamed') return fail('name-locked', 409);
+    if (m.nameState !== 'due' && this.inMatchTonight(m.pid)) return fail('busy', 409);
     const name = normalizeName(raw);
-    if (!name || isGoneName(name)) return fail('invalid', 400);
+    if (!name || isGoneName(name) || isSpecialName(name)) return fail('invalid', 400);
+    const hit = bannedHit(name, this.bans);
+    if (hit) {
+      this.log('bad-name', { p: m, at: now, data: { typed: name, hit, rename: true } });
+      return fail('banned', 400);
+    }
     const key = nameKey(name);
     const owner = this.memberByName.get(key);
     if (owner && owner.pid !== m.pid) return fail('taken', 409);
-    if (name === m.name) return answer({ name });
+    if (name === m.name && m.nameState === 'ok') return answer({ name });
+    this.setMemberName(m, name, 'ok', now, 'rename');
+    return answer({ name });
+  }
+
+  /**
+   * 名簿の人の名前を変える（本人が変える・主催者が付け直させる・主催者が切り替える）。
+   * 今夜の一覧・写真の名前も変え、開いているスマホにも届ける。仮の名前・切り替えた名前は名前の引き当てに入れない
+   */
+  private setMemberName(m: Member, name: string, state: NameState, now: number, kind: 'rename' | 'name-redo' | 'name-shame'): void {
     const from = m.name;
+    const key = nameKey(name);
     const p = this.people.get(m.pid);
     this.ctx.storage.transactionSync(() => {
-      this.sql.exec(`UPDATE members SET name = ?, name_key = ? WHERE pid = ?`, name, key, m.pid);
+      this.sql.exec(`UPDATE members SET name = ?, name_key = ?, name_state = ? WHERE pid = ?`, name, key, state, m.pid);
       if (p) this.sql.exec(`UPDATE participants SET name = ? WHERE pid = ?`, name, m.pid);
       this.sql.exec(`UPDATE photos SET name = ? WHERE pid = ?`, name, m.pid);
-      this.log('rename', { p: { pid: m.pid, num: m.num, name }, at: now, data: { from } });
+      this.log(kind, { p: { pid: m.pid, num: m.num, name }, at: now, data: { from } });
     });
     this.forgetName(m);
     m.name = name;
     m.nameKey = key;
-    this.memberByName.set(key, m);
+    m.nameState = state;
+    if (!isSpecialName(name)) this.memberByName.set(key, m);
     if (p) p.name = name;
     for (const ph of this.photos.values()) if (ph.pid === m.pid) ph.name = name;
     // 開いているスマホにも新しい名前を届ける（今夜に入っていれば合い鍵ごと、名前のボタンなら名前だけ）
     for (const { ws, att } of this.socketsOf(m.pid)) {
-      if (att.pid && p) this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name });
-      else this.send(ws, { t: 'known', name });
+      if (att.pid && p) this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name, ...this.nsOf(m) });
+      else this.send(ws, { t: 'known', name, ...this.nsOf(m) });
     }
     this.scheduleBroadcast();
     this.scheduleHostUpdate();
-    return answer({ name });
+  }
+
+  /** welcome・known に付ける名前の状態（ふつうは付けない） */
+  private nsOf(m: Member | undefined): { ns?: 'due' | 'shamed' } {
+    return m && m.nameState !== 'ok' ? { ns: m.nameState } : {};
   }
 
   /** 新しいスマホへ移す合言葉を出す（前に出した合言葉は消える） */
@@ -1347,8 +1392,15 @@ export class GameRoom extends DurableObject<Env> {
    */
   private onJoin(ws: WebSocket, att: Attachment, rawName: unknown, now: number): void {
     const name = normalizeName(rawName);
-    if (!name || isGoneName(name)) {
+    if (!name || isGoneName(name) || isSpecialName(name)) {
       this.send(ws, { t: 'unknown' });
+      return;
+    }
+    // 使えない言葉が入っている名前は入れない（記録には打った名前と引っかかった言葉を残す）
+    const hit = bannedHit(name, this.bans);
+    if (hit) {
+      this.log('bad-name', { at: now, data: { typed: name, hit } });
+      this.send(ws, { t: 'bad-name' });
       return;
     }
     const key = nameKey(name);
@@ -1371,6 +1423,7 @@ export class GameRoom extends DurableObject<Env> {
       firstNight: night,
       lastNight: night,
       tags: [],
+      nameState: 'ok',
     };
     this.game.nextNum += 1;
     const p = this.newParticipant(m, att.ua || null, now);
@@ -1435,7 +1488,7 @@ export class GameRoom extends DurableObject<Env> {
     att.host = false;
     delete att.syncErr;
     ws.serializeAttachment(att);
-    this.send(ws, { t: 'known', name: m.name });
+    this.send(ws, { t: 'known', name: m.name, ...this.nsOf(m) });
     // 今夜の様子（段階・人数）だけ送る。本人の部分は今夜に入ってから
     this.sendSnap(ws, att);
     this.scheduleHostUpdate();
@@ -1568,7 +1621,7 @@ export class GameRoom extends DurableObject<Env> {
     delete att.reclaim;
     att.host = false;
     ws.serializeAttachment(att);
-    this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name: p.name });
+    this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name: p.name, ...this.nsOf(this.members.get(p.pid)) });
     this.sendSnap(ws, att);
     this.sendGlowTo(ws, Date.now());
     this.scheduleBroadcast();
@@ -2509,6 +2562,31 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    // 名前の見張り。1人ずつ・言葉ずつの操作なので版番号を見ない
+    if (op === 'name-redo' || op === 'name-shame') {
+      const m = typeof msg.pid === 'string' ? this.members.get(msg.pid) : undefined;
+      if (!m) return this.reject(ws, att, op, 'not-found');
+      if (op === 'name-redo') this.setMemberName(m, REDO_NAME, 'due', now, 'name-redo');
+      else this.setMemberName(m, SHAME_NAME, 'shamed', now, 'name-shame');
+      return;
+    }
+    if (op === 'ban-add' || op === 'ban-remove') {
+      const word = normalizeBanWord(msg.word);
+      if (!word) return this.reject(ws, att, op, 'invalid');
+      if (op === 'ban-add') {
+        if (this.bans.includes(word)) return;
+        if (this.bans.length >= BAN_MAX_WORDS) return this.reject(ws, att, op, 'full');
+        this.sql.exec(`INSERT OR IGNORE INTO name_bans (word, at) VALUES (?, ?)`, word, now);
+        this.bans.push(word);
+      } else {
+        this.sql.exec(`DELETE FROM name_bans WHERE word = ?`, word);
+        this.bans = this.bans.filter((w) => w !== word);
+      }
+      this.log(op, { at: now, data: { word } });
+      this.scheduleHostUpdate();
+      return;
+    }
+
     // 「前の◯◯に戻りたい」人をつなぐ・断る。1人ずつの操作なので版番号を見ない
     if (op === 'link') {
       const rid = typeof msg.rid === 'string' ? msg.rid : '';
@@ -2889,17 +2967,20 @@ export class GameRoom extends DurableObject<Env> {
       }
       case 'area': {
         // ゲームの前に決める。試合中（時間が0になる前）は変えない（走っている人の「外」が急に変わらないように）
+        // 牢屋の場所（layer＝jail）も同じ決まりで同じ形
         if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        const layer = msg.layer === 'jail' ? 'jail' : 'area';
+        const kind = layer === 'jail' ? 'jail-place' : 'area';
         if (msg.area === null) {
-          if (!g.area) break;
-          this.commit({ area: null });
-          this.log('area', { at: now, data: { area: null } });
+          if (!g[layer]) break;
+          this.commit({ [layer]: null });
+          this.log(kind, { at: now, data: { pts: null } });
           break;
         }
         if (!isValidAreaPts(msg.area, CAMPUS_CENTER)) return this.reject(ws, att, op, 'bad-input');
-        const area: Area = { pts: cleanAreaPts(msg.area), at: now };
-        this.commit({ area });
-        this.log('area', { at: now, data: { pts: area.pts } });
+        const place: Area = { pts: cleanAreaPts(msg.area), at: now };
+        this.commit({ [layer]: place });
+        this.log(kind, { at: now, data: { pts: place.pts } });
         break;
       }
       case 'clear': {
@@ -3236,6 +3317,7 @@ export class GameRoom extends DurableObject<Env> {
       resultAuto: g.resultAuto === true,
       micMode: g.micMode,
       area: g.area ?? null,
+      jail: g.jail ?? null,
       wishMode: g.wishMode,
       ...this.wishCounts(),
     };
@@ -3430,7 +3512,23 @@ export class GameRoom extends DurableObject<Env> {
             ...(stats.has(p.pid) ? { stat: stats.get(p.pid)! } : {}),
           }),
         ),
+      names: this.watchNames(active),
+      bans: { custom: [...this.bans], builtin: DEFAULT_BANNED.length },
     };
+  }
+
+  /** 名前の見張り：今夜の人（引っかかる人を先に）と、今夜いないが引っかかる・手を入れた名簿の人 */
+  private watchNames(active: Participant[]): NonNullable<HostSummary['names']> {
+    const out: NonNullable<HostSummary['names']> = [];
+    const tonight = new Set(active.map((p) => p.pid));
+    for (const m of this.members.values()) {
+      const hit = m.nameState === 'ok' ? bannedHit(m.name, this.bans) : null;
+      const here = tonight.has(m.pid);
+      if (!here && !hit && m.nameState === 'ok') continue;
+      out.push({ pid: m.pid, num: m.num, name: m.name, hit, state: m.nameState, tonight: here });
+    }
+    const rank = (x: (typeof out)[number]) => (x.hit ? 0 : x.state === 'due' ? 1 : x.state === 'shamed' ? 2 : 3);
+    return out.sort((a, b) => rank(a) - rank(b) || a.num - b.num);
   }
 
   private snapFor(att: Attachment, game: GameView, host: HostSummary | null): ServerMsg {

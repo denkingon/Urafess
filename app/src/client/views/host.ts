@@ -29,6 +29,7 @@ import { createOverview } from './overview';
 import { AREA_MAX_PTS, AREA_MIN_PTS, isFarOutside } from '../../shared/area';
 import { distanceM } from '../../shared/run';
 import { bigFontSize } from './phone';
+import { esc } from '../ui';
 
 /** 主催者画面の大きい数字・文字の上限（「逃走者の勝ち」など長いときは枠に収まるまで縮める） */
 const HOST_BIG_MAX_PX = 56;
@@ -66,11 +67,13 @@ export interface HostActions {
       tag?: string;
       on?: boolean;
       area?: [number, number][] | null;
+      layer?: 'area' | 'jail';
       pid?: string;
       by?: string;
       rid?: string;
       ok?: boolean;
       title?: string;
+      word?: string;
       photo?: string;
       free?: boolean;
       n?: number;
@@ -213,7 +216,11 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       </form>
     </details>
     <section class="cap-host area-host" data-k="area">
-      <div class="cap-host-head"><b>遊ぶ範囲</b><span data-k="areaNow"></span></div>
+      <div class="cap-host-head"><b>遊ぶ範囲・牢屋</b><span data-k="areaNow"></span></div>
+      <div class="area-layers" role="tablist">
+        <button type="button" role="tab" data-layer="area" aria-selected="true"><b>遊ぶ範囲</b><span>まだ</span></button>
+        <button type="button" role="tab" data-layer="jail" aria-selected="false"><b>牢屋</b><span>まだ</span></button>
+      </div>
       <p class="note" data-k="areaNote">地図を押して角を足していく（3つ以上）。「決める」で全員の地図に線が出る。逃げ始めてからゲームの終わりまで、範囲の外へ 15m 出て3秒たった人のスマホに「戻れ」と戻る向きが出る。</p>
       <div class="area-map" data-k="areaMap"></div>
       <div class="area-btns">
@@ -269,6 +276,20 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       </details>
     </section>
     <div class="dups" data-k="duplist"></div>
+    <section class="cap-host names-host" data-k="names">
+      <div class="cap-host-head"><b>名前の見張り</b><span data-k="namesNow"></span></div>
+      <p class="note">使えない言葉の入った名前は、入るときと名前を変えるときに自動で弾く。すり抜けた名前はここで直す：「付け直させる」＝その人のスマホに名前を入れ直す画面が出る（試合中でも）／「切り替える」＝「不適切な名前にしたために名前を変更されたやつ」になり、本人は変えられない（戻すには「付け直させる」）。</p>
+      <div class="names-list" data-k="nameList"></div>
+      <details class="names-ban">
+        <summary data-k="banSum">名前に使えない言葉</summary>
+        <p class="note">最初から入っている言葉のほかに足せる。名前のどこかに入っていれば弾く。頭に = を付けると、その言葉ちょうどの名前（または区切った1語）だけ弾く（例：=しね はシネマを弾かない）。ひらがな・カタカナ・全角半角・空白や記号の違いは同じとみなす。</p>
+        <form class="names-ban-form" data-k="banForm">
+          <input type="text" data-k="banInput" maxlength="20" placeholder="例：うんこ" aria-label="足す言葉">
+          <button type="submit">足す</button>
+        </form>
+        <div class="names-ban-list" data-k="banList"></div>
+      </details>
+    </section>
     <div class="spacer"></div>
     <button type="button" class="wide" data-op="csv">記録をCSVで保存（誰が・誰を・何分に）</button>
     <details class="key-change" data-k="keyChange">
@@ -504,6 +525,30 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     if (pid && confirm(`${target.dataset.label} を参加者から外す。よいか？`)) actions.command('remove', { pid });
   });
 
+  // 名前の見張り
+  q('nameList').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+    if (!b?.dataset.pid) return;
+    const name = b.dataset.name ?? '';
+    if (b.dataset.nop === 'redo') {
+      if (confirm(`「${name}」に名前を付け直させる。付け直すまで名前は「名前を付け直し中」になる。よいか？`)) actions.command('name-redo', { pid: b.dataset.pid });
+    } else if (b.dataset.nop === 'shame') {
+      if (confirm(`「${name}」の名前を「不適切な名前にしたために名前を変更されたやつ」に切り替える。本人は変えられない。よいか？`)) actions.command('name-shame', { pid: b.dataset.pid });
+    }
+  });
+  q('banForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = q('banInput') as HTMLInputElement;
+    const word = input.value.trim();
+    if (!word) return;
+    actions.command('ban-add', { word });
+    input.value = '';
+  });
+  q('banList').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+    if (b?.dataset.word !== undefined && confirm(`「${b.dataset.word}」を使えない言葉から外す。よいか？`)) actions.command('ban-remove', { word: b.dataset.word });
+  });
+
   // ミッション
   const missionForm = q('missionForm') as HTMLFormElement;
   const missionTitle = q('missionTitle') as HTMLInputElement;
@@ -619,6 +664,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
 
   let lastDupKey = '';
   let lastCapKey = '';
+  let lastNamesKey = '';
   let lastAskKey = '';
   // 走ると光る：主催者の画面にも光の地図（真ん中はこの画面の場所。たいてい広場）
   const board = createLightsBoard({ listMax: 6, start: 'all', labelMax: 60 });
@@ -626,68 +672,117 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   const glowMap = el.querySelector('[data-act="glow-map"]') as HTMLButtonElement;
   glowMap.addEventListener('click', () => sensors?.request());
 
-  // 遊ぶ範囲：地図を押して角を足す（下書き）→「決める」で送る。試合中は描けない
-  let draft: [number, number][] = [];
+  // 遊ぶ範囲と牢屋の場所：同じ道具で描く（上の札で切りかえ）。地図を押して角を足す（下書き）→「決める」で送る。試合中は描けない
+  type Layer = 'area' | 'jail';
+  let layer: Layer = 'area';
+  const drafts: Record<Layer, [number, number][]> = { area: [], jail: [] };
+  const saved: Record<Layer, [number, number][] | null> = { area: null, jail: null };
   let areaLocked = false;
-  let savedArea: [number, number][] | null = null;
-  const drawArea = () =>
+  const LAYER_TEXT: Record<Layer, { none: string; note: string; clear: string; confirm: string }> = {
+    area: {
+      none: '範囲なし',
+      note: '地図を押して角を足していく（3つ以上）。「決める」で全員の地図に線が出る。逃げ始めてからゲームの終わりまで、範囲の外へ 15m 出て3秒たった人のスマホに「戻れ」と戻る向きが出る。',
+      clear: '範囲なしにする',
+      confirm: '遊ぶ範囲をなくす（どこまで行っても「戻れ」は出ない）。よいか？',
+    },
+    jail: {
+      none: 'まだ決めていない',
+      note: '牢屋にする場所を、地図を押して角で囲む（3つ以上）。「決める」で全員の地図に「牢屋」が出る。捕まった人のスマホに、牢屋への向きと距離が出る（着いたら「牢屋に着いた」）。',
+      clear: '牢屋の場所をなくす',
+      confirm: '牢屋の場所をなくす（捕まった人に向きが出なくなる）。よいか？',
+    },
+  };
+  const draw = () => {
+    const d = drafts[layer];
     areaMap.update({
       me: null,
       meKind: 'unknown',
       meLit: false,
       points: [],
       labelMax: 0,
-      area: savedArea,
-      draft: draft.length ? draft : null,
+      area: saved.area,
+      jail: saved.jail,
+      draft: d.length ? d : null,
+      draftLayer: layer,
       frameBase: 'campus',
     });
+  };
   const areaMap = createOverview({
     onTap: (p) => {
-      if (areaLocked || draft.length >= AREA_MAX_PTS) return;
-      draft = [...draft, [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6]];
-      drawArea();
+      const d = drafts[layer];
+      if (areaLocked || d.length >= AREA_MAX_PTS) return;
+      drafts[layer] = [...d, [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6]];
+      draw();
       refreshAreaBtns();
     },
   });
   q('areaMap').append(areaMap.el);
   const areaBtn = (k: string) => el.querySelector(`[data-area="${k}"]`) as HTMLButtonElement;
-  const refreshAreaBtns = () => {
-    areaBtn('undo').disabled = areaLocked || draft.length === 0;
-    areaBtn('redo').disabled = areaLocked || draft.length === 0;
-    areaBtn('campus').disabled = areaLocked;
-    areaBtn('save').disabled = areaLocked || draft.length < AREA_MIN_PTS;
-    areaBtn('none').disabled = areaLocked || !savedArea;
+  const layerBtns = [...el.querySelectorAll<HTMLButtonElement>('[data-layer]')];
+  const refreshAreaHead = () => {
+    const pts = saved[layer];
+    q('areaNow').textContent = pts ? `決まっている（角 ${pts.length}・${areaSize(pts)}）` : LAYER_TEXT[layer].none;
+    q('areaNote').textContent = areaLocked
+      ? '試合中は変えられない（走っている人の「外」や牢屋が急に変わらないように）。時間が0になったら変えられる。'
+      : LAYER_TEXT[layer].note;
+    areaBtn('none').textContent = LAYER_TEXT[layer].clear;
+    for (const b of layerBtns) {
+      const on = b.dataset.layer === layer;
+      b.setAttribute('aria-selected', String(on));
+      const st = b.querySelector('span');
+      if (st) st.textContent = saved[b.dataset.layer as Layer] ? '決まっている' : 'まだ';
+    }
   };
+  const refreshAreaBtns = () => {
+    const d = drafts[layer];
+    areaBtn('undo').disabled = areaLocked || d.length === 0;
+    areaBtn('redo').disabled = areaLocked || d.length === 0;
+    areaBtn('campus').hidden = layer !== 'area';
+    areaBtn('campus').disabled = areaLocked;
+    areaBtn('save').disabled = areaLocked || d.length < AREA_MIN_PTS;
+    areaBtn('none').disabled = areaLocked || !saved[layer];
+  };
+  for (const b of layerBtns) {
+    b.addEventListener('click', () => {
+      layer = b.dataset.layer as Layer;
+      el.querySelector('[data-k="area"]')!.setAttribute('data-layer', layer);
+      refreshAreaHead();
+      refreshAreaBtns();
+      draw();
+    });
+  }
   areaBtn('undo').addEventListener('click', () => {
-    draft = draft.slice(0, -1);
-    drawArea();
+    drafts[layer] = drafts[layer].slice(0, -1);
+    draw();
     refreshAreaBtns();
   });
   areaBtn('redo').addEventListener('click', () => {
-    draft = [];
-    drawArea();
+    drafts[layer] = [];
+    draw();
     refreshAreaBtns();
   });
   areaBtn('campus').addEventListener('click', () => {
-    draft = [
+    drafts.area = [
       [CAMPUS_BOX.north, CAMPUS_BOX.west],
       [CAMPUS_BOX.north, CAMPUS_BOX.east],
       [CAMPUS_BOX.south, CAMPUS_BOX.east],
       [CAMPUS_BOX.south, CAMPUS_BOX.west],
     ];
-    drawArea();
+    draw();
     refreshAreaBtns();
   });
   areaBtn('save').addEventListener('click', () => {
-    if (draft.length < AREA_MIN_PTS) return;
-    actions.command('area', { area: draft });
-    savedArea = draft;
-    draft = [];
-    drawArea();
+    const d = drafts[layer];
+    if (d.length < AREA_MIN_PTS) return;
+    actions.command('area', { area: d, layer });
+    saved[layer] = d;
+    drafts[layer] = [];
+    draw();
+    refreshAreaHead();
     refreshAreaBtns();
   });
   areaBtn('none').addEventListener('click', () => {
-    if (confirm('遊ぶ範囲をなくす（どこまで行っても「戻れ」は出ない）。よいか？')) actions.command('area', { area: null });
+    if (confirm(LAYER_TEXT[layer].confirm)) actions.command('area', { area: null, layer });
   });
 
   const screen: HostScreen = {
@@ -697,22 +792,20 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       if (!game || !host) return;
       redraw = () => screen.update(input);
       {
-        // 遊ぶ範囲
-        const pts = game.area?.pts ?? null;
+        // 遊ぶ範囲・牢屋の場所
+        const next: Record<Layer, [number, number][] | null> = { area: game.area?.pts ?? null, jail: game.jail?.pts ?? null };
         // サーバーと同じ決まり：試合中（時間が0になる前）は変えられない
         const locked = game.stage === 'timer' && !!game.timer && !isDone(game.timer, serverNow);
-        const changed = JSON.stringify(pts) !== JSON.stringify(savedArea) || locked !== areaLocked;
-        savedArea = pts;
+        const changed = JSON.stringify(next) !== JSON.stringify(saved) || locked !== areaLocked;
+        saved.area = next.area;
+        saved.jail = next.jail;
         areaLocked = locked;
         if (changed) {
-          refreshAreaBtns();
-          q('areaNow').textContent = pts ? `決まっている（角 ${pts.length}・${areaSize(pts)}）` : '範囲なし';
           q('area').classList.toggle('is-locked', locked);
-          q('areaNote').textContent = locked
-            ? '試合中は範囲を変えられない（走っている人の「外」が急に変わらないように）。時間が0になったら変えられる。'
-            : '地図を押して角を足していく（3つ以上）。「決める」で全員の地図に線が出る。逃げ始めてからゲームの終わりまで、範囲の外へ 15m 出て3秒たった人のスマホに「戻れ」と戻る向きが出る。';
+          refreshAreaHead();
+          refreshAreaBtns();
         }
-        drawArea();
+        draw();
       }
       const s = hostStatus(game, serverNow);
       q('round').textContent = `ラウンド ${Math.max(game.round, 1)}${online ? '' : '・切断中'}`;
@@ -997,6 +1090,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
             meAcc: pos?.acc ?? null,
             myKind: 'unknown',
             area: areaPts,
+            jail: game.jail?.pts ?? null,
           });
         }
       }
@@ -1037,6 +1131,32 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         if (album.open) void showAlbum();
       }
 
+      const namesKey = JSON.stringify([host.names ?? null, host.bans ?? null]);
+      if (namesKey !== lastNamesKey) {
+        lastNamesKey = namesKey;
+        const names = host.names ?? [];
+        q('names').hidden = !host.names;
+        const flagged = names.filter((n) => n.hit || n.state !== 'ok');
+        q('namesNow').textContent = flagged.length ? `気になる名前 ${flagged.length}` : '';
+        const STATE: Record<string, string> = { due: '付け直し待ち', shamed: '切り替えた' };
+        q('nameList').innerHTML = names.length
+          ? names
+              .map((n) => {
+                const tag = n.hit ? `<em class="names-hit">「${esc(n.hit)}」に引っかかる</em>` : n.state !== 'ok' ? `<em>${STATE[n.state]}</em>` : '';
+                const where = n.tonight ? '' : '<small>今夜いない</small>';
+                const d = `data-pid="${esc(n.pid)}" data-name="${esc(n.name)}"`;
+                const redo = n.state === 'due' ? '' : `<button type="button" ${d} data-nop="redo">付け直させる</button>`;
+                const shame = n.state === 'shamed' ? '' : `<button type="button" ${d} data-nop="shame">切り替える</button>`;
+                return `<div class="names-row${n.hit ? ' is-hit' : ''}"><span class="names-name">${esc(n.name)}${tag}${where}</span>${redo}${shame}</div>`;
+              })
+              .join('')
+          : '<p class="note">今夜の人はまだいない</p>';
+        const bans = host.bans ?? { custom: [], builtin: 0 };
+        q('banSum').textContent = `名前に使えない言葉（最初から ${bans.builtin}・足した ${bans.custom.length}）`;
+        q('banList').innerHTML = bans.custom
+          .map((w) => `<button type="button" class="names-chip" data-word="${esc(w)}" aria-label="${esc(w)} を外す">${esc(w)} ×</button>`)
+          .join('');
+      }
       const dupKey = JSON.stringify(host.dupNames);
       if (dupKey !== lastDupKey) {
         lastDupKey = dupKey;

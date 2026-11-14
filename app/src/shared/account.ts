@@ -186,7 +186,11 @@ export interface AccountView {
   stats: AccountStats;
   /** 試合中で今夜に入っているので、名前を変える・名簿から消えるができない */
   busy: boolean;
+  /** 名前の状態：ok／due＝主催者に付け直すよう言われた（試合中でも付け直せる）／shamed＝主催者が名前を変えた（本人は変えられない） */
+  nameState?: NameState;
 }
+
+export type NameState = 'ok' | 'due' | 'shamed';
 
 /** POST /api/game/<id>/me の頼み */
 export type AccountOp =
@@ -203,6 +207,8 @@ export type AccountError =
   | 'busy' // 試合中
   | 'bad-code' // 合言葉が違う・切れた
   | 'locked' // 合言葉の打ち間違いが多すぎる
+  | 'banned' // 名前に使えない言葉が入っている
+  | 'name-locked' // 主催者が名前を変えたので、本人は変えられない
   | 'bad-input';
 
 export function isHandoffCode(code: unknown): code is string {
