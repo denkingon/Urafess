@@ -1,9 +1,8 @@
-import { CAMPUS_BOX, CAMPUS_CENTER, MATES_FAR_M } from '../../shared/rules';
 import { distanceM, type LatLon } from '../../shared/run';
 
 /**
  * 全体の地図（見た目の層）。北が上の SFC の地図に、見えてよい人を置く。
- * - 最初の枠は SFC のキャンパス（CAMPUS_BOX）。人がその外にいれば、そこまで広げる（キャンパスから MATES_FAR_M より遠い人は数えない）
+ * - 枠は遊ぶ範囲いっぱい（範囲が無ければメビウスリングのまわり RING_BOX）。範囲のすぐ外（FRAME_EXPAND_M）の人までは広げて入れ、遠い人は地図のふちに寄せて点線の輪で描く
  * - 下地は OpenStreetMap の地図を暗くしたもの（画像はブラウザがそのまま読む。サーバーのリクエストは使わない）。読めなくても点は出る
  * - 鬼は朱の点に2本の角、逃走者は月白の点、役の分からない人（走って光った相手）は白い光だけ。役は色と形の両方で見分ける
  * - 光っている人は光の輪。自分は蓄光の輪と、位置の誤差の円
@@ -94,7 +93,16 @@ export function fromWorld(x: number, y: number): LatLon {
  * 地図の枠：もとの枠（範囲があれば範囲、無ければキャンパス）と、近くにいる人を全部入れる。返り値は世界の座標の矩形。
  * base に範囲の頂点を渡すと、範囲に合わせる
  */
-export function frameOf(points: LatLon[], base?: LatLon[] | null): { x0: number; y0: number; x1: number; y1: number } {
+/** 範囲が決まっていないときの枠：メビウスリングのまわり（遊ぶ所はたいていこの中） */
+export const RING_BOX = { north: 35.39, west: 139.4253, south: 35.3864, east: 139.4292 } as const;
+/** 枠の外にいる人のうち、枠をこれだけ（m）まで広げて入れる。もっと遠い人は枠を広げず、地図のふちに寄せて描く */
+export const FRAME_EXPAND_M = 40;
+
+/**
+ * 地図の枠：もとの枠（範囲があれば範囲、無ければメビウスリングのまわり）と、そのすぐ外（FRAME_EXPAND_M 以内）にいる人を入れる。
+ * 返り値は世界の座標の矩形。pad は余白の割合
+ */
+export function frameOf(points: LatLon[], base?: LatLon[] | null, pad = 0.04): { x0: number; y0: number; x1: number; y1: number } {
   let x0: number;
   let y0: number;
   let x1: number;
@@ -106,23 +114,27 @@ export function frameOf(points: LatLon[], base?: LatLon[] | null): { x0: number;
     y0 = Math.min(...ws.map((w) => w.y));
     y1 = Math.max(...ws.map((w) => w.y));
   } else {
-    const nw = toWorld({ lat: CAMPUS_BOX.north, lon: CAMPUS_BOX.west });
-    const se = toWorld({ lat: CAMPUS_BOX.south, lon: CAMPUS_BOX.east });
+    const nw = toWorld({ lat: RING_BOX.north, lon: RING_BOX.west });
+    const se = toWorld({ lat: RING_BOX.south, lon: RING_BOX.east });
     x0 = nw.x;
     y0 = nw.y;
     x1 = se.x;
     y1 = se.y;
   }
+  // 世界の座標で FRAME_EXPAND_M がどれだけか
+  const lat = (fromWorld(0, (y0 + y1) / 2).lat * Math.PI) / 180;
+  const m = FRAME_EXPAND_M / (EARTH_CIRC_M * Math.cos(lat));
+  const [bx0, by0, bx1, by1] = [x0 - m, y0 - m, x1 + m, y1 + m];
   for (const p of points) {
-    if (distanceM(CAMPUS_CENTER, p) > MATES_FAR_M) continue;
     const w = toWorld(p);
+    if (w.x < bx0 || w.x > bx1 || w.y < by0 || w.y > by1) continue;
     x0 = Math.min(x0, w.x);
     y0 = Math.min(y0, w.y);
     x1 = Math.max(x1, w.x);
     y1 = Math.max(y1, w.y);
   }
-  const padX = (x1 - x0) * 0.06;
-  const padY = (y1 - y0) * 0.06;
+  const padX = (x1 - x0) * pad;
+  const padY = (y1 - y0) * pad;
   return { x0: x0 - padX, y0: y0 - padY, x1: x1 + padX, y1: y1 + padY };
 }
 
@@ -184,7 +196,11 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     const all: LatLon[] = [...input.points.map((p) => p.pos), ...(input.me ? [input.me] : [])];
     const editing = input.frameBase === 'campus';
     // 範囲を描くときは、キャンパスと描いた点が全部入る枠。遊ぶときは範囲に合わせる
-    const f = editing ? frameOf([...areaPts, ...jailPts, ...draftPts]) : frameOf([...all, ...jailPts], areaPts.length >= 3 ? areaPts : null);
+    // 描くとき：範囲があれば範囲（と牢屋・描いている点）に、無ければメビウスリングのまわりに合わせ、少し広めの余白。
+    // 遊ぶとき：範囲いっぱいに。範囲のすぐ外の人までは入れ、遠い人は地図のふちに寄せる
+    const f = editing
+      ? frameOf([...jailPts, ...draftPts], areaPts.length >= 3 ? areaPts : null, 0.12)
+      : frameOf([...all, ...jailPts], areaPts.length >= 3 ? areaPts : null);
     const S = Math.min(w / (f.x1 - f.x0), h / (f.y1 - f.y0)); // 画面の px ／ 世界の 1
     const cx = (f.x0 + f.x1) / 2;
     const cy = (f.y0 + f.y1) / 2;
@@ -214,6 +230,14 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     const px = (p: LatLon) => {
       const q = toWorld(p);
       return { x: (q.x - cx) * S + w / 2, y: (q.y - cy) * S + h / 2 };
+    };
+    /** 人の印：地図の外にいる人は、ふちに寄せる（edge＝寄せた） */
+    const EDGE = 12;
+    const pxIn = (p: LatLon) => {
+      const q = px(p);
+      const x = Math.max(EDGE, Math.min(w - EDGE, q.x));
+      const y = Math.max(EDGE, Math.min(h - EDGE, q.y));
+      return { x, y, edge: x !== q.x || y !== q.y };
     };
 
     // 下地のタイル（画面の大きさに合うズームを選び、少し引き伸ばして敷く）
@@ -291,14 +315,11 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       const q = px({ lat: zone.center[0], lon: zone.center[1] });
       areaG.append(svg('path', { d: `M${(q.x - 7).toFixed(1)},${q.y.toFixed(1)}h14M${q.x.toFixed(1)},${(q.y - 7).toFixed(1)}v14`, class: 'ov-zone-center' }));
     }
-    // 牢屋：薄い面と実線、真ん中に「牢屋 JAIL」
+    // 牢屋：薄い面と実線（字は置かない。人の印や名前の邪魔になるため）
     if (jailPts.length >= 3) {
       const ring = jailPts.map((p) => px(p));
       const d = ring.map((q, i) => `${i ? 'L' : 'M'}${q.x.toFixed(1)},${q.y.toFixed(1)}`).join('') + 'Z';
-      const c = ring.reduce((a, q) => ({ x: a.x + q.x / ring.length, y: a.y + q.y / ring.length }), { x: 0, y: 0 });
-      const t = svg('text', { x: c.x.toFixed(1), y: c.y.toFixed(1), class: 'ov-jail-name', 'text-anchor': 'middle', 'dominant-baseline': 'central' });
-      t.textContent = '牢屋 JAIL';
-      areaG.append(svg('path', { d, class: `ov-jail${draftPts.length && draftJail ? ' is-old' : ''}` }), t);
+      areaG.append(svg('path', { d, class: `ov-jail${draftPts.length && draftJail ? ' is-old' : ''}` }));
     }
     if (draftPts.length) {
       const ring = draftPts.map((p) => px(p));
@@ -327,7 +348,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     };
 
     // 光っている人・新しい人ほど上に重ねる。名前は光っている人 → 新しい人の順に出す
-    const pts = input.points.map((p) => ({ p, q: px(p.pos) }));
+    const pts = input.points.map((p) => ({ p, q: pxIn(p.pos) }));
     pts.sort((a, b) => Number(a.p.lit) - Number(b.p.lit) || a.p.fresh - b.p.fresh);
     if (input.me) {
       const q = px(input.me);
@@ -335,7 +356,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       if (r < Math.max(w, h)) accG.append(svg('circle', { cx: q.x.toFixed(1), cy: q.y.toFixed(1), r: r.toFixed(1), class: 'ov-acc-me' }));
     }
     for (const { p, q } of pts) {
-      const g = svg('g', { class: `ov-pt is-${p.kind}${p.lit ? ' is-lit' : ''}`, transform: `translate(${q.x.toFixed(1)} ${q.y.toFixed(1)})` });
+      const g = svg('g', { class: `ov-pt is-${p.kind}${p.lit ? ' is-lit' : ''}${q.edge ? ' is-edge' : ''}`, transform: `translate(${q.x.toFixed(1)} ${q.y.toFixed(1)})` });
       g.setAttribute('opacity', (0.3 + 0.7 * Math.max(0, Math.min(1, p.fresh))).toFixed(2));
       if (p.lit) {
         g.append(svg('circle', { r: 13, class: 'ov-halo' }), svg('circle', { r: 8, class: 'ov-ping' }));
@@ -350,8 +371,8 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       dotsG.append(g);
     }
     if (input.me) {
-      const q = px(input.me);
-      const g = svg('g', { class: `ov-me is-${input.meKind}${input.meLit ? ' is-lit' : ''}`, transform: `translate(${q.x.toFixed(1)} ${q.y.toFixed(1)})` });
+      const q = pxIn(input.me);
+      const g = svg('g', { class: `ov-me is-${input.meKind}${input.meLit ? ' is-lit' : ''}${q.edge ? ' is-edge' : ''}`, transform: `translate(${q.x.toFixed(1)} ${q.y.toFixed(1)})` });
       if (input.meLit) g.append(svg('circle', { r: 13, class: 'ov-halo' }));
       if (input.meOut) g.append(svg('circle', { r: 14, class: 'ov-out' }));
       g.append(svg('circle', { r: 9, class: 'ov-me-ring' }), svg('circle', { r: 4, class: 'ov-me-dot' }));
@@ -359,7 +380,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     }
     let labelled = 0;
     if (input.me) {
-      const q = px(input.me);
+      const q = pxIn(input.me);
       placeLabel(q.x, q.y, 'じぶん', 'is-me');
     }
     for (const { p, q } of [...pts].reverse()) {
