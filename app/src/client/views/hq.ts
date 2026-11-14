@@ -95,7 +95,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   rolesBox.hidden = true;
   const lobbyNote = make('p', 'note hq-lobby-note');
   panel.map.append(old('[data-k="glow"]'), old('[data-k="area"]'));
-  panel.people.append(old('[data-k="asklist"]'), lobbyNote, rolesBox, old('[data-k="cap"]'), old('[data-k="duplist"]'));
+  panel.people.append(old('[data-k="asklist"]'), lobbyNote, rolesBox, old('[data-k="cap"]'), old('[data-k="duplist"]'), old('[data-k="names"]'));
   panel.mission.append(old('[data-k="missionPhoto"]'));
   // チャット：流れと送る欄は「話」、制約と場所の名前はデッキの札
   panel.chat.append(old('[data-k="chatFeed"]'));
@@ -265,8 +265,27 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       });
       const cur = game.stage === 'lobby' ? -1 : game.stage === 'assigned' ? 0 : game.stage === 'result' || done ? 5 : game.stage === 'ended' ? 6 : phase ? phase.index + 1 : 0;
       const progress = phase ? 1 - phase.remainingMs / Math.max(1, game.durations[phase.index]) : 1;
+      // 時間の段階の幅は、時間の長さの比そのまま（0:20 と 1:00 なら 1：3）。配役と結果は字の幅だけ
+      // 幅が字より狭い段階は、字を左にそろえて、続くときは上の段と下の段に互い違いに置く（重ねない）
+      const railKey = `${game.durations.join(',')}|${rail.clientWidth}`;
+      once('railShape', railKey, () => {
+        const total = game.durations.reduce((a, b) => a + b, 0) || 1;
+        const inner = Math.max(0, rail.clientWidth - steps[0].li.offsetWidth - steps[steps.length - 1].li.offsetWidth - 4 * (steps.length - 1));
+        let up = false;
+        let prevNarrow = false;
+        steps.forEach((s, i) => {
+          if (i < 1 || i > PHASES.length) return;
+          const d = game.durations[i - 1];
+          s.lbl.textContent = formatClock(d);
+          s.li.style.flexGrow = String(d);
+          const narrow = (inner * d) / total < s.lbl.offsetWidth + 4;
+          up = narrow && prevNarrow ? !up : false;
+          s.li.dataset.fit = narrow ? (up ? 'up' : 'left') : 'in';
+          prevNarrow = narrow;
+        });
+        rail.toggleAttribute('data-two', steps.some((s) => s.li.dataset.fit === 'up'));
+      });
       steps.forEach((s, i) => {
-        if (i >= 1 && i <= PHASES.length) once(`rl:${i}`, String(game.durations[i - 1]), () => (s.lbl.textContent = formatClock(game.durations[i - 1])));
         const state = i === cur ? 'now' : i < cur ? 'done' : 'later';
         once(`rs:${i}`, state, () => {
           s.li.dataset.state = state;
@@ -337,6 +356,8 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       const onMap = (input.mates?.people ?? []).filter((m) => serverNow - m.at <= MATES_STALE_MS);
       const outside = areaPts && glowPhase(game, serverNow) === 'live' ? onMap.filter((m) => isFarOutside(areaPts, m)) : [];
       if (outside.length) items.push(`<span>範囲の外：${esc(outside.map((m) => m.name).join('・'))}</span><button type="button" data-go="map">地図</button>`);
+      const badNames = (host.names ?? []).filter((n) => n.hit);
+      if (badNames.length) items.push(`<span>気になる名前：${esc(badNames.map((n) => n.name).join('・'))}</span><button type="button" data-go="people">人</button>`);
       if (host.dupNames.length) items.push(`<span>同じ名前：${esc(host.dupNames.map((d) => d.name).join('・'))}</span><button type="button" data-go="people">人</button>`);
       if (!old('[data-k="old"]').hidden) items.push('<span>前の夜のまま。集める前に新しい夜を始める</span><button type="button" data-go="deck">デッキ</button>');
       once('strip', items.length ? `${items.length}|${items[0]}` : '', () => {
@@ -351,7 +372,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
         });
       badge('mission', pending.length);
       badge('chat', asks.length);
-      badge('people', (host.reclaims ?? []).length + host.dupNames.length);
+      badge('people', (host.reclaims ?? []).length + host.dupNames.length + badNames.length);
       badge('map', outside.length);
 
       // 配役済み：役ごとの名前（捕獲と牢屋の一覧は、試合が始まってから出る）

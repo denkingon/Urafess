@@ -1,6 +1,7 @@
 import type { Area } from './area';
 import type { Candidate, CaptureVia } from './capture';
 import type { ChatCh, ChatJail, ChatMode, ChatMsg } from './chat';
+import type { CastStat } from './cast';
 import type { PhotoStatus } from './mission';
 
 /** 牢屋からどうやって出たか。sound＝助ける人の音を拾った、together＝同時に長押し、mission＝ミッション成功、host＝主催者が手で */
@@ -56,12 +57,22 @@ export interface GameView {
   micMode?: 'always' | 'hold';
   /** 遊ぶ範囲（主催者がゲームの前に地図に描いた多角形）。null＝範囲なし。古いサーバーからは来ない */
   area?: Area | null;
+  /** 牢屋の場所（遊ぶ範囲と同じく、主催者がゲームの前に地図に描いた多角形）。null＝決めていない。古いサーバーからは来ない */
+  jail?: Area | null;
   /** 配役の決め方（wish＝希望を聞く／lot＝くじだけ）。古いサーバーからは来ない（そのときは希望の板を出さない） */
   wishMode?: WishMode;
-  /** 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（誰かは送らない）。古いサーバーからは来ない */
+  /**
+   * 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（誰かは送らない）。
+   * 主催者が指名した人は数えない（その人の役は希望と関係なく決まるため）。古いサーバーからは来ない
+   */
   wishes?: { oni: number; runner: number };
   /** チャット：仲間の回線で送れるもの・牢屋の人の決まり・場所の名前。古いサーバーからは来ない（そのときはチャットを出さない） */
   chat?: { mode: ChatMode; jail: ChatJail; places: string[] };
+  /**
+   * 配役の希望：いまの人数と割合での、それぞれの役の「開いている枠」（主催者の指名の分を引いたあと）。
+   * 古いサーバーからは来ない（そのときは、人数と割合からスマホが出す）
+   */
+  wishSlots?: { oni: number; runner: number };
 }
 
 export interface MissionView {
@@ -126,8 +137,13 @@ export interface MeView {
   wish?: RoleId | null;
   /** 配役の希望：続けて希望が通らなかった回数（1以上なら、次の配役で先に通る） */
   wishMiss?: number;
-  /** 配役の希望：いまの配役で、希望を出したのに通らなかった（希望が枠より多かった） */
+  /** 配役の希望：いまの配役で、希望を出したのに通らなかった（希望が枠より多かった・主催者が決めた） */
   wishMissed?: boolean;
+  /**
+   * 主催者がこの人の役を決めている（配役の前の指名、または配役のあとに主催者が動かした）。開始で消える。
+   * 本人の画面の文を合わせるために送る（配役の前は、板のひとことを「配役を待つ」にする。配役のあとは「主催者が決めた」）
+   */
+  hostCast?: boolean;
 }
 
 /** 主催者が見る、今の配役の捕獲 */
@@ -191,6 +207,39 @@ export interface HostSummary {
   wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
   /** 配役の希望：次の配役で先に通る人（前に外れた人）の数 */
   wishPrio?: number;
+  /**
+   * 配役をいじる：今夜の参加者の1人ずつ（名簿に入った順）。主催者が指名する・配役のあとに動かすための一覧。
+   * 古いサーバーは送らない
+   */
+  cast?: HostCastEntry[];
+  /**
+   * 名前の見張り：今夜の人と、使えない言葉に引っかかる・主催者が手を入れた名簿の人。
+   * hit＝引っかかった言葉、state＝名前の状態、tonight＝今夜に入っている。古いサーバーは送らない
+   */
+  names?: { pid: string; num: number; name: string; hit: string | null; state: 'ok' | 'due' | 'shamed'; tonight: boolean }[];
+  /** 名前に使えない言葉：主催者が足した言葉と、最初から入っている言葉の数 */
+  bans?: { custom: string[]; builtin: number };
+}
+
+/** 主催者が配役をいじるための1人 */
+export interface HostCastEntry {
+  pid: string;
+  num: number;
+  name: string;
+  /** 本人の希望（null＝どちらでも） */
+  wish: RoleId | null;
+  /** 主催者の指名（null＝指名していない。開始で消える） */
+  pin: RoleId | null;
+  /** いまの配役での役（配役前・途中で来た人は null） */
+  role: RoleId | null;
+  /** 前に希望が外れていて、次の配役で優先される */
+  prio: boolean;
+  /** いまつながっている */
+  on: boolean;
+  /** 主催者が付けた印（男・女・速い…）。名簿に残る */
+  tags?: string[];
+  /** 今までの記録から出した数字（記録が無い人には付かない） */
+  stat?: CastStat;
 }
 
 /**
@@ -246,7 +295,14 @@ export type HostOp =
   | 'mic'
   /** 配役の決め方を切り替える（wish＝希望を聞く／lot＝くじだけ）。次の配役から効く */
   | 'wish-mode'
+  /**
+   * 配役をいじる：pids の人たちをまとめて role に指名する（role=null で指名を外す＝くじ・希望に戻す）。
+   * 配役の前は指名だけ。配役済み（開始の前）なら、役がちがう人をその場で動かす。試合中はできない。指名は開始で消える
+   */
+  | 'cast'
+  | 'tag'
   /** 遊ぶ範囲を決める（area＝頂点の並び、null で範囲なし）。試合中（時間が0になる前）は変えられない */
+  /** 遊ぶ範囲・牢屋の場所を決める（layer で選ぶ。area＝頂点の並び、null でなし）。試合中（時間が0になる前）は変えられない */
   | 'area'
   | 'remove'
   /** 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。名簿は残る */
@@ -275,7 +331,14 @@ export type HostOp =
    * 写真を見て決める（photo＝写真の印、ok=true で成功・false でやり直し）。決め直してもいい。
    * 成功のとき free=true なら牢屋の人も出す（n＝人数、省くと全員）。1枚の写真で出すのは最初の成功の1回だけ
    */
-  | 'judge';
+  | 'judge'
+  /** 名前を付け直させる（pid＝名簿の人）。付け直すまで名前は「名前を付け直し中」 */
+  | 'name-redo'
+  /** 名前を SHAME_NAME に切り替える（pid＝名簿の人）。本人は変えられない */
+  | 'name-shame'
+  /** 名前に使えない言葉を足す・消す（word） */
+  | 'ban-add'
+  | 'ban-remove';
 
 export type ClientMsg =
   /** 新しく名簿に入って、今夜に入る（名前が名簿にあれば taken が返る） */
@@ -301,13 +364,24 @@ export type ClientMsg =
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
       wishMode?: WishMode;
+      /** 配役をいじる：動かす人たち */
+      pids?: string[];
+      /** 配役をいじる：指名する役（null で指名を外す） */
+      role?: RoleId | null;
+      /** 印を付ける・外す（op: 'tag'。pids の人たちに） */
+      tag?: string;
+      on?: boolean;
       /** 遊ぶ範囲の頂点（[緯度, 経度] の並び）。null で範囲なし */
       area?: [number, number][] | null;
+      /** area で決めるのはどれか（既定は遊ぶ範囲） */
+      layer?: 'area' | 'jail';
       pid?: string;
       by?: string;
       rid?: string;
       ok?: boolean;
       title?: string;
+      /** 名前に使えない言葉（ban-add・ban-remove） */
+      word?: string;
       photo?: string;
       free?: boolean;
       /** ミッション成功で出す人数（省くと全員） */
@@ -390,9 +464,12 @@ export interface RosterEntry {
 }
 
 export type ServerMsg =
-  | { t: 'welcome'; pid: string; key: string; num: number; name: string }
+  /** ns＝名前の状態（due＝主催者に付け直すよう言われた・shamed＝主催者が名前を変えた）。ふつうは付かない */
+  | { t: 'welcome'; pid: string; key: string; num: number; name: string; ns?: 'due' | 'shamed' }
   /** この合い鍵の人は名簿にいるが、今夜にはまだ入っていない（名前のボタンを出す） */
-  | { t: 'known'; name: string }
+  | { t: 'known'; name: string; ns?: 'due' | 'shamed' }
+  /** 入れた名前に使えない言葉が入っている（名前の入力に戻す） */
+  | { t: 'bad-name' }
   /** その名前は名簿のほかの人のもの（「前の◯◯？」と聞く） */
   | { t: 'taken'; name: string }
   /** 「前の◯◯に戻る」の行方。waiting＝主催者がつなぐのを待っている、denied＝主催者が断った */

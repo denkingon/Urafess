@@ -137,3 +137,6 @@ export class AreaWatch {
     this.last = null;
   }
 }
+
+/** 牢屋の線からこれだけの所まで来たら「牢屋に着いた」（m）。牢屋は小さいので、位置のぶれを見込んで甘くする */
+export const JAIL_ARRIVE_M = 10;
