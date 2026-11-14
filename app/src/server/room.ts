@@ -111,6 +111,8 @@ interface GameState {
   micMode: MicMode;
   /** 遊ぶ範囲（主催者がゲームの前に描く）。新しい夜を始めても残る。古い保存データには無い */
   area?: Area | null;
+  /** 牢屋の場所（主催者がゲームの前に描く）。新しい夜を始めても残る。古い保存データには無い */
+  jail?: Area | null;
   /** 次に名簿に入る人の番号（名簿に入った順。画面には出さない。部屋を空にしても戻さない） */
   nextNum: number;
   counts: { oni: number; runner: number };
@@ -602,6 +604,7 @@ export class GameRoom extends DurableObject<Env> {
     this.loadPhotos();
     if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
     if (this.game.area === undefined) this.game.area = null;
+    if (this.game.jail === undefined) this.game.jail = null;
     // 配役の希望を入れる前の版で作った部屋には、決め方が無い
     if (!isWishMode(this.game.wishMode)) this.game.wishMode = DEFAULT_WISH_MODE;
     if (this.game.wishStat === undefined) this.game.wishStat = null;
@@ -2786,17 +2789,20 @@ export class GameRoom extends DurableObject<Env> {
       }
       case 'area': {
         // ゲームの前に決める。試合中（時間が0になる前）は変えない（走っている人の「外」が急に変わらないように）
+        // 牢屋の場所（layer＝jail）も同じ決まりで同じ形
         if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        const layer = msg.layer === 'jail' ? 'jail' : 'area';
+        const kind = layer === 'jail' ? 'jail-place' : 'area';
         if (msg.area === null) {
-          if (!g.area) break;
-          this.commit({ area: null });
-          this.log('area', { at: now, data: { area: null } });
+          if (!g[layer]) break;
+          this.commit({ [layer]: null });
+          this.log(kind, { at: now, data: { pts: null } });
           break;
         }
         if (!isValidAreaPts(msg.area, CAMPUS_CENTER)) return this.reject(ws, att, op, 'bad-input');
-        const area: Area = { pts: cleanAreaPts(msg.area), at: now };
-        this.commit({ area });
-        this.log('area', { at: now, data: { pts: area.pts } });
+        const place: Area = { pts: cleanAreaPts(msg.area), at: now };
+        this.commit({ [layer]: place });
+        this.log(kind, { at: now, data: { pts: place.pts } });
         break;
       }
       case 'clear': {
@@ -3133,6 +3139,7 @@ export class GameRoom extends DurableObject<Env> {
       resultAuto: g.resultAuto === true,
       micMode: g.micMode,
       area: g.area ?? null,
+      jail: g.jail ?? null,
       wishMode: g.wishMode,
       wishes: this.wishCounts(),
     };
