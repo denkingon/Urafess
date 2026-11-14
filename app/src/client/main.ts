@@ -16,6 +16,7 @@ import { createInstall, type InstallScreen } from './views/install';
 import { createJoin, type EntryMode } from './views/join';
 import { createLab } from './views/lab';
 import { createMission, createPhotoLoader } from './views/mission';
+import { createCrowdLab } from './views/lab-crowd';
 import { createRunLab } from './views/lab-run';
 import { createPhone } from './views/phone';
 import { createScreenKeeper } from './wake-lock';
@@ -309,6 +310,10 @@ function entryModeOf(phase: string): EntryMode | null {
 // ---------- 音の試し（/lab）・走りの試し（/lab?k=run） ----------
 
 function startLab(): void {
+  if (params.get('k') === 'crowd') {
+    root.replaceChildren(createCrowdLab(params));
+    return;
+  }
   if (params.get('k') === 'run') {
     root.replaceChildren(createRunLab(new Sensors()));
     return;
