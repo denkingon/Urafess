@@ -616,3 +616,6 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .area-layers button b { font-size: 17px; }
 .area-layers button span { font-size: 16px; opacity: 0.7; }
 .area-layers button[aria-selected="true"] { outline: 2px solid currentColor; outline-offset: -2px; font-weight: 900; }
+/* 地図の外にいる人：ふちに寄せ、点線の輪で「この先にいる」 */
+.ov-pt.is-edge .ov-dot, .ov-me.is-edge .ov-me-ring { stroke-dasharray: 3 3; }
+.ov-pt.is-edge, .ov-me.is-edge { opacity: 0.75; }
