@@ -132,6 +132,7 @@ export class GameClient {
   private sawHeartbeat = false;
   private roughOffset: number | null = null;
   private ackedAssignId = 0;
+  private ackedRole: RoleId | null = null;
   private pendingJoinName: string | null = null;
   /** 名前のボタンを押した（つなぎ直したら送り直す） */
   private pendingEnter = false;
@@ -425,6 +426,10 @@ export class GameClient {
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
       wishMode?: WishMode;
+      pids?: string[];
+      role?: RoleId | null;
+      tag?: string;
+      on?: boolean;
       area?: [number, number][] | null;
       layer?: 'area' | 'jail';
       pid?: string;
@@ -502,6 +507,7 @@ export class GameClient {
       this.lastRecvAt = this.deps.now();
       // つなぎ直したら受け取りの返事も送り直す（サーバー側で重複は無視される）
       this.ackedAssignId = 0;
+      this.ackedRole = null;
       this.state = { ...this.state, online: true };
       this.hello();
       this.burst(BURST_ON_CONNECT, BURST_JITTER_MS);
@@ -768,8 +774,10 @@ export class GameClient {
         }
         // 役を受け取ったことをサーバーに返す（主催者画面の「受け取り済み」）
         const me = msg.me;
-        if (me && me.role && me.assignId === msg.game.assignId && this.ackedAssignId !== me.assignId) {
+        // 同じ配役のまま主催者が役を動かしたときも、新しい役を受け取ったことを返し直す
+        if (me && me.role && me.assignId === msg.game.assignId && (this.ackedAssignId !== me.assignId || this.ackedRole !== me.role)) {
           this.ackedAssignId = me.assignId;
+          this.ackedRole = me.role;
           this.send({ t: 'ack', assignId: me.assignId });
         }
         break;

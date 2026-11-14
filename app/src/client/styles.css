@@ -196,6 +196,40 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .mic-mode .seg button:first-child { border-radius: 10px 0 0 10px; }
 .mic-mode .seg button:last-child { border-radius: 0 10px 10px 0; border-left: none; }
 .mic-mode .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+/* 主催者：配役をいじる */
+.cast-sort { display: flex; flex-wrap: wrap; gap: 6px; }
+.cast-sort button { min-height: 40px; padding: 0 12px; font-size: 13px; border-radius: 999px; }
+.cast-sort button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.cast-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; color: var(--quiet); }
+.cast-pick input { width: 64px; min-height: 40px; margin: 0 6px; text-align: center; }
+.cast-pick button { min-height: 40px; padding: 0 12px; font-size: 13px; }
+.cast-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; overscroll-behavior: contain; }
+.cast-row { flex: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; text-align: left; padding: 10px 12px; min-height: 48px; border-radius: 10px; font-size: 15px; }
+.cast-row[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 2px var(--ink); background: var(--field); }
+.cast-row[data-on="0"] .cast-name { color: var(--quiet); }
+.cast-name { font-weight: 900; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cast-marks { display: flex; flex-wrap: wrap; gap: 4px; }
+.cast-marks:empty { display: none; }
+.cast-marks i { font-style: normal; font-size: 12px; line-height: 1; padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--ink); }
+.cast-marks i[data-kind="pin"], .cast-marks i[data-kind="role"] { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 900; }
+.cast-marks i[data-kind="wish"] { border-style: dashed; }
+.cast-marks i[data-kind="last"] { border-color: var(--line); color: var(--quiet); }
+.cast-host .cap-host-head { flex-wrap: wrap; }
+.cast-host .cap-host-head b { flex: none; }
+.cast-marks i[data-kind="tag"] { border-color: var(--line); color: var(--quiet); }
+.cast-stat { font-size: 12px; font-weight: 500; color: var(--quiet); line-height: 1.5; white-space: normal; }
+.cast-act { position: sticky; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 3; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--bg); }
+.cast-act[hidden] { display: none; }
+.cast-act b { font-size: 14px; }
+.cast-roles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.cast-roles button { min-height: 48px; font-weight: 900; }
+.cast-roles .ghost { grid-column: span 2; min-height: 40px; font-weight: 500; font-size: 13px; }
+.cast-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.cast-tags button { min-height: 40px; padding: 0 12px; font-size: 13px; border-radius: 999px; }
+.cast-tags button[aria-pressed="true"] { border-style: dashed; }
+.cast-act form { display: flex; gap: 6px; }
+.cast-act form input { flex: 1; min-width: 0; min-height: 40px; }
+.cast-act form button { min-height: 40px; padding: 0 14px; font-size: 13px; }
 .durations, .ratio { border-top: 1px solid var(--line); padding-top: 12px; font-size: 14px; color: var(--quiet); }
 .durations summary, .ratio summary { cursor: pointer; }
 .durations form, .ratio form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
