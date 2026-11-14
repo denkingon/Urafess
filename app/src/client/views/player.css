@@ -415,3 +415,21 @@
 .phone.player.is-glow .slot > .mission-card .mission-shoot { width: auto; min-height: 44px; padding: 0 16px; font-size: max(var(--min), 16px); align-self: center; }
 .phone.player.is-glow .slot > .mission-card .mission-mine, .phone.player.is-glow .slot > .mission-card .mission-ok { grid-column: 1 / -1; font-size: max(var(--min), 16px); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .phone.player.is-glow .slot > .mission-card .mission-mine:not(:empty) ~ .mission-ok { display: none; }
+
+/* ---------- 背景の地図（?bg=off でなければ body に .has-backdrop がつく）。値は「裏フェス 地図 つまみ」で決めた形 ---------- */
+.backdrop { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; background: #0b0c10; }
+.bd-svg { width: 100%; height: 100%; display: block; }
+.bd-green { fill: #0d0f12; }
+.bd-water { fill: #101822; }
+.bd-plaza { fill: #1c1e27; }
+.bd-road, .bd-path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.bd-road { stroke: #20222b; stroke-width: 6; }
+.bd-road.big { stroke-width: 9.6; }
+.bd-path { stroke: #2c2f3a; stroke-width: 2; }
+.bd-path.steps { stroke-dasharray: 1.2 1.6; stroke-linecap: butt; }
+.bd-bld { fill: #ff6a3d; }
+.backdrop-credit { position: fixed; left: 8px; bottom: calc(2px + env(safe-area-inset-bottom)); z-index: 2; font-size: 12px; line-height: 1.2; color: #a29d93; opacity: .8; text-decoration: none; }
+.has-backdrop #app { position: relative; z-index: 1; }
+/* 地の色（役の色を混ぜた闇）を透かして、後ろの地図を見せる。字と絵はそのまま */
+.has-backdrop .player { background: color-mix(in srgb, var(--ground) var(--veil, 45%), transparent); }
+.has-backdrop .join { background: color-mix(in srgb, var(--yami) var(--veil, 45%), transparent); }
