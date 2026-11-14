@@ -2,7 +2,6 @@ import { VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
 import { allocateCounts } from '../../shared/allocate';
 import {
-  CAMPUS_BOX,
   DEFAULT_RATIO,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
@@ -23,7 +22,7 @@ import { checkNewHostKey, HOST_KEY_MIN } from '../../shared/hostkey';
 import type { ClientState } from '../core/game-client';
 import type { Sensors } from '../sense';
 import { createLightsBoard } from './glow';
-import { createOverview } from './overview';
+import { createOverview, RING_BOX } from './overview';
 import { AREA_MAX_PTS, AREA_MIN_PTS, isFarOutside } from '../../shared/area';
 import { distanceM } from '../../shared/run';
 import { bigFontSize } from './phone';
@@ -189,7 +188,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       <div class="area-btns">
         <button type="button" data-area="undo">1つ戻す</button>
         <button type="button" data-area="redo">描き直す</button>
-        <button type="button" data-area="campus">キャンパスの四角</button>
+        <button type="button" data-area="campus">メビウスリングの四角</button>
         <button type="button" data-area="save" class="primary">決める</button>
         <button type="button" data-area="none" class="ghost">範囲なしにする</button>
       </div>
@@ -665,10 +664,10 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   });
   areaBtn('campus').addEventListener('click', () => {
     drafts.area = [
-      [CAMPUS_BOX.north, CAMPUS_BOX.west],
-      [CAMPUS_BOX.north, CAMPUS_BOX.east],
-      [CAMPUS_BOX.south, CAMPUS_BOX.east],
-      [CAMPUS_BOX.south, CAMPUS_BOX.west],
+      [RING_BOX.north, RING_BOX.west],
+      [RING_BOX.north, RING_BOX.east],
+      [RING_BOX.south, RING_BOX.east],
+      [RING_BOX.south, RING_BOX.west],
     ];
     draw();
     refreshAreaBtns();
