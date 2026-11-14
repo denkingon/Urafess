@@ -542,3 +542,21 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .area-btns button { flex: 1 1 30%; min-height: 44px; font-size: 16px; }
 .area-btns button.primary { flex-basis: 100%; font-weight: 900; }
 .area-host.is-locked .area-map { opacity: 0.6; }
+
+/* 牢屋の場所：月白の薄い面と実線、真ん中に「牢屋 JAIL」。描いている途中は点線 */
+.ov-jail { fill: rgba(241, 237, 228, 0.22); stroke: #f1ede4; stroke-width: 2.5; stroke-linejoin: round; }
+.ov-jail.is-old { opacity: 0.4; }
+.ov-jail-name {
+  font-size: 16px; font-weight: 900; fill: #f1ede4; font-family: inherit;
+  paint-order: stroke; stroke: #0b0c10; stroke-width: 4px; stroke-linejoin: round;
+}
+.ov-draft-line.is-jail { stroke-dasharray: 6 4; }
+/* 牢屋への向き：月白の帯（範囲の外の朱と分ける）。着いたら枠だけ */
+.area-out.jail-go { background: #f1ede4; }
+.area-out.jail-go.is-arrived { background: transparent; color: #f1ede4; border: 2px solid #f1ede4; }
+/* 主催者：遊ぶ範囲・牢屋の札 */
+.area-layers { display: flex; gap: 8px; margin: 6px 0 8px; }
+.area-layers button { flex: 1 1 0; min-height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 16px; border-radius: 12px; }
+.area-layers button b { font-size: 17px; }
+.area-layers button span { font-size: 16px; opacity: 0.7; }
+.area-layers button[aria-selected="true"] { outline: 2px solid currentColor; outline-offset: -2px; font-weight: 900; }

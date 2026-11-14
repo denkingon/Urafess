@@ -37,6 +37,7 @@ const KIND_NAME: Record<string, string> = {
   mic: '鬼のマイクの聞き方',
   'wish-mode': '配役の決め方',
   area: '遊ぶ範囲',
+  'jail-place': '牢屋の場所',
   remove: '外す',
   clear: '新しい夜を始める',
   rename: '名前を変えた',
