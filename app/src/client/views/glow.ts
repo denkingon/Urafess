@@ -22,6 +22,9 @@ const NEW_MS = 2_500;
 const VIBRATE_EVERY_MS = 4_000;
 /** 地図を描き直す間隔の下限（毎フレームは描かない） */
 const DRAW_EVERY_MS = 100;
+/** 光が消えるまでの長さ。走っていない司令塔の位置は5秒ごとにしか届かないので、全体の地図と同じ長さで見る */
+const staleOf = (r: GlowEntry): number => (r.lead ? MATES_STALE_MS : RUN_STALE_MS);
+const LEAD_WORD: Pair = ['司令塔', 'COMMANDER'];
 
 export interface BoardInput {
   glow: ClientState['glow'];
@@ -45,6 +48,8 @@ export interface BoardInput {
   jail?: [number, number][] | null;
   /** 自分が範囲の外にいる（見張りが決めた） */
   meOut?: boolean;
+  /** 司令塔：全体の地図を見られない（司令塔だけが見られる札のとき、司令塔でない人）。光の地図だけになる */
+  mapOff?: boolean;
 }
 
 export interface BoardOptions {
@@ -136,12 +141,22 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
   let lastDraw = 0;
   let lastListKey = '';
   let lastVibrate = 0;
+  let wasMapOff: boolean | null = null;
 
   return {
     el,
-    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, jail, meOut }) {
+    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, jail, meOut, mapOff }) {
+      // 司令塔：全体の地図を見られない間は、光の地図だけ（切りかえも出さない）。見られるようになったら、全体の地図を開く
+      const off = mapOff === true;
+      if (off !== wasMapOff) {
+        if (wasMapOff !== null || off) mode = off ? 'near' : 'all';
+        wasMapOff = off;
+        tabs.hidden = off;
+        lastDraw = 0;
+        applyMode();
+      }
       const now = serverNow ?? Date.now();
-      const all: GlowEntry[] = (glow?.runs ?? []).filter((r) => now - r.at <= RUN_STALE_MS);
+      const all: GlowEntry[] = (glow?.runs ?? []).filter((r) => now - r.at <= staleOf(r));
       const meListed = myNum !== null && all.some((r) => r.num === myNum);
       const others = all.filter((r) => r.num !== myNum);
 
@@ -189,9 +204,10 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
           num: r.num,
           name: r.name,
           pos,
-          fresh: 1 - (now - r.at) / RUN_STALE_MS,
+          fresh: 1 - (now - r.at) / staleOf(r),
           trail: t.slice(0, -1).map((p) => ({ lat: p.lat, lon: p.lon })),
           isNew: now - (firstSeen.get(r.num) ?? 0) < NEW_MS,
+          lead: r.lead,
         };
       });
       if (mode === 'near') radar.update({ me, heading, lights, meLit });
@@ -216,11 +232,13 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
             kind: kindOfMate(m.role),
             fresh: run ? 1 : 1 - age / MATES_STALE_MS,
             lit: litNums.has(m.num),
+            lead: !!others.find((r) => r.num === m.num)?.lead,
           });
         }
         for (const r of others) {
           if (seen.has(r.num) || r.lat === null || r.lon === null) continue;
-          points.push({ key: `r${r.num}`, name: r.name, pos: { lat: r.lat, lon: r.lon }, acc: r.acc ?? 0, kind: 'unknown', fresh: 1 - (now - r.at) / RUN_STALE_MS, lit: true });
+          // 司令塔はどちらの側か分かっている（役の色で出す）
+          points.push({ key: `r${r.num}`, name: r.name, pos: { lat: r.lat, lon: r.lon }, acc: r.acc ?? 0, kind: r.lead ?? 'unknown', fresh: 1 - (now - r.at) / staleOf(r), lit: true, lead: !!r.lead });
         }
         // 範囲の外にいる人（届いた位置だけで見る。光っている相手は数えない）
         if (area) for (const p of points) if (p.kind !== 'unknown') p.out = isFarOutside(area, p.pos);
@@ -237,7 +255,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
       rows.sort((a, b) => (a.d ?? Infinity) - (b.d ?? Infinity) || a.r.since - b.r.since);
       const shown = rows.slice(0, listMax);
       const listKey = JSON.stringify([
-        shown.map((x) => [x.r.num, x.r.name, x.d === null ? null : Math.round(x.d / 10), x.b === null ? null : Math.round((x.b - (heading ?? 0)) / 15)]),
+        shown.map((x) => [x.r.num, x.r.name, x.r.lead ?? '', x.d === null ? null : Math.round(x.d / 10), x.b === null ? null : Math.round((x.b - (heading ?? 0)) / 15)]),
         rows.length,
         heading === null,
       ]);
@@ -258,6 +276,14 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
           // 番号は出さない（人は名前で見分ける）
           const name = document.createElement('b');
           name.textContent = r.name;
+          // 司令塔：地図と同じ四角い印を名前の前に（鬼は朱、逃走者は月白）。字は入れない（行が狭い）
+          let tag: HTMLElement | null = null;
+          if (r.lead) {
+            tag = document.createElement('i');
+            tag.className = `glow-lead is-${r.lead}`;
+            tag.setAttribute('role', 'img');
+            tag.setAttribute('aria-label', LEAD_WORD[0]);
+          }
           const where = document.createElement('em');
           // 方角（北が上の地図のときだけ）と距離。英語は日本語のすぐ後ろ、数字は1回だけ（北東 NE 60m）
           where.innerHTML =
@@ -266,7 +292,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
               : [heading === null ? inline([compassName(b), compassNameEn(b)], lang) : '', inline([distanceText(d), distanceTextEn(d)], lang)]
                   .filter(Boolean)
                   .join(' ');
-          li.append(arrow, name, where);
+          li.append(arrow, ...(tag ? [tag] : []), name, where);
           return li;
         });
         if (rows.length > listMax) {
@@ -324,6 +350,39 @@ function senseProblem(s: Sensors): Pair | null {
   return null;
 }
 
+/**
+ * 司令塔の一言。tone：mine＝自分が司令塔、crew＝司令塔がいる、down＝自分の側の司令塔が落ちた（逃走者）、
+ * up＝相手の司令塔を落とした（鬼）
+ */
+export function leadStrip(state: ClientState): { tone: 'mine' | 'crew' | 'down' | 'up'; head: Pair; body: Pair } | null {
+  const l = state.me?.lead;
+  const rules = state.game?.lead;
+  const role = state.me?.role;
+  if (!l || !rules?.on || !role) return null;
+  const name = l.name ?? '';
+  if (role === 'runner' && l.down) {
+    const ja = [l.mine ? (l.map ? '牢屋から指示を出せ' : '地図は消えた') : '', rules.expose ? '鬼に全員の場所が見えている' : '', rules.restore ? (l.mine ? '助けを待て' : `${name} を牢屋から出せば戻る`) : ''].filter(Boolean);
+    const en = [l.mine ? (l.map ? 'Call it from jail' : 'Your map is gone') : '', rules.expose ? 'Chasers see everyone' : '', rules.restore ? (l.mine ? 'Wait for a rescue' : `Free ${name} to undo it`) : ''].filter(Boolean);
+    return { tone: 'down', head: l.mine ? [l.map ? '司令塔が落ちた' : '司令塔が落ちた。地図は消えた', l.map ? 'COMMANDER DOWN' : 'COMMANDER DOWN. MAP GONE'] : ['司令塔が捕まった', 'COMMANDER DOWN'], body: [ja.join('。'), en.join('. ')] };
+  }
+  if (role === 'oni' && l.down) {
+    return {
+      tone: 'up',
+      head: ['司令塔を落とした', 'COMMANDER DOWN'],
+      body: l.foes ? ['逃走者の全員が地図に出ている', 'Every runner is on your map'] : ['逃走者の司令塔は牢屋にいる', 'Their commander is in jail'],
+    };
+  }
+  if (l.mine) {
+    return {
+      tone: 'mine',
+      head: ['お前が司令塔', 'YOU ARE THE COMMANDER'],
+      body: rules.seen ? ['仲間の地図はお前だけ。お前の場所は全員に見えている', 'Only you have the team map. Everyone can see you'] : ['仲間の地図はお前だけ', 'Only you have the team map'],
+    };
+  }
+  if (!name) return null;
+  return { tone: 'crew', head: [`司令塔 ${name}`, `COMMANDER ${name}`], body: ['地図は司令塔だけが見られる', 'Only the commander has the map'] };
+}
+
 export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
   const el = document.createElement('section');
   el.className = 'glow';
@@ -333,6 +392,7 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
       <span data-k="askSub"></span>
     </button>
     <p class="glow-note" data-k="note" hidden></p>
+    <p class="lead-strip" data-k="lead" role="status" hidden></p>
     <div class="area-out" data-k="out" role="alert" hidden>
       <svg class="area-out-arrow" viewBox="-20 -20 40 40" aria-hidden="true"><path d="M0,-15 L11,6 L3,3 L3,15 L-3,15 L-3,3 L-11,6 Z"/></svg>
       <div class="area-out-text"><b data-k="outWord"></b><span data-k="outWhere"></span></div>
@@ -354,6 +414,8 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
   const jailBox = q('jailGo');
   const jailArrow = jailBox.querySelector('.area-out-arrow') as SVGElement;
   let lastOutBuzz = 0;
+  const leadBox = q('lead');
+  let lastTone = '';
 
   ask.addEventListener('click', () => {
     // このタップの中で許可を聞く（iPhone はタップの直後でないと聞けない）
@@ -458,7 +520,23 @@ export function createGlow({ sensors, root }: GlowDeps): GlowScreen {
         area,
         jail,
         meOut: out,
+        mapOff: !!state.me?.lead && !state.me.lead.map,
       });
+      // 司令塔：自分の側のいま（誰が司令塔か・落ちたか）。配役が出てからゲームの終わりまで
+      const strip = leadStrip(state);
+      setHidden(leadBox, !strip);
+      if (strip) {
+        if (leadBox.dataset.tone !== strip.tone) leadBox.dataset.tone = strip.tone;
+        // ゲームの段階は地図に高さを譲る：ふだんは1行だけ。落ちた・落としたときだけ中身も出す
+        // 牢屋にいる司令塔の画面は牢屋の案内で埋まっているので、見出しだけ
+        const compact = (view.glow === 'live' && (strip.tone === 'mine' || strip.tone === 'crew')) || (strip.tone === 'down' && view.caught);
+        setHTML(leadBox, `<b>${inline(strip.head, UI.lang)}</b>${compact ? '' : `<span>${sent(strip.body)}</span>`}`);
+        if (strip.tone !== lastTone) {
+          // 落ちた・戻ったは震えて知らせる（最初に出たときは震えない）
+          if (lastTone !== '') vibrate(strip.tone === 'down' ? [200, 80, 200, 80, 400] : 120);
+          lastTone = strip.tone;
+        }
+      } else lastTone = '';
       // 光っている間は、ひとことの場所に「光っている」（全員の一覧に自分が入ったら「…」が取れる）
       const shown = view.glow === 'live' && lit;
       if (root && root.classList.contains('is-lit') !== shown) root.classList.toggle('is-lit', shown);

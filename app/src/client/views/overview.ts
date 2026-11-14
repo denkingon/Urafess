@@ -27,6 +27,8 @@ export interface OvPoint {
   lit: boolean;
   /** 遊ぶ範囲の外にいる */
   out?: boolean;
+  /** 司令塔（役の色の四角い枠で囲む） */
+  lead?: boolean;
 }
 
 export interface OvInput {
@@ -192,7 +194,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       input.me && [input.me.lat, input.me.lon, Math.round(input.me.acc)],
       input.meKind,
       input.meLit,
-      input.points.map((p) => [p.key, p.name, p.pos.lat, p.pos.lon, p.kind, Math.round(p.fresh * 5), p.lit]),
+      input.points.map((p) => [p.key, p.name, p.pos.lat, p.pos.lon, p.kind, Math.round(p.fresh * 5), p.lit, p.lead]),
       input.labelMax,
       input.area,
       input.draft,
@@ -301,7 +303,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
 
     // 光っている人・新しい人ほど上に重ねる。名前は光っている人 → 新しい人の順に出す
     const pts = input.points.map((p) => ({ p, q: px(p.pos) }));
-    pts.sort((a, b) => Number(a.p.lit) - Number(b.p.lit) || a.p.fresh - b.p.fresh);
+    pts.sort((a, b) => Number(!!a.p.lead) - Number(!!b.p.lead) || Number(a.p.lit) - Number(b.p.lit) || a.p.fresh - b.p.fresh);
     if (input.me) {
       const q = px(input.me);
       const r = Math.max(6, input.me.acc / mPerPx(input.me.lat));
@@ -314,6 +316,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
         g.append(svg('circle', { r: 13, class: 'ov-halo' }), svg('circle', { r: 8, class: 'ov-ping' }));
       }
       if (p.out) g.append(svg('circle', { r: 12, class: 'ov-out' }));
+      if (p.lead) g.append(svg('rect', { x: -11, y: -11, width: 22, height: 22, transform: 'rotate(45)', class: 'ov-lead' }));
       if (p.kind === 'oni') {
         // 角2本（ピクトの追跡者と同じ印）
         g.append(svg('path', { d: 'M-5.5,-4 L-7.5,-12 L-1.5,-6 Z M5.5,-4 L7.5,-12 L1.5,-6 Z', class: 'ov-horn' }));

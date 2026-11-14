@@ -120,6 +120,32 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   const wishMode = old('.wish-mode');
   if (wishMode) wishCard.append(wishMode);
   else wishCard.hidden = true;
+  // 司令塔：入れる・外すと、4枚の札、いまの司令塔（指名・くじで引き直す）
+  const LEAD_CARDS: [key: 'seen' | 'dark' | 'expose' | 'restore', title: string, body: string][] = [
+    ['seen', '司令塔は相手に見える', '見る代わりに見られる。司令塔の名前と場所が、ゲームの間ずっと全員の画面に光る'],
+    ['dark', '捕まったら地図が消える', '逃走者の司令塔が牢屋にいる間、司令塔の地図が消える（逃走者の側から地図が無くなる）'],
+    ['expose', '捕まったら鬼に全員が見える', '逃走者の司令塔が牢屋にいる間、鬼の全員の地図に逃走者の全員が出る'],
+    ['restore', '助ければ元に戻る', '司令塔を牢屋から出せば上の2つが消える。切ると、その配役の終わりまで落ちたまま'],
+  ];
+  const leadCard = make('section', 'hq-card hq-lead',
+    '<h2>司令塔<span data-hq="leadState"></span></h2>'
+    + '<button type="button" class="hq-switch" data-lead="on" role="switch" aria-checked="false"><b>司令塔を入れる</b><span>全体の地図は司令塔だけが見られる（ほかの人は「近く」の光の地図だけ）。鬼の側・逃走者の側に1人ずつ</span></button>'
+    + '<div class="hq-lead-in" data-hq="leadIn" hidden>'
+    + LEAD_CARDS.map(([k, t, b]) => `<button type="button" class="hq-switch" data-lead="${k}" role="switch" aria-checked="false"><b>${t}</b><span>${b}</span></button>`).join('')
+    + '<p class="note">鬼は捕まらないので、鬼の司令塔は落ちない（「相手に見える」だけが代わりの重り）。</p>'
+    + [['oni', '鬼の司令塔'], ['runner', '逃走者の司令塔']].map(([r, t]) =>
+      `<div class="hq-seat" data-seat="${r}"><label><span>${t}</span><select aria-label="${t}"></select></label><button type="button" data-draw="${r}">くじで引き直す</button></div>`).join('')
+    + '<p class="note" data-hq="leadNote"></p></div>');
+  leadCard.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+    if (!b) return;
+    if (b.dataset.lead) actions.command('lead', { lead: { [b.dataset.lead]: b.getAttribute('aria-checked') !== 'true' } });
+    else if (b.dataset.draw) actions.command('lead-draw', { role: b.dataset.draw as 'oni' | 'runner' });
+  });
+  leadCard.addEventListener('change', (e) => {
+    const sel = e.target as HTMLSelectElement;
+    if (sel.tagName === 'SELECT' && sel.value) actions.command('lead-pick', { pid: sel.value });
+  });
   const sec = (ms: number) => `${ms / 1000}秒`;
   const fixed = make('section', 'hq-card hq-fixed',
     '<h2>固定の札<span>いまはコードの中の数字</span></h2><ul>'
@@ -127,7 +153,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       ['長押しと音', `${sec(HOLD_MIN_MS)}の長押し。鬼が1人に決まれば選ばない`],
       ['牢屋と解放', `タッチで1人出す。出て${sec(RESCUE_IMMUNE_MS)}は捕まらない`],
       ['走ると光る', `走ると名前と場所が全員に光る。止まって${sec(RUN_STOP_MS)}で消える`],
-      ['仲間の地図', `同じ役の仲間だけ見える。${sec(MATES_SEND_EVERY_MS)}ごと`],
+      ['仲間の地図', `同じ役の仲間だけ見える。${sec(MATES_SEND_EVERY_MS)}ごと（司令塔を入れると、見られるのは司令塔だけ）`],
       ['遊ぶ範囲の外', `外へ${AREA_OUT_MARGIN_M}m出て${sec(AREA_OUT_CONFIRM_MS)}で「戻れ」`],
       ['終わり方', '全員が牢屋なら鬼の勝ち。時間切れで1人でも外なら逃走者の勝ち'],
     ].map(([t, x]) => `<li><b>${t}</b><span>${x}</span></li>`).join('') + '</ul>');
@@ -144,7 +170,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   leave.hidden = !onLeave;
   leave.addEventListener('click', () => onLeave?.());
   rec.append(csv, old('[data-k="foot"]'), leave);
-  panel.deck.append(timeCard, ratioCard, wishCard, micCard, fixed, ready, night, rec, durations, ratio);
+  panel.deck.append(timeCard, ratioCard, wishCard, leadCard, micCard, fixed, ready, night, rec, durations, ratio);
   durations.classList.add('hq-gone');
   ratio.classList.add('hq-gone');
 
@@ -386,6 +412,32 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
           for (const b of row.querySelectorAll('button')) b.disabled = inp.disabled;
         });
       });
+
+      // デッキ：司令塔
+      const lr = game.lead;
+      once('leadCard', lr ? '1' : '0', () => (leadCard.hidden = !lr));
+      if (lr) {
+        const hl = host.lead ?? null;
+        const people = (host.cast ?? []).filter((c) => c.role);
+        once('leadRules', JSON.stringify(lr), () => {
+          for (const b of leadCard.querySelectorAll<HTMLButtonElement>('[data-lead]')) b.setAttribute('aria-checked', String(lr[b.dataset.lead as keyof typeof lr]));
+          hq('leadIn').hidden = !lr.on;
+        });
+        text('leadState', !lr.on ? '外してある' : hl?.down ? '逃走者の司令塔が落ちている' : '入っている');
+        once('leadSeats', lr.on ? JSON.stringify([hl, people.map((c) => [c.pid, c.name, c.role])]) : '', () => {
+          for (const role of ['oni', 'runner'] as const) {
+            const row = leadCard.querySelector(`[data-seat="${role}"]`) as HTMLElement;
+            const sel = row.querySelector('select') as HTMLSelectElement;
+            const side = people.filter((c) => c.role === role);
+            const cur = hl?.[role]?.pid ?? '';
+            sel.innerHTML = (cur ? '' : `<option value="">${side.length ? 'まだいない' : '配役のあとに決まる'}</option>`)
+              + side.map((c) => `<option value="${esc(c.pid)}"${c.pid === cur ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+            sel.disabled = side.length === 0;
+            (row.querySelector('button') as HTMLButtonElement).disabled = side.length < 2;
+          }
+        });
+        text('leadNote', !lr.on ? '' : hl ? '司令塔は配役のたびにくじで決まる。名前を選ぶと指名で替えられる（試合中でも）。' : '配役すると、鬼の側・逃走者の側からくじで1人ずつ決まる。そのあと指名で替えられる。');
+      }
 
       // 押すもの：その段階で要るものだけを下へ。ほかは「夜とやり直し」に置いたまま
       const want: DockItem[] =

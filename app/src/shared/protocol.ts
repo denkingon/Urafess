@@ -1,6 +1,7 @@
 import type { Area } from './area';
 import type { Candidate, CaptureVia } from './capture';
 import type { CastStat } from './cast';
+import type { LeadRules } from './lead';
 import type { PhotoStatus } from './mission';
 
 /** 牢屋からどうやって出たか。sound＝助ける人の音を拾った、together＝同時に長押し、mission＝ミッション成功、host＝主催者が手で */
@@ -70,6 +71,29 @@ export interface GameView {
    * 古いサーバーからは来ない（そのときは、人数と割合からスマホが出す）
    */
   wishSlots?: { oni: number; runner: number };
+  /** 司令塔の札（本部のデッキで入れたり外したりする）。誰が司令塔かは入れない。古いサーバーからは来ない（そのときは外してある） */
+  lead?: LeadRules;
+}
+
+/**
+ * 司令塔：本人に送る、自分の側のいま。しくみを入れていて、今の配役で役がある人にだけ付く。
+ * mine＝自分が司令塔、name＝自分の側の司令塔の名前（いなければ null）、map＝全体の地図を見られる、
+ * down＝逃走者の司令塔が落ちている（どちらの側にも同じ値）、foes＝相手の全員の居場所が見えている（鬼だけ）
+ */
+export interface MeLead {
+  mine: boolean;
+  name: string | null;
+  map: boolean;
+  down: boolean;
+  foes: boolean;
+}
+
+/** 司令塔：主催者に送る、いまの司令塔（pid が null＝その側にいない） */
+export interface HostLead {
+  oni: { pid: string; name: string } | null;
+  runner: { pid: string; name: string } | null;
+  /** 逃走者の司令塔が落ちている */
+  down: boolean;
 }
 
 export interface MissionView {
@@ -141,6 +165,8 @@ export interface MeView {
    * 本人の画面の文を合わせるために送る（配役の前は、板のひとことを「配役を待つ」にする。配役のあとは「主催者が決めた」）
    */
   hostCast?: boolean;
+  /** 司令塔：自分の側のいま（しくみを外してある・役が無いときは付かない） */
+  lead?: MeLead | null;
 }
 
 /** 主催者が見る、今の配役の捕獲 */
@@ -216,6 +242,8 @@ export interface HostSummary {
   names?: { pid: string; num: number; name: string; hit: string | null; state: 'ok' | 'due' | 'shamed'; tonight: boolean }[];
   /** 名前に使えない言葉：主催者が足した言葉と、最初から入っている言葉の数 */
   bans?: { custom: string[]; builtin: number };
+  /** 司令塔：いまの司令塔（しくみを外してある・配役前は null）。古いサーバーは送らない */
+  lead?: HostLead | null;
 }
 
 /** 主催者が配役をいじるための1人 */
@@ -253,6 +281,11 @@ export interface GlowEntry {
   since: number;
   /** 最後に届いたサーバー時刻 */
   at: number;
+  /**
+   * 司令塔（どちらの側か）。司令塔は走っていなくても、ゲームの段階の間ずっとここに入る（見る代わりに見られる）。
+   * 走っていない司令塔の位置は MATES_SEND_EVERY_MS ごとにしか届かないので、消すまでの長さは MATES_STALE_MS で見る
+   */
+  lead?: RoleId;
 }
 
 /**
@@ -331,7 +364,13 @@ export type HostOp =
   | 'name-shame'
   /** 名前に使えない言葉を足す・消す（word） */
   | 'ban-add'
-  | 'ban-remove';
+  | 'ban-remove'
+  /** 司令塔の札を変える（lead＝変える札だけ。on で入れる・外す）。いつでも */
+  | 'lead'
+  /** 司令塔を指名する（pid＝今の配役で役がある人。その人の側の司令塔になる） */
+  | 'lead-pick'
+  /** 司令塔をくじで引き直す（role＝どちらの側か） */
+  | 'lead-draw';
 
 export type ClientMsg =
   /** 新しく名簿に入って、今夜に入る（名前が名簿にあれば taken が返る） */
@@ -379,6 +418,8 @@ export type ClientMsg =
       free?: boolean;
       /** ミッション成功で出す人数（省くと全員） */
       n?: number;
+      /** 司令塔の札（op: 'lead'。変える札だけ） */
+      lead?: Partial<LeadRules>;
     }
   /**
    * 長押し。on=true は押し始め（HOLD_MIN_MS 押し続けたら送る）、false は離した。

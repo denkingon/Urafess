@@ -1,3 +1,4 @@
+import type { LeadRules } from '../../shared/lead';
 import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
 import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
@@ -441,6 +442,7 @@ export class GameClient {
       photo?: string;
       free?: boolean;
       n?: number;
+      lead?: Partial<LeadRules>;
     } = {},
   ): boolean {
     const game = this.state.game;

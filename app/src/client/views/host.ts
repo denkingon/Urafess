@@ -1,3 +1,4 @@
+import type { LeadRules } from '../../shared/lead';
 import { VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
 import { allocateCounts, castCounts } from '../../shared/allocate';
@@ -77,6 +78,7 @@ export interface HostActions {
       photo?: string;
       free?: boolean;
       n?: number;
+      lead?: Partial<LeadRules>;
     },
   ): void;
   /** 1イベント＝1行の記録を CSV で保存する */
