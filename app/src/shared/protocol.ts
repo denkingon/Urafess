@@ -4,7 +4,7 @@ import type { PhotoStatus } from './mission';
 
 /** 牢屋からどうやって出たか。sound＝助ける人の音を拾った、together＝同時に長押し、mission＝ミッション成功、host＝主催者が手で */
 export type RescueVia = 'sound' | 'together' | 'mission' | 'host';
-import type { RoleId } from './rules';
+import type { RoleId, WishMode } from './rules';
 import type { Timer } from './schedule';
 
 /** ゲーム全体の段階（サーバーが持つ正解） */
@@ -55,6 +55,10 @@ export interface GameView {
   micMode?: 'always' | 'hold';
   /** 遊ぶ範囲（主催者がゲームの前に地図に描いた多角形）。null＝範囲なし。古いサーバーからは来ない */
   area?: Area | null;
+  /** 配役の決め方（wish＝希望を聞く／lot＝くじだけ）。古いサーバーからは来ない（そのときは希望の板を出さない） */
+  wishMode?: WishMode;
+  /** 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（誰かは送らない）。古いサーバーからは来ない */
+  wishes?: { oni: number; runner: number };
 }
 
 export interface MissionView {
@@ -115,6 +119,12 @@ export interface MeView {
   claim: { at: number; cands: Candidate[] } | null;
   /** ミッション：このラウンドに自分が送った写真（古い順）。古いサーバーからは来ない */
   sent?: { id: string; missionId: number; status: PhotoStatus; at: number }[];
+  /** 配役の希望：自分がなりたい役（null＝どちらでも）。古いサーバーからは来ない */
+  wish?: RoleId | null;
+  /** 配役の希望：続けて希望が通らなかった回数（1以上なら、次の配役で先に通る） */
+  wishMiss?: number;
+  /** 配役の希望：いまの配役で、希望を出したのに通らなかった（希望が枠より多かった） */
+  wishMissed?: boolean;
 }
 
 /** 主催者が見る、今の配役の捕獲 */
@@ -171,6 +181,13 @@ export interface HostSummary {
   /** ミッション：このラウンドに届いた写真（古い順）と、写真の保存の使った量（バイト）。古いサーバーは送らない */
   photos?: HostPhoto[];
   photoBytes?: number;
+  /**
+   * 配役の希望：いまの配役を決めたときの数（希望した人数と、通らなかった人数）。くじだけで決めた配役・配役前は null。
+   * 古いサーバーは送らない
+   */
+  wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
+  /** 配役の希望：次の配役で先に通る人（前に外れた人）の数 */
+  wishPrio?: number;
 }
 
 /**
@@ -224,6 +241,8 @@ export type HostOp =
   | 'ratio'
   /** 鬼のマイクの聞き方を切り替える（いつでも。試合中に変えても、そのときから全員に効く） */
   | 'mic'
+  /** 配役の決め方を切り替える（wish＝希望を聞く／lot＝くじだけ）。次の配役から効く */
+  | 'wish-mode'
   /** 遊ぶ範囲を決める（area＝頂点の並び、null で範囲なし）。試合中（時間が0になる前）は変えられない */
   | 'area'
   | 'remove'
@@ -274,6 +293,7 @@ export type ClientMsg =
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      wishMode?: WishMode;
       /** 遊ぶ範囲の頂点（[緯度, 経度] の並び）。null で範囲なし */
       area?: [number, number][] | null;
       pid?: string;
@@ -317,7 +337,12 @@ export type ClientMsg =
   /** このスマホで、動きのセンサーと位置が使えるか（変わったときと、つなぎ直したときに送る。主催者画面に数が出る） */
   | { t: 'sense'; motion: SenseState; geo: SenseState }
   /** 全体の地図：自分の位置（ゲームの段階の間だけ MATES_SEND_EVERY_MS ごとに送る。段階の外・捕まった人の分は、サーバーが捨てる） */
-  | { t: 'pos'; lat: number; lon: number; acc: number };
+  | { t: 'pos'; lat: number; lon: number; acc: number }
+  /**
+   * 配役の希望：次の配役でなりたい役（null＝どちらでも）。配役の前（待合室・結果発表）と、見学の人だけ変えられる。
+   * 役が決まってからゲームが終わるまでの分は、サーバーが捨てて今の状態を送り直す
+   */
+  | { t: 'wish'; role: RoleId | null };
 
 /**
  * 本人だけに出す短い知らせ（画面の帯・振動）。状態そのものは snap の me で届く。

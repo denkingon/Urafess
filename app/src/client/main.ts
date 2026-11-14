@@ -16,6 +16,7 @@ import { createInstall, type InstallScreen } from './views/install';
 import { createJoin, type EntryMode } from './views/join';
 import { createLab } from './views/lab';
 import { createMission, createPhotoLoader } from './views/mission';
+import { createWish } from './views/wish';
 import { createRunLab } from './views/lab-run';
 import { createPhone } from './views/phone';
 import { createScreenKeeper } from './wake-lock';
@@ -167,6 +168,9 @@ function startPlayer(): void {
   // 牢屋：牢屋の人はマイクで聞き、外の逃走者は「助ける」で鳴らす
   const jail = createJail({ client, emitter, listener });
   phone.slot.append(jail.el, capture.el);
+  // 配役の希望：次の配役の前（待合室・結果発表）に、逃走者／鬼の板を出す
+  const wish = createWish({ client });
+  phone.slot.append(wish.el);
   // ミッション（集合写真）：題と「写真を撮る」は長押しの上に、成功した写真は結果発表の間だけ真ん中に
   const mission = createMission({
     gameId,
@@ -270,6 +274,7 @@ function startPlayer(): void {
       lastView = waiting;
       phone.update(waiting);
       mission.update(null, null);
+      wish.update(waiting, s);
       glow.update(waiting, s, client.serverNow());
       return;
     }
@@ -280,6 +285,7 @@ function startPlayer(): void {
     capture.update(view, s);
     mission.update(s.game, s.me);
     jail.update(view, s);
+    wish.update(view, s);
     glow.update(view, s, client.serverNow());
     // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）
     if (s.me.code && s.me.code !== preparedCode) {
