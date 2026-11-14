@@ -12,7 +12,8 @@ import { Sensors } from './sense';
 import { callAccount, createAccount, errorText } from './views/account';
 import { createCapture } from './views/capture';
 import { createGlow } from './views/glow';
-import { createHost } from './views/host';
+import { createHost, type HostActions } from './views/host';
+import { createHQ } from './views/hq';
 import { createJail } from './views/jail';
 import { createInstall, type InstallScreen } from './views/install';
 import { createJoin, type EntryMode } from './views/join';
@@ -398,7 +399,7 @@ function startHost(token: string): void {
   const photos = createPhotoLoader(gameId, () => hostHeaders);
   // 走ると光る：主催者の画面の地図の真ん中（位置）と向き。主催者は光らない
   const sensors = new Sensors();
-  const host = createHost({
+  const hostActions: HostActions = {
     command: (op, extra) => client.command(op, extra),
     downloadLog: async () => {
       const res = await fetch(`/api/game/${gameId}/log`, { headers: hostHeaders, cache: 'no-store' });
@@ -439,7 +440,24 @@ function startHost(token: string): void {
         return 'offline';
       }
     },
-  }, sensors);
+  };
+  // 本部（新しい主催者画面）：前の画面は残してあり、この端末で切りかえる（/host?hq=1 でも本部になる）
+  if (params.get('hq') === '1') storage.set('urafess:hq', '1');
+  const useHQ = storage.get('urafess:hq') === '1';
+  const setHQ = (on: boolean) => {
+    if (on) storage.set('urafess:hq', '1');
+    else storage.remove('urafess:hq');
+    location.replace(location.pathname + (gameId === 'main' ? '' : `?g=${gameId}`));
+  };
+  const host = useHQ ? createHQ(hostActions, sensors, () => setHQ(false)) : createHost(hostActions, sensors);
+  if (!useHQ) {
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'ghost';
+    go.textContent = '新しい本部 HQ を試す';
+    go.addEventListener('click', () => setHQ(true));
+    host.el.querySelector('.host-head')?.after(go);
+  }
   root.replaceChildren(host.el);
   loop(() => {
     const s = client.state;
