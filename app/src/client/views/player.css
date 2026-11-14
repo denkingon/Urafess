@@ -84,6 +84,8 @@
 .player .p-word { flex: 0 0 auto; margin-top: 10px; text-align: center; font-size: max(var(--min), 26px); line-height: 1.3; font-weight: 700; }
 .player .p-note { flex: 0 0 auto; margin-top: 4px; text-align: center; font-size: max(var(--min), 18px); line-height: 1.5; font-weight: 700; }
 .player[data-role="caught"] .p-word, .player[data-role="caught"] .p-note { color: var(--tsuki-muted); }
+/* 文が出ている間は、背の低い画面で下の板がはみ出さないよう、絵をもう少し縮められるようにする（広い画面では変わらない） */
+.player.has-note .p-pic { min-height: 64px; }
 
 .player .gl { display: block; flex: 0 0 auto; }
 
@@ -415,6 +417,62 @@
 .phone.player.is-glow .slot > .mission-card .mission-shoot { width: auto; min-height: 44px; padding: 0 16px; font-size: max(var(--min), 16px); align-self: center; }
 .phone.player.is-glow .slot > .mission-card .mission-mine, .phone.player.is-glow .slot > .mission-card .mission-ok { grid-column: 1 / -1; font-size: max(var(--min), 16px); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .phone.player.is-glow .slot > .mission-card .mission-mine:not(:empty) ~ .mission-ok { display: none; }
+
+/* ---------- 配役の希望（逃走者／鬼の板） ----------
+ * 次の配役の前（待合室・結果発表）に、いちばん下に2枚並べる。左＝逃走者（月白）、右＝鬼（朱と角）。
+ * 選んだ板は役の色で塗る（長押しの板と同じ作法）。絵は止めた姿（動かす絵は真ん中の1つだけ）。 */
+.player .wish {
+  /* 板の色はここで決めておく（選んだ板の中では、絵の色のために --tsuki・--shu を闇の色に差し替えるので） */
+  --wish-run: var(--tsuki); --wish-oni: var(--shu); --wish-ink: var(--yami);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.player .wish[hidden] { display: none; }
+.player .wish-title { margin: 0; text-align: center; font-size: max(var(--min), 20px); line-height: 1.25; font-weight: 700; color: var(--tsuki); opacity: .86; }
+.player .wish-title:empty { display: none; }
+.player .wish-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+/* 板：上の段に絵と数字、下の段に役の名前 */
+.player .wish-btn {
+  --pad: var(--wish-run);
+  appearance: none; -webkit-appearance: none; margin: 0; font: inherit; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  min-height: clamp(112px, 17dvh, 148px); border-radius: 22px; border: 3px solid var(--pad); color: var(--pad);
+  /* 板の中は地の色で塗る（後ろに背景の地図があっても、絵と数字が読めるように） */
+  background: var(--ground); background: color-mix(in srgb, var(--ground) 90%, transparent);
+  display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; align-items: center; align-content: center; column-gap: 8px; row-gap: 4px;
+  padding: 8px 14px 10px; text-align: left;
+}
+.player .wish-btn[data-wish="oni"] { --pad: var(--wish-oni); }
+.player .wish-pic { grid-row: 1; grid-column: 1; width: clamp(48px, 15vw, 64px); aspect-ratio: 1 / 1; display: block; }
+.player .wish-pic svg { display: block; width: 100%; height: 100%; }
+/* 数字：希望している人数（大きく）／枠（小さく） */
+.player .wish-num { grid-row: 1; grid-column: 2; justify-self: end; display: flex; align-items: baseline; gap: 2px; font-variant-numeric: tabular-nums; line-height: 1; white-space: nowrap; }
+.player .wish-num b { font-size: max(calc(var(--min) * 1.2), min(36px, 9vw)); font-weight: 900; }
+.player .wish-num span { font-size: max(calc(var(--min) * 1.2), 20px); opacity: .7; }
+.player .wish-name { grid-row: 2; grid-column: 1 / -1; min-width: 0; font-size: max(var(--min), min(22px, 5.6vw)); line-height: 1.15; font-weight: 900; white-space: nowrap; }
+.player .wish-name .en.u { font-size: max(calc(var(--min) * 1.2), .8em); }
+/* 選んだ板：役の色で塗り、絵と字は闇の色に。まわりに輪 */
+.player .wish-btn[aria-pressed="true"] {
+  background: var(--pad); color: var(--wish-ink);
+  --tsuki: var(--wish-ink); --shu: var(--wish-ink); --tsuki-muted: rgba(11, 12, 16, .5); --picto-ground: var(--pad);
+  box-shadow: 0 0 0 4px var(--ground), 0 0 0 8px var(--pad);
+}
+/* もう一方を選んでいる間は、選ばなかった板を引っこめる（板ごと透かすと後ろの地図に溶けるので、線と字の色を地の色に寄せる） */
+.player .wish[data-mine="runner"] .wish-btn[data-wish="oni"],
+.player .wish[data-mine="oni"] .wish-btn[data-wish="runner"] { opacity: .45; }
+@supports (color: color-mix(in srgb, red 50%, blue)) {
+  .player .wish[data-mine="runner"] .wish-btn[data-wish="oni"] { opacity: 1; --pad: color-mix(in srgb, var(--wish-oni) 50%, var(--ground)); }
+  .player .wish[data-mine="oni"] .wish-btn[data-wish="runner"] { opacity: 1; --pad: color-mix(in srgb, var(--wish-run) 50%, var(--ground)); }
+  .player .wish[data-mine="runner"] .wish-btn[data-wish="oni"] .wish-pic,
+  .player .wish[data-mine="oni"] .wish-btn[data-wish="runner"] .wish-pic { opacity: .5; }
+}
+.player .wish.is-offline .wish-btn { opacity: .35; border-style: dashed; }
+.player .wish-cap { margin: 0; text-align: center; font-size: max(var(--min), 16px); line-height: 1.4; font-weight: 700; color: var(--tsuki); }
+.player .wish-cap .en { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  .player .wish-btn { transition: background-color .12s ease-out, box-shadow .12s ease-out, opacity .12s ease-out; }
+  .player .wish-btn:active { transform: scale(.98); }
+}
+/* 板が出ている間は、大きい数字（待合室の人数）を少し小さくして、板が親指の届く所に収まるようにする */
+.player:has(.wish:not([hidden])) .p-time { font-size: clamp(calc(var(--min) * 1.2), 10dvh, 84px); }
 
 /* ---------- 背景の地図（?bg=off でなければ body に .has-backdrop がつく）。値は「裏フェス 地図 つまみ」で決めた形 ---------- */
 .backdrop { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; background: #0b0c10; }

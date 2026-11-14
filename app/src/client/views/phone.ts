@@ -138,6 +138,7 @@ export function createPhone(): PhoneScreen {
       setHTML(parts.word, view.word ? say(view.word) : '');
       parts.note.hidden = !view.note;
       setHTML(parts.note, view.note ? sent(view.note) : '');
+      el.classList.toggle('has-note', !!view.note);
     },
   };
 }

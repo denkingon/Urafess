@@ -395,3 +395,23 @@ describe('走ると光る（しくみの層）', () => {
     expect(sentOf(s, 'run')).toEqual([]);
   });
 });
+
+describe('配役の希望（しくみの層）', () => {
+  it('つながっていれば希望を送る。切れている間は送らず false を返す', () => {
+    const sockets: FakeSocket[] = [];
+    const m = new Map<string, string>();
+    const storage: KeyValueStore = { get: (k) => m.get(k) ?? null, set: (k, v) => void m.set(k, v), remove: (k) => void m.delete(k) };
+    const c = new GameClient(
+      { url: 'ws://x/ws', gameId: 't', now: () => Date.now(), storage, createSocket: () => { const s = new FakeSocket(); sockets.push(s); return s; } },
+      { kind: 'player' },
+    );
+    c.start();
+    expect(c.wish('runner')).toBe(false);
+    sockets[0].open();
+    expect(c.wish('runner')).toBe(true);
+    expect(c.wish(null)).toBe(true);
+    const sent = sockets[0].sent.map((raw) => JSON.parse(raw) as { t: string; role?: string | null }).filter((x) => x.t === 'wish');
+    expect(sent).toEqual([{ t: 'wish', role: 'runner' }, { t: 'wish', role: null }]);
+    c.stop();
+  });
+});
