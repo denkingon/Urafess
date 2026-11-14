@@ -390,7 +390,9 @@ function startLab(): void {
 // ---------- 主催者 ----------
 
 function startHost(token: string): void {
-  const client = makeClient({ kind: 'host', token });
+  // 合言葉を変えたら、つなぎ直しとヘッダーも新しい合言葉を使う（mode は GameClient がつなぎ直すたびに読む）
+  const mode = { kind: 'host' as const, token };
+  const client = makeClient(mode);
   // 合言葉に日本語が入っていると、そのままではヘッダーに載せられない（記録の保存と写真が送る前に失敗する）
   const hostHeaders = { 'x-host-token': encodeHostKey(token) };
   startUpdateChecks(() => !inMatch(client.state.game?.stage));
@@ -417,6 +419,27 @@ function startHost(token: string): void {
       if (!res.ok) throw new Error(`photos ${res.status}`);
       return res.json();
     },
+    changeKey: async (value) => {
+      try {
+        const res = await fetch(`/api/game/${gameId}/key`, {
+          method: 'POST',
+          headers: { ...hostHeaders, 'content-type': 'application/json' },
+          body: JSON.stringify({ key: value }),
+          cache: 'no-store',
+        });
+        if (res.status === 204) {
+          mode.token = value;
+          hostHeaders['x-host-token'] = encodeHostKey(value);
+          storage.set('urafess:host-token', value);
+          return 'ok';
+        }
+        if (res.status === 403) return 'denied';
+        if (res.status === 400) return ((await res.json().catch(() => null)) as { error?: string } | null)?.error === 'long' ? 'long' : 'short';
+        return 'offline';
+      } catch {
+        return 'offline';
+      }
+    },
   };
   // 本部（新しい主催者画面）：前の画面は残してあり、この端末で切りかえる（/host?hq=1 でも本部になる）
   if (params.get('hq') === '1') storage.set('urafess:hq', '1');
@@ -442,7 +465,7 @@ function startHost(token: string): void {
     if (s.phase === 'denied') {
       screenKeeper.set(false);
       storage.remove('urafess:host-token');
-      showTokenForm(WRONG_KEY, token);
+      showTokenForm(WRONG_KEY, mode.token);
       return false;
     }
     if (s.host && storage.get(HOST_DEVICE_KEY) !== '1') storage.set(HOST_DEVICE_KEY, '1');
