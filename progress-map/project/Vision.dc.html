@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>V のぼり（urafess-vision）11/06</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&amp;family=Noto+Sans+JP:wght@400;700;900&amp;display=swap">
+<style>
+body{margin:0}
+@keyframes nowpulse{0%{opacity:1}50%{opacity:0.72}100%{opacity:1}}
+.now-ring{animation:nowpulse 2.2s ease-in-out infinite}
+</style>
+</helmet>
+<div style="position: relative; width: 1720px; height: 2130px; overflow: hidden; background: #101114; color: #ECECEA; font-family: 'Noto Sans JP', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', system-ui, sans-serif">
+<div onWheel="{{onWheel}}" onPointerDown="{{onDown}}" onPointerMove="{{onMove}}" onPointerUp="{{onUp}}" onPointerLeave="{{onUp}}" style="position: absolute; left: 0px; top: 0px; width: 1720px; height: 1440px; cursor: grab; touch-action: none">
+<svg width="1720" height="1440" viewBox="0 0 1720 1440" aria-hidden="true" style="position: absolute; left: 0px; top: 0px; width: 1720px; height: 1440px; pointer-events: none"><path d="{{borderD}}" fill="#14161A" stroke="#3A3D44" stroke-width="1"></path><path d="{{gridD}}" fill="none" stroke="#24262B" stroke-width="1" stroke-dasharray="3 6"></path><path d="{{crossD}}" fill="none" stroke="#3E4148" stroke-width="1.5"></path></svg>
+<sc-for list="{{ground}}" as="gr" hint-placeholder-count="4"><div style="position: absolute; left: 0px; top: 0px; display: flex; flex-direction: column; align-items: center; gap: 2px; white-space: nowrap; pointer-events: none; transform: {{gr.tf}}"><span style="font-size: 30px; line-height: 36px; font-weight: 900; color: {{gr.col}}; opacity: 0.9">{{gr.big}}</span><span style="font-size: 13px; line-height: 18px; font-weight: 700; color: #A3A3A0">{{gr.small}}</span></div></sc-for>
+<sc-for list="{{dots}}" as="dt" hint-placeholder-count="16"><span style="position: absolute; left: 0px; top: 0px; width: {{dt.w}}px; height: {{dt.hh}}px; border-radius: 50%; background: {{dt.col}}; opacity: {{dt.op}}; transform: translate({{dt.x}}px, {{dt.y}}px) translate(-50%, -50%); pointer-events: none"></span></sc-for>
+<span style="position: absolute; left: {{rulerX}}px; top: {{rulerY}}px; width: 2px; height: {{rulerH}}px; background: #3E4148; transform: translateY(-100%); pointer-events: none"></span><sc-for list="{{ruler}}" as="ru" hint-placeholder-count="6"><span style="position: absolute; left: 0px; top: 0px; display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: #8E8E8A; white-space: nowrap; pointer-events: none; transform: translate({{ru.x}}px, {{ru.y}}px) translate(-100%, -50%) translateX(-4px)">{{ru.n}}<span style="display: inline-block; width: 8px; height: 1px; background: #8E8E8A"></span></span></sc-for>
+<sc-for list="{{poles}}" as="pl" hint-placeholder-count="16"><span style="position: absolute; left: {{pl.x}}px; top: {{pl.y}}px; width: 0px; height: {{pl.h}}px; border-left: 2px {{pl.dash}} {{pl.col}}; opacity: {{pl.op}}; z-index: {{pl.z}}; transform: translateY(-100%); pointer-events: none"></span></sc-for>
+<sc-for list="{{marks}}" as="mk" hint-placeholder-count="1"><span style="position: absolute; left: 0px; top: 0px; width: 10px; height: 2px; background: {{mk.col}}; opacity: {{mk.op}}; z-index: 1500; transform: translate({{mk.x}}px, {{mk.y}}px) translate(-50%, -50%); pointer-events: none"></span></sc-for>
+<sc-for list="{{ghosts}}" as="gh" hint-placeholder-count="9"><span style="position: absolute; left: 0px; top: 0px; width: 14px; height: 14px; box-sizing: border-box; border-radius: 7px; border: 1.5px dashed {{gh.col}}; opacity: {{gh.op}}; z-index: 1490; transform: translate({{gh.x}}px, {{gh.y}}px) translate(-50%, -50%); pointer-events: none"></span></sc-for>
+<sc-for list="{{flags}}" as="fl" hint-placeholder-count="16"><span class="{{fl.cls}}" style="position: absolute; left: 0px; top: 0px; font-size: {{fl.fs}}px; line-height: {{fl.lh}}px; font-weight: {{fl.fw}}; color: {{fl.col}}; opacity: {{fl.op}}; text-shadow: {{fl.glow}}; white-space: nowrap; z-index: {{fl.z}}; pointer-events: none; transform: translate({{fl.x}}px, {{fl.y}}px) translateY(-50%)">{{fl.n}}</span></sc-for>
+</div>
+<div style="position: absolute; left: 64px; top: 44px; width: 640px; display: flex; flex-direction: column; gap: 10px; pointer-events: none"><span style="font-size: 30px; line-height: 40px; font-weight: 900">SFCキャンパスで深夜不定期に開催される、<br>誰も体験したことがない祭。</span><span style="display: flex; align-items: baseline; gap: 16px; color: #A3A3A0; font-size: 13px; line-height: 18px"><span><span style="font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 26px; font-weight: 600; color: #ECECEA">150</span> 人</span><span><span style="font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 26px; font-weight: 600; color: #ECECEA">10</span> 回ほど</span><span>同時 <span style="font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 26px; font-weight: 600; color: #ECECEA">35</span> 人</span><span style="color: #ECECEA; font-weight: 700">→ 人数も規模も次元も上げる</span></span><span style="font-size: 13px; line-height: 18px; color: #A3A3A0">旗の高さ＝どこまで形になったか（地面すれすれ＝妄想、いちばん上＝本番）。光る旗＝その日に手を入れた。点線の○＝これから上げたい高さ。小さく下がった旗＝大きい流れに合流したもの（その竿と一緒に動く）。最初の回は多くても50人（11/05）</span></div>
+<div style="position: absolute; left: 1296px; top: 44px; width: 360px; display: flex; flex-direction: column; gap: 4px"><div style="display: flex; align-items: center; gap: 12px"><label for="v-rot" style="flex: none; width: 52px; font-size: 12px; line-height: 16px; color: #A3A3A0">向き</label><input id="v-rot" type="range" min="0" max="359" step="1" value="{{rotStr}}" onChange="{{onRot}}" style="width: 260px; height: 44px; margin: 0px; accent-color: #ECECEA; cursor: pointer"></div><div style="display: flex; align-items: center; gap: 12px"><label for="v-dim" style="flex: none; width: 52px; font-size: 12px; line-height: 16px; color: #A3A3A0">次元</label><input id="v-dim" type="range" min="0" max="100" step="1" value="{{dimStr}}" onChange="{{onDim}}" style="width: 260px; height: 44px; margin: 0px; accent-color: #ECECEA; cursor: pointer"></div><span style="padding-left: 64px; font-size: 12px; line-height: 16px; color: #A3A3A0">{{dimLabel}}　地面をドラッグしても回る・倒れる</span></div>
+<div data-part="plans" style="position: absolute; left: 64px; top: 1770px; width: 1592px; pointer-events: none"><div style="display: flex; align-items: baseline; gap: 14px; border-top: 1px solid #2A2C31; padding-top: 14px; margin-bottom: 14px"><span style="font-size: 20px; line-height: 24px; font-weight: 900; color: #ECECEA">これから</span><span style="font-size: 12px; line-height: 16px; color: #A3A3A0">会話から拾ったやりたいこと。日付と順番は未定。└ ＝合流したもの（合流先の下に並ぶ）</span></div><div style="display: flex; gap: 40px; align-items: flex-start"><div style="flex: 1 1 0px; display: flex; flex-direction: column; gap: 8px"><sc-for list="{{plansA}}" as="pl" hint-placeholder-count="6"><span style="padding-left: {{pl.pad}}px; font-size: {{pl.fs}}px; line-height: 19px; color: #C9C9C5"><b style="color: {{pl.col}}">{{pl.n}}</b>　{{pl.p}}</span></sc-for></div><div style="flex: 1 1 0px; display: flex; flex-direction: column; gap: 8px"><sc-for list="{{plansB}}" as="pl" hint-placeholder-count="6"><span style="padding-left: {{pl.pad}}px; font-size: {{pl.fs}}px; line-height: 19px; color: #C9C9C5"><b style="color: {{pl.col}}">{{pl.n}}</b>　{{pl.p}}</span></sc-for></div><div style="flex: 1 1 0px; display: flex; flex-direction: column; gap: 8px"><sc-for list="{{plansC}}" as="pl" hint-placeholder-count="6"><span style="padding-left: {{pl.pad}}px; font-size: {{pl.fs}}px; line-height: 19px; color: #C9C9C5"><b style="color: {{pl.col}}">{{pl.n}}</b>　{{pl.p}}</span></sc-for></div></div><span data-part="plans-end" style="display: none"></span></div>
+<div style="position: absolute; left: 64px; top: 1450px; width: 1592px; display: flex; align-items: flex-start; gap: 40px"><div style="flex: none; width: 340px; display: flex; flex-direction: column; gap: 8px"><span style="font-family: 'IBM Plex Mono', ui-monospace, monospace, 'Noto Sans JP', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', system-ui, sans-serif; font-size: {{dateFs}}px; line-height: 96px; font-weight: 600; letter-spacing: -0.02em; white-space: nowrap">{{dateStr}}</span><span style="font-size: 17px; line-height: 25px; font-weight: 700">{{caption}}</span></div><div style="flex: none; width: 780px; display: flex; flex-direction: column; gap: 2px"><div style="position: relative; width: 780px; height: 150px"><span style="position: absolute; left: {{todayX}}px; top: 0px; transform: translateX(-50%); font-size: 11px; line-height: 14px; font-weight: 700; color: #FFFFFF; pointer-events: none">今日</span><span style="position: absolute; left: {{todayX}}px; top: 16px; width: 2px; height: 72px; background: #FFFFFF; opacity: 0.8; pointer-events: none"></span><span style="position: absolute; left: {{futX}}px; top: 0px; width: {{futW}}px; text-align: right; font-size: 11px; line-height: 14px; color: #A3A3A0; pointer-events: none">日付未定</span><span style="position: absolute; left: {{futX}}px; top: 63px; width: {{futW}}px; height: 0px; border-top: 2px dashed #8E8E8A; pointer-events: none"></span><sc-for list="{{days}}" as="dy" hint-placeholder-count="31"><span style="position: absolute; left: {{dy.x}}px; top: 36px; width: 1px; height: 4px; background: #34373E"></span></sc-for><sc-for list="{{ticks}}" as="tk" hint-placeholder-count="7"><span style="position: absolute; left: {{tk.x}}px; top: {{tk.top}}px; width: 3px; height: {{tk.h}}px; margin-left: -1px; background: {{tk.bar}}"></span></sc-for><label for="t-range" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">日付</label><input id="t-range" type="range" min="0" max="{{end}}" step="0.05" value="{{tStr}}" onChange="{{onRange}}" style="position: absolute; left: 0px; top: 42px; width: 780px; height: 44px; margin: 0px; accent-color: #ECECEA; cursor: pointer"><sc-for list="{{ticks}}" as="tk" hint-placeholder-count="7"><button type="button" onClick="{{tk.go}}" style="position: absolute; left: {{tk.x}}px; top: 86px; transform: translateX(-50%); min-width: {{tk.w}}px; min-height: 40px; padding: 0px; background: none; border: 0px; color: {{tk.col}}; font-family: 'IBM Plex Mono', ui-monospace, monospace, 'Noto Sans JP', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', system-ui, sans-serif; font-size: 14px; font-weight: {{tk.fw}}; cursor: pointer">{{tk.d}}</button></sc-for><span style="position: absolute; left: 9px; top: 128px; font-size: 12px; line-height: 16px; color: #8E8E8A">10月</span><span style="position: absolute; left: {{m11X}}px; top: 128px; font-size: 12px; line-height: 16px; color: #8E8E8A">11月</span></div><div style="display: flex; align-items: center; gap: 10px"><button type="button" aria-label="前の動きへ" onClick="{{prev}}" style="flex: none; width: 44px; height: 44px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: #1C1E23; border: 1px solid #34373E; border-radius: 8px; color: #ECECEA; cursor: pointer; padding: 0px"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4 L6 9 L11 14"></path></svg></button><button type="button" aria-label="次の動きへ" onClick="{{next}}" style="flex: none; width: 44px; height: 44px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: #1C1E23; border: 1px solid #34373E; border-radius: 8px; color: #ECECEA; cursor: pointer; padding: 0px"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4 L12 9 L7 14"></path></svg></button><button type="button" aria-label="{{playLabel}}" onClick="{{togglePlay}}" style="flex: none; width: 44px; height: 44px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: #1C1E23; border: 1px solid #34373E; border-radius: 8px; color: #ECECEA; cursor: pointer; padding: 0px"><sc-if value="{{notPlaying}}" hint-placeholder-val="{{ true }}"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4 L14 9 L6 14 Z"></path></svg></sc-if><sc-if value="{{playing}}" hint-placeholder-val="{{ false }}"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5 L6 13 M12 5 L12 13"></path></svg></sc-if></button><span style="font-size: 13px; line-height: 18px; color: #8E8E8A">1日ずつ一直線。今日より先は「これから」：日付未定のやりたいことへ動く</span></div></div><div style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 10px; padding-top: 8px"><span style="font-size: 12px; line-height: 16px; color: #A3A3A0">{{logHead}}</span><sc-for list="{{log}}" as="l" hint-placeholder-count="3"><div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 12px; line-height: 16px; color: #A3A3A0">{{l.k}}</span><span style="font-size: 15px; line-height: 22px; font-weight: 700; color: #ECECEA">{{l.v}}</span></div></sc-for></div></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"kabe": {"editor": "color", "default": "#FF8A3D", "section": "4軸の色"}, "hako": {"editor": "color", "default": "#3FD0A0", "section": "4軸の色"}, "yume": {"editor": "color", "default": "#A98BFF", "section": "4軸の色"}, "gu": {"editor": "color", "default": "#F2D74B", "section": "4軸の色"}, "motion": {"editor": "enum", "options": ["当日だけ動く", "日付の間を直線で"], "default": "当日だけ動く", "section": "時間"}, "$preview": {"width": 1720, "height": 2130}}'>
+class Component extends DCLogic {
+  componentWillUnmount() { this.stop(); }
+  stop() { if (this._raf) { cancelAnimationFrame(this._raf); this._raf = null; } }
+  data() { return {"end": 42, "today": 36, "events": [{"day": 0, "d": "10/07", "t": "編集台をつくり、課題が並んだ"}, {"day": 7, "d": "10/14", "t": "アプリの設計書・vision・一元管理"}, {"day": 15, "d": "10/22", "t": "スマホ連鎖の計画書"}, {"day": 28, "d": "11/04", "t": "根幹が動いた。書体・ピクト・Wi-Fi調査・設計の方針"}, {"day": 29, "d": "11/05", "t": "実機2台で合格。最初の回は50人まで。ホーム画面に置けるように"}, {"day": 30, "d": "11/06", "t": "捕獲の記録が本番に。夜に16人で4ラウンド。組織図・救護の呼び出し・ルールのアニメ・見た目の組み直しが始まった"}, {"day": 31, "d": "11/07", "t": "名簿・走ると光る・作り直した画面・牢屋と解放・全体の地図が本番に。書体に英小文字"}, {"day": 35, "d": "11/11", "t": "ミッション（集合写真）が本番に"}, {"day": 36, "d": "11/12", "t": "回し方を調べ、偽の群衆が手元で動いた。写真の成功で牢屋の人も出る"}, {"day": 42, "d": "これから", "t": "会話から拾ったやりたいこと（日付と順番は未定）", "future": true}], "stageName": ["妄想", "問い", "決定", "試作", "実地", "本番"], "items": [{"n": "告知・集客", "g": [0.2, 0.85], "x": "gu", "s": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], "now": [0], "plan": null}, {"n": "スマホ連鎖", "g": [0.75, -0.35], "x": "kabe", "s": [null, 2, 2, 2, 2, 2, 2, 2, 2, 2], "now": [1, 2], "plan": null}, {"n": "入場の儀式", "g": [-0.35, -0.38], "x": "yume", "s": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], "now": [0], "plan": null}, {"n": "ホーム画面アプリ化", "g": [0.55, 0.62], "x": "kabe", "s": [null, null, null, null, 3, 3, 3, 3, 3, 3], "now": [4, 5], "plan": null, "m": {"into": 7, "at": 5, "side": -1, "slot": 1, "k": 1}}, {"n": "名簿", "g": [0.66, 0.39], "x": "kabe", "s": [null, null, null, null, null, 1, 3, 3, 3, 3], "now": [5, 6], "plan": "iPhone のホーム画面のアプリで、名前のボタンから入れるか確かめる", "m": {"into": 7, "at": 6, "side": -1, "slot": 2, "k": 3}}, {"n": "ルールのアニメ", "g": [-0.36, 0.56], "x": "gu", "s": [null, null, null, null, null, 3, 3, 3, 3, 3], "now": [5, 9], "plan": "本人の指摘で直してから、参加者へ出す"}, {"n": "通信（Wi-Fi調査）", "g": [0.62, 0.16], "x": "kabe", "s": [null, null, null, 2, 2, 2, 2, 2, 2, 2], "now": [3], "plan": null, "m": {"into": 7, "at": 3, "side": -1, "slot": 0, "k": 0}}, {"n": "アプリの根幹", "g": [0.7, 0.42], "x": "kabe", "s": [null, 1, 1, 3, 3, 4, 4, 4, 4, 4], "now": [1, 3, 4, 5, 6, 7, 8, 9], "plan": "偽の群衆で回して直す。次の夜に、本物のスマホで音・名簿・光・牢屋を試す"}, {"n": "タッチ判定", "g": [0.92, 0.05], "x": "kabe", "s": [null, 2, 2, 2, 2, 3, 3, 3, 3, 3], "now": [1, 5, 6], "plan": "11/6 の夜、音で記録できたのは捕獲12件のうち2件。本物2台で /lab の針を見て切り分ける", "m": {"into": 7, "at": 5, "side": 1, "slot": 0, "k": 2}}, {"n": "走ると光る", "g": [-0.15, 0.3], "x": "hako", "s": [null, null, null, 0, 0, 0, 3, 3, 3, 3], "now": [3, 5, 6], "plan": "判定の数字（テンポ・強さ）を /lab?k=run で試して決める", "m": {"into": 7, "at": 6, "side": 1, "slot": 1, "k": 4}}, {"n": "全体の地図", "g": [0.88, 0.22], "x": "kabe", "s": [null, null, null, null, null, null, 3, 3, 3, 3], "now": [6], "plan": "仲間が固まると名前が重なって読めないのを直す", "m": {"into": 7, "at": 6, "side": 1, "slot": 2, "k": 5}}, {"n": "牢屋と解放", "g": [-0.9, 0.36], "x": "hako", "s": [null, null, null, null, null, null, 3, 3, 3, 3], "now": [6, 8], "plan": "牢屋の人の iPhone が「助ける」音を拾えるか、本物2台で試す"}, {"n": "アプリの見た目", "g": [0.69, -0.06], "x": "yume", "s": [null, null, null, null, null, 3, 3, 3, 3, 3], "now": [5, 6, 8, 9], "plan": "俺の目が入った状態で直す（いまの値は Claude の既定。見本帳と台本で見て、動きもまとめて決める）"}, {"n": "ミッション", "g": [-0.56, -0.31], "x": "hako", "s": [null, null, null, null, null, null, 3, 3, 3, 3], "now": [6, 7, 8], "plan": "ミッションの中身を増やす。成功で何が得られるか決める（勝ち負け・王・次のミーム）"}, {"n": "3勢力ルール", "g": [-0.82, 0.08], "x": "hako", "s": [null, 1, 1, 2, 2, 2, 2, 2, 2, 3], "now": [1, 3, 5, 9], "plan": "協力と裏切り・王が座を失う、をルールに書く（2試合目に王が入る形も）"}, {"n": "救助隊・メディック", "g": [-0.72, 0.68], "x": "hako", "s": [0, 0, 0, 0, 0, 1, 1, 1, 1, 1], "now": [0, 3, 5], "plan": "衛生兵・救助隊が何をできる役かを決める"}, {"n": "リスク対策", "g": [-0.18, 0.92], "x": "gu", "s": [null, 0, 0, 0, 0, 2, 2, 2, 2, 2], "now": [5], "plan": null}, {"n": "救護の呼び出し", "g": [0.3, 0.8], "x": "gu", "s": [null, null, null, null, null, 2, 2, 2, 2, 2], "now": [5], "plan": "入室で何を聞くか決める（手当ができるか・今夜呼んでいいか）", "m": {"into": 16, "at": 5, "side": 1, "slot": 0, "k": 0}}, {"n": "再集合", "g": [-0.36, 0.74], "x": "gu", "s": [null, null, null, 1, 1, 1, 1, 1, 1, 2], "now": [3, 9], "plan": "隠れていた人が出てくる所を、広場から見えるようにする"}, {"n": "作者が王になる", "g": [-0.45, -0.55], "x": "yume", "s": [null, null, null, null, null, 2, 2, 2, 2, 2], "now": [5], "plan": "2試合目を増やし鬼のままにするか、王が入るとどうなるか決める"}, {"n": "次の試合へのミーム", "g": [-0.38, -0.06], "x": "yume", "s": [null, null, null, 0, 0, 0, 0, 0, 0, 0], "now": [3], "plan": null}, {"n": "フィナーレ", "g": [0.08, -0.42], "x": "yume", "s": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], "now": [0], "plan": null}, {"n": "あの夜いた証明", "g": [0.32, -0.08], "x": "yume", "s": [null, null, null, 1, 1, 1, 1, 2, 2, 3], "now": [3, 7, 9], "plan": "参加者が自分の写真・来た夜を見られる場所を作る（いまは主催者の画面だけ）"}, {"n": "カメラ・世界向け動画", "g": [0.38, -0.72], "x": "yume", "s": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "now": [0], "plan": null}, {"n": "urafess-vision", "g": [-0.12, -0.9], "x": "yume", "s": [null, 3, 3, 3, 3, 3, 3, 3, 3, 3], "now": [1], "plan": null}, {"n": "ピクトグラム", "g": [-0.15, -0.62], "x": "yume", "s": [null, null, null, 3, 3, 3, 3, 3, 3, 3], "now": [3, 4, 5, 9], "plan": "第三勢力が出てくる絵（追う・捕まえる・配役）と、衛生兵の役の絵を描く"}, {"n": "編集パレット", "g": [-0.42, 0.18], "x": "gu", "s": [3, 3, 3, 3, 3, 3, 3, 3, 3, 3], "now": [0, 3], "plan": null}, {"n": "ハラハラ／ヌクヌク", "g": [-0.62, -0.76], "x": "yume", "s": [null, null, null, 3, 3, 3, 3, 3, 3, 3], "now": [3], "plan": null}, {"n": "一元管理", "g": [0.25, 0.22], "x": "none", "s": [null, 5, 5, 5, 5, 5, 5, 5, 5, 5], "now": [1, 5], "plan": null}, {"n": "URAJI 裏字", "g": [0.78, -0.82], "x": "yume", "s": [null, null, null, 3, 3, 3, 3, 3, 3, 3], "now": [3, 5, 6, 9], "plan": "新字の形を変える"}, {"n": "組織図", "g": [-0.5, 0.4], "x": "gu", "s": [null, null, null, null, null, 2, 2, 2, 2, 2], "now": [5], "plan": "祭りのあとの進行・管制・再集合を誰が持つか決める"}, {"n": "回し方", "g": [0.44, 0.14], "x": "kabe", "s": [null, null, null, null, null, null, null, null, 2, 3], "now": [8, 9], "plan": "見本帳と台本を作る（本物の画面を全部並べ、止めて・戻して見る）"}, {"n": "偽の群衆", "g": [0.89, -0.47], "x": "kabe", "s": [null, null, null, null, null, null, null, null, 3, 4], "now": [8, 9], "plan": "リポジトリに上げて、自分の iPhone で触れるようにする"}, {"n": "KICとの交渉", "g": [0.97, 0.45], "x": "kabe", "s": [null, null, null, 1, 1, 1, 1, 1, 1, 1], "now": [3], "plan": null, "m": {"into": 34, "at": 3, "side": -1, "slot": 0, "k": 0}}, {"n": "会場・大学との交渉", "g": [0.86, 0.8], "x": "kabe", "s": ["u", "u", "u", "u", "u", "u", "u", "u", "u", "u"], "now": [], "plan": null}], "poles": [{"k": "kabe", "gx": 1.2, "gy": 0, "ex": 0, "ey": 1, "big": "制約を破壊しちゃうよーん", "small": "壁突破 ─ ないものを作り出す"}, {"k": "hako", "gx": -1.2, "gy": 0, "ex": 0, "ey": 1, "big": "おもろいルールを考えるよーん", "small": "箱庭建築 ─ あるものだけで楽しい瞬間を組み立てる"}, {"k": "yume", "gx": 0, "gy": -1.2, "ex": 1, "ey": 0, "big": "抽象的な感動だよーん", "small": "夢・妄想・神 ─ Urafessとは何か、どこに向かうのか"}, {"k": "gu", "gx": 0, "gy": 1.2, "ex": 1, "ey": 0, "big": "滑らかすぎる導線にするよーん", "small": "物理 ─ タイムスケジュール・告知・設営・リスク対策"}]}; }
+  clamp01(x) { return x <= 0 ? 0 : (x >= 1 ? 1 : x); }
+  setT(t) { var E = this.data().end; this.setState({ t: Math.max(0, Math.min(E, t)) }); }
+  renderVals() {
+    var self = this;
+    var D = this.data();
+    var E = D.events, END = D.end, TODAY = D.today, NE = E.length, IT = D.items;
+    var st = this.state || {};
+    var t = typeof st.t === 'number' ? st.t : TODAY;
+    var rot = typeof st.rot === 'number' ? st.rot : 332;
+    var dim = typeof st.dim === 'number' ? st.dim : 70;
+    var playing = !!this._raf;
+
+    var col = {
+      kabe: this.props.kabe ?? '#FF8A3D', hako: this.props.hako ?? '#3FD0A0',
+      yume: this.props.yume ?? '#A98BFF', gu: this.props.gu ?? '#F2D74B', none: '#A6A8AD'
+    };
+    var cl = this.clamp01;
+
+    var lin = (this.props.motion ?? '当日だけ動く') === '日付の間を直線で';
+    // これから（日付未定）は、今日から先の帯いっぱいに一直線で動く
+    var startOf = function (k) { return (lin || E[k].future) && k > 0 ? E[k - 1].day : E[k].day - 1; };
+    var prog = function (k) { return cl((t - startOf(k)) / (E[k].day - startOf(k))); };
+    // 合流する日に自分の動き（生まれる・段階が変わる）もあれば、その日の前6割で動いて、後ろ4割で合流する
+    var split = function (it, k) { return !!it.m && it.m.at === k && (k === 0 || it.s[k] !== it.s[k - 1]); };
+    var progOwn = function (it, k) { return split(it, k) ? cl(prog(k) / 0.6) : prog(k); };
+    var progMerge = function (it) { if (!it.m) return 0; var p = prog(it.m.at); return split(it, it.m.at) ? cl((p - 0.6) / 0.4) : p; };
+
+    var CX = 860, CY = 820, SC = 360;
+    var phi = rot * Math.PI / 180, el = (90 - dim * 0.68) * Math.PI / 180;
+    var cp = Math.cos(phi), sp = Math.sin(phi), se = Math.sin(el), ce = Math.cos(el);
+    var proj = function (gx, gy, z) { var x = gx * SC, y = gy * SC; return [CX + x * cp - y * sp, CY + (x * sp + y * cp) * se - (z || 0) * ce]; };
+    var vec = function (dx, dy) { return [dx * cp - dy * sp, (dx * sp + dy * cp) * se]; };
+    var f = function (p) { return p[0].toFixed(1) + ' ' + p[1].toFixed(1); };
+    var corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(function (c) { return proj(c[0], c[1], 0); });
+    var borderD = 'M ' + corners.map(f).join(' L ') + ' Z';
+    var gridD = '';
+    [-0.5, 0.5].forEach(function (v) {
+      gridD += 'M ' + f(proj(v, -1, 0)) + ' L ' + f(proj(v, 1, 0)) + ' ';
+      gridD += 'M ' + f(proj(-1, v, 0)) + ' L ' + f(proj(1, v, 0)) + ' ';
+    });
+    var crossD = 'M ' + f(proj(-1.08, 0, 0)) + ' L ' + f(proj(1.08, 0, 0)) + ' M ' + f(proj(0, -1.08, 0)) + ' L ' + f(proj(0, 1.08, 0));
+    var ground = D.poles.map(function (p) {
+      var u = vec(p.ex, p.ey), dx = p.ex, dy = p.ey;
+      if (u[0] < -0.02 || (Math.abs(u[0]) <= 0.02 && u[1] < 0)) { dx = -dx; dy = -dy; u = vec(dx, dy); }
+      var v = vec(-dy, dx), c = proj(p.gx, p.gy, 0);
+      return { big: p.big, small: p.small, col: col[p.k],
+        tf: 'translate(' + c[0].toFixed(1) + 'px, ' + c[1].toFixed(1) + 'px) matrix(' + u[0].toFixed(4) + ', ' + u[1].toFixed(4) + ', ' + v[0].toFixed(4) + ', ' + v[1].toFixed(4) + ', 0, 0) translate(-50%, -50%)' };
+    });
+    var HB = 26, HS = 46, DROP = function (k) { return (22 + 17 * k) / ce; };
+    // 1周目：それぞれ自分だけの動き
+    var OS = IT.map(function (it) {
+      var b = -1;
+      for (var k = 0; k < NE; k++) { if (it.s[k] !== null && it.s[k] !== undefined) { b = k; break; } }
+      var o = { alive: 0, sv: 0, unknown: false, c: col[it.x], g: 0, marks: [] };
+      if (b >= 0) {
+        o.unknown = it.s[b] === 'u';
+        o.alive = progOwn(it, b);
+        o.sv = o.unknown ? 0 : it.s[b];
+        if (o.alive >= 1 && !o.unknown) {
+          for (var k2 = b + 1; k2 < NE; k2++) {
+            if (it.m && k2 > it.m.at) break;
+            var s0 = it.s[k2 - 1], s1 = it.s[k2];
+            if (s1 === s0) continue;
+            var fr = progOwn(it, k2);
+            if (fr <= 0) break;
+            o.marks.push(s0);
+            o.sv = s0 + (s1 - s0) * fr;
+            if (fr < 1) break;
+          }
+        }
+      }
+      it.now.forEach(function (k) {
+        var dd = E[k].day, v;
+        if (E[k].future) v = 0.85 * prog(k);
+        else v = t <= dd ? cl(t - (dd - 1)) : 1 - cl((t - dd) / 3);
+        if (v > o.g) o.g = v;
+      });
+      o.h = o.alive * (HB + HS * o.sv);
+      o.op = o.alive * (o.unknown ? 0.5 : 0.62 + 0.38 * o.g);
+      return o;
+    });
+    // 2周目：合流したものは合流先の竿まで歩いていき、旗の下に小さい旗として下がる
+    var poles = [], flags = [], dots = [], marks = [], ghosts = [];
+    IT.forEach(function (it, i) {
+      var o = OS[i], fm = progMerge(it), P = it.m ? OS[it.m.into] : null, Pi = it.m ? IT[it.m.into] : null, keep = 1 - fm;
+      var gx = it.g[0], gy = it.g[1], h = o.h, fs = 20, lh = 24, fw = 900, op = o.op;
+      if (P && fm > 0) {
+        gx += (Pi.g[0] - gx) * fm; gy += (Pi.g[1] - gy) * fm;
+        h += (P.h - DROP(it.m.k) - h) * fm;
+        fs = 20 - 7 * fm; lh = 24 - 7 * fm; fw = fm >= 0.5 ? 700 : 900;
+        op += (P.alive * (P.unknown ? 0.45 : 0.55 + 0.38 * o.g) - op) * fm;
+      }
+      var gp = proj(gx, gy, 0), tp = proj(gx, gy, h);
+      var z = Math.round(gp[1]);
+      o.marks.forEach(function (s0) {
+        var mp = proj(gx, gy, HB + HS * s0);
+        marks.push({ x: mp[0].toFixed(1), y: mp[1].toFixed(1), col: o.c, op: keep.toFixed(2) });
+      });
+      // 次に行きたい高さ（点線の○）。これから合流するものは、合流先の竿の下がる位置に
+      if (o.alive >= 1 && t > TODAY - 1 && t < E[NE - 1].day) {
+        var fade = Math.min(cl(t - (TODAY - 1)), 1 - prog(NE - 1));
+        if (it.m && E[it.m.at].future) {
+          var sP = Pi.s[NE - 1], gq = proj(Pi.g[0], Pi.g[1], HB + HS * (sP === 'u' ? 0 : sP) - DROP(it.m.k));
+          ghosts.push({ x: (gq[0] + 5).toFixed(1), y: gq[1].toFixed(1), col: o.c, op: (0.95 * fade).toFixed(2) });
+        } else if (!it.m) {
+          var sNow = it.s[NE - 2], sPlan = it.s[NE - 1];
+          if (sNow !== null && sNow !== undefined && sNow !== 'u' && sPlan !== sNow) {
+            var gq2 = proj(it.g[0], it.g[1], HB + HS * sPlan);
+            ghosts.push({ x: gq2[0].toFixed(1), y: gq2[1].toFixed(1), col: o.c, op: (0.95 * fade).toFixed(2) });
+          }
+        }
+      }
+      poles.push({ x: (gp[0] - 1).toFixed(1), y: gp[1].toFixed(1), h: (Math.max(0, h) * ce).toFixed(1), col: o.g >= 0.5 ? '#FFFFFF' : o.c, op: (op * keep).toFixed(3), z: z, dash: o.unknown ? 'dashed' : 'solid' });
+      dots.push({ x: gp[0].toFixed(1), y: gp[1].toFixed(1), w: 10, hh: Math.max(2, 10 * se).toFixed(1), col: o.c, op: (o.alive * 0.9 * keep).toFixed(3) });
+      flags.push({
+        n: o.unknown ? it.n + '（段階不明）' : it.n, w: i, x: (tp[0] + 5).toFixed(1), y: tp[1].toFixed(1), col: o.c, op: op.toFixed(3), z: z + 1,
+        fs: fs.toFixed(1), lh: lh.toFixed(1), fw: fw,
+        glow: o.g > 0.02 ? '0 0 10px rgba(255,255,255,' + (0.6 * o.g).toFixed(2) + '), 0 0 24px rgba(255,255,255,' + (0.25 * o.g).toFixed(2) + '), 0 0 3px #101114' : '0 0 3px #101114, 0 0 8px #101114',
+        cls: o.g >= 0.5 ? 'now-ring' : ''
+      });
+    });
+    var rp = proj(-1.12, 1.12, 0);
+    var ruler = D.stageName.map(function (nm, k) { var p = proj(-1.12, 1.12, HB + HS * k); return { n: nm, x: p[0].toFixed(1), y: p[1].toFixed(1) }; });
+    var rulerH = ((HB + HS * 5) * ce).toFixed(1);
+
+    var inFuture = t > TODAY + 1e-6;
+    var day = Math.floor(Math.min(t, TODAY) + 1e-6);
+    var dt = new Date(2026, 9, 7 + day);
+    var dateStr = inFuture ? 'これから' : (dt.getMonth() + 1) + '/' + ('0' + dt.getDate()).slice(-2);
+    var last = 0;
+    for (var e = 0; e < NE; e++) { if (E[e].day <= t + 1e-6) last = e; }
+    var ramping = -1;
+    for (var e2 = 0; e2 < NE; e2++) { if (t > startOf(e2) + 1e-6 && t < E[e2].day - 1e-6) ramping = e2; }
+    var caption;
+    if (ramping >= 0) caption = (E[ramping].future ? '' : '→ ' + E[ramping].d + '：') + E[ramping].t;
+    else if (t - E[last].day < 1) caption = E[last].t;
+    else caption = E[last].d + ' から ' + Math.floor(t - E[last].day) + '日、動きなし';
+    var k0 = ramping >= 0 ? ramping : last;
+    var fut = !!E[k0].future;
+    var born = [], moved = [], joined = [], touched = [];
+    IT.forEach(function (it) {
+      var s = it.s[k0], before = k0 > 0 ? it.s[k0 - 1] : null;
+      var al = s !== null && s !== undefined, was = before !== null && before !== undefined;
+      var mj = !!it.m && it.m.at === k0;
+      if (mj) joined.push(it.n + '→' + IT[it.m.into].n);
+      if (al && !was) born.push(it.n);
+      else if (al && was && s !== before && s !== 'u') moved.push(it.n + ' ' + D.stageName[before] + '→' + D.stageName[s]);
+      else if (!mj && it.now.indexOf(k0) >= 0) touched.push(it.n);
+    });
+    var log = [];
+    if (born.length) log.push({ k: '旗が立った', v: born.join('、') });
+    if (moved.length) log.push({ k: fut ? '上げたい' : '旗が上がった', v: moved.join('、') });
+    if (joined.length) log.push({ k: fut ? '合流させたい' : '大きい流れに合流した', v: joined.join('、') });
+    if (touched.length) log.push({ k: fut ? '手を入れたい' : '手を入れた', v: touched.join('、') });
+    // 時間の帯：日数はそのまま一直線。日の数字と月、今日、これから
+    var TW = 780, PAD = 9, X = function (d) { return PAD + (TW - 2 * PAD) * d / END; };
+    var ticks = E.map(function (ev, k) {
+      var cnt = 0;
+      IT.forEach(function (it) { if (it.now.indexOf(k) >= 0) cnt++; });
+      var on = ev.future ? inFuture : Math.abs(t - ev.day) < 0.5;
+      var lab = ev.future ? 'これから' : String(parseInt(ev.d.split('/')[1], 10));
+      return {
+        d: lab, x: X(ev.day).toFixed(1), h: ev.future ? 0 : 6 + cnt * 5, top: ev.future ? 40 : 40 - (6 + cnt * 5),
+        w: ev.future ? 72 : 22, col: on ? '#FFFFFF' : '#8E8E8A', bar: on ? '#FFFFFF' : '#55585F', fw: on ? 600 : 500,
+        go: function () { self.stop(); self.setT(ev.day); }
+      };
+    });
+    var days = [];
+    for (var dd2 = 0; dd2 <= TODAY; dd2++) { days.push({ x: X(dd2).toFixed(1) }); }
+    // これから：合流したものは合流先の下に並べる。合流先ごとのまとまりを崩さずに3列へ分ける
+    var kids = {};
+    IT.forEach(function (it) { if (it.m && it.plan) (kids[it.m.into] = kids[it.m.into] || []).push(it); });
+    var groups = [];
+    IT.forEach(function (it, i) {
+      if (it.m) return;
+      var ks = kids[i] || [];
+      if (!it.plan && !ks.length) return;
+      var gr = [{ n: it.n, p: it.plan || '', col: col[it.x], pad: 0, fs: 13 }];
+      ks.forEach(function (c) { gr.push({ n: '└ ' + c.n, p: c.plan, col: col[c.x], pad: 16, fs: 12 }); });
+      groups.push(gr);
+    });
+    var hOf = function (e) { return Math.ceil(Array.from(e.n + '　' + e.p).length * e.fs / (490 - e.pad)) * 19 + 8; };
+    var totH = 0;
+    groups.forEach(function (gr) { gr.h = gr.reduce(function (a, e) { return a + hOf(e); }, 0); totH += gr.h; });
+    var cols3 = [[], [], []], ci = 0, accH = 0;
+    groups.forEach(function (gr) {
+      if (ci < 2 && accH > 0 && accH + gr.h / 2 > totH / 3 * (ci + 1)) ci++;
+      gr.forEach(function (e) { cols3[ci].push(e); });
+      accH += gr.h;
+    });
+    var plans = cols3[0].concat(cols3[1], cols3[2]);
+
+    return {
+      kabe: col.kabe, hako: col.hako, yume: col.yume, gu: col.gu,
+      borderD: borderD, gridD: gridD, crossD: crossD, ground: ground,
+      poles: poles, flags: flags, dots: dots, marks: marks, ghosts: ghosts,
+      ruler: ruler, rulerX: (rp[0] - 1).toFixed(1), rulerY: rp[1].toFixed(1), rulerH: rulerH,
+      logHead: fut ? 'これからやりたいこと（旗が上がるもの）' : E[k0].d + ' の動き',
+      rotStr: String(Math.round(rot)), dimStr: String(Math.round(dim)),
+      dimLabel: dim < 8 ? '2D（真上から）' : (dim > 85 ? '3D（低く）' : '3D'),
+      onRot: function (ev) { self.setState({ rot: parseFloat(ev.target.value) || 0 }); },
+      onDim: function (ev) { self.setState({ dim: parseFloat(ev.target.value) || 0 }); },
+      onDown: function (ev) { self._drag = { x: ev.clientX, y: ev.clientY, rot: rot, dim: dim }; },
+      onMove: function (ev) {
+        var d = self._drag;
+        if (!d) return;
+        self.setState({ rot: ((d.rot + (ev.clientX - d.x) * 0.35) % 360 + 360) % 360, dim: Math.max(0, Math.min(100, d.dim - (ev.clientY - d.y) * 0.25)) });
+      },
+      onUp: function () { self._drag = null; },
+      tStr: t.toFixed(2), end: END, dateStr: dateStr, dateFs: inFuture ? 64 : 96, caption: caption,
+      log: log, ticks: ticks, days: days, plans: plans, plansA: cols3[0], plansB: cols3[1], plansC: cols3[2],
+      todayX: (X(TODAY) - 1).toFixed(1), futX: X(TODAY).toFixed(1), futW: (X(END) - X(TODAY)).toFixed(1),
+      m11X: X(25).toFixed(1),
+      playing: playing, notPlaying: !playing, playLabel: playing ? '止める' : '10/07から再生',
+      prev: function () {
+        self.stop(); var tg = 0;
+        E.forEach(function (ev) { if (ev.day < t - 0.01) tg = ev.day; });
+        self.setT(tg);
+      },
+      next: function () {
+        self.stop(); var tg = END;
+        for (var q = NE - 1; q >= 0; q--) { if (E[q].day > t + 0.01) tg = E[q].day; }
+        self.setT(tg);
+      },
+      onRange: function (ev) { self.stop(); self.setT(parseFloat(ev.target.value) || 0); },
+      togglePlay: function () {
+        if (self._raf) { self.stop(); self.forceUpdate(); return; }
+        var tt = t >= END - 0.01 ? 0 : t, lastTs = null, rate = END / 11;
+        self.setT(tt);
+        var loop = function (ts) {
+          if (lastTs === null) lastTs = ts;
+          tt = Math.min(END, tt + (ts - lastTs) / 1000 * rate);
+          lastTs = ts;
+          if (tt >= END) { self._raf = null; self.setT(END); return; }
+          self._raf = requestAnimationFrame(loop);
+          self.setT(tt);
+        };
+        self._raf = requestAnimationFrame(loop);
+      },
+      onWheel: function (ev) { self.stop(); self.setT(t + (ev.deltaY || 0) / 80); }
+    };
+  }
+}
+</script>
+</body>
+</html>

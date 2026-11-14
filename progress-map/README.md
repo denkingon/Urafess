@@ -1,0 +1,61 @@
+# 進捗マップ（夜の時計・のぼり）
+
+Urafess の進捗と「いま何をやっているか」を見失わないための地図。アプリ（`app/`）とは無関係で、ここを変えてもアプリの動きは変わらない。
+
+- ウェブ版（1枚のページ）：https://claude.ai/artifact/6r2tKyYRUH8LVRWKYePLsY
+- キャンバス（Claude Design）：https://claude.ai/artifact/EQz4JhuJf8D9Qi3NkfEhLu
+- 段階の一覧と決まり（言葉で）：Claude のプロジェクト「Urafess」の資料 `claude/urafess-progress.md`
+
+## 見え方は2つ、表は1つ
+
+| | 何 | 軸 |
+| --- | --- | --- |
+| B' 夜の時計・表と裏 | 本命 | 角度＝前回までの当日の流れ（召集→…→イータへ・アイス＋後・土台・前）／中心からの近さ＝段階／字の大きさ＝本番への効き／色＝主に効く追求軸。裏は、その時間帯が残していくもの（いた人→イータ→SFC→世界） |
+| V のぼり | 同じ表の別の見え方 | 地面＝urafess-vision の4つの見出し／旗の高さ＝段階 |
+
+どちらも `data.py`（1つの表）から作る。片方だけ直さない。
+
+## ファイル
+
+| ファイル | 役目 |
+| --- | --- |
+| `data.py` | 表。日付（EVENTS）・件（ITEMS）・裏（URA_*）・V の地面（POLES）。**直すのは基本ここだけ** |
+| `gen9.py` | 作る係。`--build` で `project/NightClock.dc.html`（B'）と `project/Vision.dc.html`（V）を作り直す |
+| `gen7.py`・`gen3.py` | B' の枠・裏・時間の帯と、字を形として並べる部品（gen9 が読む） |
+| `gen_web.py` | ウェブ版。2つのボードのファイルを読んで `web/index.html` を作る |
+| `test_merge.js` | 確かめ。ボードのスクリプトを全部の日付で動かし、字の重なりと壊れた値を数える |
+| `tools/` | `ura_shifts.py`（裏の字が重ならないずらしを探す）・`check_v.js`（V の旗の重なり）・`place_v.js`（V の旗の置き場所を探す）・`webtest.mjs`（ウェブ版を Chrome で押す） |
+| `project/`・`web/` | 作ったもの。`project/Vision.dc.html` は作り直しの入力にもなる（消さない） |
+
+## 表の決まり（data.py）
+
+- 段階：0 妄想（言っただけ）／1 問い（解く問いが見えた）／2 決定（やり方を決めた）／3 試作（形がある）／4 実地（人で試した）／5 本番（当日これで行く）／`'u'` 不明／`N` まだ無い
+- `s` は EVENTS と同じ長さ。最後の1つは「これから」（日付未定のやりたいこと）の段階
+- `now`＝手を入れた日（EVENTS の番号）。`plan`＝これからやりたいこと（ボードの下の一覧に出る）
+- `t`＝本番への効き（0 無いと開けない／1 今回の核／2 支える）。**字の大きさ＝その行為のインパクト**
+- `merge=(合流先, EVENTS の番号)`：途中で大きい流れに加わったものは、合流先の脇に小さく付いて一緒に動く（本人の決まり、11/06）。合流したあとに自分だけ段階を動かさない
+- `sec`＝当日の流れのどこに効くか。同じ `sec` の中の並び順が角度の並び順
+- `g`＝V の地面の位置（x：あるもの −1 ⇔ ないもの +1、y：抽象 −1 ⇔ 物理 +1）
+- 段階と日付は、会話とプロジェクトの資料からの仮置き。迷った置き方は本人に伝える
+
+## 更新のしかた
+
+1. プロジェクトの資料（`claude/urafess-*.md`）と最近の会話から、生まれた・進んだ・合流した・手を入れたを拾う
+2. `data.py` を直す。日付を足すときは EVENTS に1行、全部の件の `s` に1つ、`TODAY`・`END`、`now`・`merge` の番号のずれ
+3. 作る：`python3 -I gen9.py --build && python3 -I gen_web.py`
+4. 確かめる：
+   - `node test_merge.js` … 壊れた値なし。重なりは、生まれる瞬間に縁の字をかすめるもの・合流の途中ですれ違うものだけ（何百回も続く重なりは直す：`sec` の中の並び順、名前の長さ、gen9.py の `relayout()` の重み）
+   - gen9.py の出力の `ura problems: []`。空でなければ `python3 -I tools/ura_shifts.py` の値を URA_* の `shift` に写す
+   - `node tools/check_v.js` … 何日も続く重なりは `node tools/place_v.js 名前` で `g` を探す
+   - `mkdir -p /tmp/webshots && node tools/webtest.mjs` … `errors []`
+5. 公開する（Claude の artifact の道具で、どちらも `publish_files`・`mode: patch`）：
+   - キャンバス（slug `6ca01268-899e-4246-8fb7-3e8f01ae1faa`）：`project/NightClock.dc.html` と `project/Vision.dc.html`
+   - ウェブ版（slug `2f564cb7-515f-4cf5-acc2-7ccb98f51b3f`）：`web/index.html` を `index.html` として
+6. `claude/urafess-progress.md` を同じ中身に直す
+
+## 気をつけること
+
+- キャンバスの `project/canvas.json`（メモ・ボードの置き場所・高さ）は本人がページで動かす。ここには入れていない。書きかえるときは、必ず artifact から読み直してから（ボードの高さを変えたら `boards[...].h` も合わせる）
+- キャンバスには前の案のボード（A 座標・B 夜の時計・C ジオラマ）もある。触らない
+- Claude Design の決まりで、キャンバスのボードは描いて確かめない。ここでは絵を作るスクリプトを node で動かして数える。ウェブ版はふつうのページなので Chrome で開いて確かめる
+- 作ったファイルは大きい（B' 約 140KB・ウェブ版 約 190KB）。毎回まるごと作り直す
