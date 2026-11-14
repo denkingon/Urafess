@@ -518,6 +518,15 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .ov-area-shade { fill: #000; fill-opacity: 0.68; }
 .ov-area-line { fill: none; stroke: #f1ede4; stroke-width: 2.5; stroke-dasharray: 8 5; stroke-linejoin: round; }
 .ov-area-line.is-old { stroke-opacity: 0.4; }
+/* 範囲の縮小：元の線は薄く、縮んだ線は実線。予告中の行き先は蓄光の点線（動く） */
+.ov-area-line.is-past { stroke-opacity: 0.35; }
+.ov-zone-shade { fill: #000; fill-opacity: 0.45; }
+.ov-zone-line { fill: none; stroke: #f1ede4; stroke-width: 3; stroke-linejoin: round; }
+.ov-zone-next { fill: none; stroke: var(--chikko, #c8ff63); stroke-width: 2.5; stroke-dasharray: 6 6; stroke-linejoin: round; animation: zone-march 1s linear infinite; }
+.ov-zone-next.is-preview { animation: none; stroke-opacity: 0.8; }
+.ov-zone-center { stroke: var(--chikko, #c8ff63); stroke-width: 2.5; stroke-linecap: round; }
+@keyframes zone-march { to { stroke-dashoffset: -12; } }
+@media (prefers-reduced-motion: reduce) { .ov-zone-next { animation: none; } }
 .ov-draft-line { fill: rgba(184, 255, 90, 0.08); stroke: #b8ff5a; stroke-width: 2.5; stroke-linejoin: round; }
 .ov-draft-pt { fill: #b8ff5a; stroke: #0b0c10; stroke-width: 2; }
 .ov-out { fill: none; stroke: var(--shu, #ff6a3d); stroke-width: 3; }
@@ -587,6 +596,21 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .dq-report-hint { font-size: 16px; opacity: 0.85; }
 .dq-report-hint .en { font-size: 16px; }
 .area-out.no-dq .area-out-dq, .area-out.no-dq .area-out-bar { display: none; }
+/* 範囲が縮む知らせ（全体の地図の上に重ねる1行）。予告は蓄光の枠、縮んでいる間は蓄光で塗る */
+.zone-chip { position: absolute; left: 8px; right: 8px; top: 8px; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 2px solid var(--chikko, #c8ff63); border-radius: 10px; color: var(--chikko, #c8ff63); background: rgba(11, 12, 16, 0.92); }
+.zone-chip[hidden] { display: none; }
+.zone-chip-icon { width: 22px; height: 22px; flex: none; }
+.zone-chip-icon rect { fill: none; stroke: currentColor; stroke-width: 2; }
+.zone-chip-icon rect + rect { stroke-dasharray: 3 2; }
+.zone-chip-word { flex: 1 1 auto; min-width: 0; font-size: 16px; font-weight: 800; line-height: 1.2; }
+.zone-chip-word .en { font-size: 16px; }
+.zone-chip-sec { flex: none; font-size: 28px; font-variant-numeric: tabular-nums; line-height: 1; }
+.zone-chip[data-kind="move"] { background: var(--chikko, #c8ff63); color: #0b0c10; }
+.shrink-host { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.shrink-mission { display: flex; align-items: flex-start; gap: 8px; text-align: left; font-size: 16px; line-height: 1.4; }
+.shrink-mission input { width: 22px; height: 22px; flex: none; margin: 1px 0 0; }
+.area-host.is-picking .area-map { outline: 3px solid var(--chikko, #c8ff63); outline-offset: 2px; }
+.zone-chip[data-kind="warn"] .zone-chip-icon rect + rect { animation: zone-march 1s linear infinite; }
 @media (prefers-reduced-motion: no-preference) {
   .dq:not([hidden]) .dq-x { animation: dq-in 0.45s cubic-bezier(.2, 1.4, .4, 1) both; }
   .dq:not([hidden]) .dq-word { animation: dq-rise 0.5s 0.12s ease-out both; }

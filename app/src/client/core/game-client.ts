@@ -430,6 +430,7 @@ export class GameClient {
       mic?: 'always' | 'hold';
       wishMode?: WishMode;
       area?: [number, number][] | null;
+      plan?: import('../../shared/shrink').ShrinkPlan;
       pid?: string;
       by?: string;
       rid?: string;

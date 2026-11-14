@@ -97,9 +97,25 @@ export function checkArea(pts: [number, number][], p: LatLon): AreaCheck {
   return { inside, edgeM: best, nearest: fromFlat(origin, bestPt) };
 }
 
+/**
+ * 範囲の形：頂点の並び、または縮んでいる範囲（元の範囲 pts と縮めた形 inner の重なり。shrink.ts の zoneAt が作る）
+ */
+export type AreaShape = [number, number][] | { pts: [number, number][]; inner: [number, number][] | null };
+
+/** 形のどちらでも：中か・線までどれだけか。縮んでいれば、元の範囲と縮めた形の両方の中にいて「中」 */
+export function checkShape(s: AreaShape, p: LatLon): AreaCheck {
+  if (Array.isArray(s)) return checkArea(s, p);
+  const a = checkArea(s.pts, p);
+  if (!s.inner) return a;
+  const b = checkArea(s.inner, p);
+  if (a.inside && b.inside) return a.edgeM <= b.edgeM ? a : b;
+  if (!a.inside && !b.inside) return a.edgeM >= b.edgeM ? a : b;
+  return a.inside ? b : a;
+}
+
 /** その位置だけで見た「外」か（線から AREA_OUT_MARGIN_M より外） */
-export function isFarOutside(pts: [number, number][], p: LatLon): boolean {
-  const c = checkArea(pts, p);
+export function isFarOutside(s: AreaShape, p: LatLon): boolean {
+  const c = checkShape(s, p);
   return !c.inside && c.edgeM > AREA_OUT_MARGIN_M;
 }
 
@@ -120,12 +136,12 @@ export class AreaWatch {
   private outSince: number | null = null;
   last: AreaCheck | null = null;
 
-  feed(pts: [number, number][] | null, p: LatLon | null, now: number): boolean {
-    if (!pts || !p) {
+  feed(shape: AreaShape | null, p: LatLon | null, now: number): boolean {
+    if (!shape || !p) {
       this.reset();
       return this.out;
     }
-    const c = checkArea(pts, p);
+    const c = checkShape(shape, p);
     this.last = c;
     const far = !c.inside && c.edgeM > AREA_OUT_MARGIN_M;
     if (this.out) {

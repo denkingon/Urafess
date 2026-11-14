@@ -16,7 +16,7 @@ import {
   START_LEAD_MS,
   type WishMode,
 } from '../../shared/rules';
-import { isDone, positionAt } from '../../shared/schedule';
+import { formatClock, isDone, positionAt } from '../../shared/schedule';
 import { MISSION_DEFAULT_TITLE, MISSION_TITLE_MAX, PHOTO_STATUS_NAME, PHOTO_STORE_MAX_BYTES, type PhotoStatus } from '../../shared/mission';
 import { glowPhase, hostStatus, wishNote } from '../../shared/viewmodel';
 import { checkNewHostKey, HOST_KEY_MIN } from '../../shared/hostkey';
@@ -25,6 +25,20 @@ import type { Sensors } from '../sense';
 import { createLightsBoard } from './glow';
 import { createOverview } from './overview';
 import { AREA_MAX_PTS, AREA_MIN_PTS, isFarOutside } from '../../shared/area';
+import {
+  DEFAULT_SHRINK_PLAN,
+  midOf,
+  scalePts,
+  SHRINK_FINAL_AREAS,
+  SHRINK_MAX_TIMES,
+  shrinkActive,
+  timeSteps,
+  ZONE_MOVE_MS,
+  ZONE_STEP_AREA,
+  ZONE_WARN_MS,
+  zoneAt,
+  type ShrinkPlan,
+} from '../../shared/shrink';
 import { distanceM } from '../../shared/run';
 import { bigFontSize } from './phone';
 
@@ -54,6 +68,7 @@ export interface HostActions {
   command(
     op: HostOp,
     extra?: {
+      plan?: ShrinkPlan;
       winner?: Winner;
       durations?: number[];
       ratio?: { oni: number; runner: number };
@@ -185,6 +200,32 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         <button type="button" data-area="campus">キャンパスの四角</button>
         <button type="button" data-area="save" class="primary">決める</button>
         <button type="button" data-area="none" class="ghost">範囲なしにする</button>
+      </div>
+      <div class="shrink-host" data-k="shrink">
+        <div class="cap-host-head"><b>範囲の縮小</b><span data-k="shrinkNow"></span></div>
+        <div class="mic-mode">
+          <span>時間で</span>
+          <div class="seg" role="group" aria-label="時間で縮む回数">
+            ${Array.from({ length: SHRINK_MAX_TIMES + 1 }, (_, i) => `<button type="button" data-shrink-times="${i}" aria-pressed="false">${i === 0 ? '縮まない' : `${i}回`}</button>`).join('')}
+          </div>
+        </div>
+        <div class="mic-mode">
+          <span>最後の広さ</span>
+          <div class="seg" role="group" aria-label="時間で縮み終えたときの広さ">
+            ${SHRINK_FINAL_AREAS.map((a) => `<button type="button" data-shrink-final="${a}" aria-pressed="false">${a === 0.5 ? '半分' : `1/${Math.round(1 / a)}`}</button>`).join('')}
+          </div>
+        </div>
+        <div class="mic-mode">
+          <span>縮む先</span>
+          <div class="seg" role="group" aria-label="縮む先">
+            <button type="button" data-shrink-to="mid" aria-pressed="false">範囲の真ん中</button>
+            <button type="button" data-shrink-to="pick" aria-pressed="false">地図で選ぶ</button>
+            <button type="button" data-shrink-to="random" aria-pressed="false">毎回ランダム</button>
+          </div>
+        </div>
+        <label class="shrink-mission"><input type="checkbox" data-shrink-mission> ミッションの「成功」で1段縮む（広さ ×${ZONE_STEP_AREA}）</label>
+        <p class="note" data-k="shrinkNote"></p>
+        <button type="button" class="wide" data-act="shrink-now">今すぐ1段縮める</button>
       </div>
     </section>
     <section class="cap-host" data-k="cap" hidden>
@@ -532,6 +573,16 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   let draft: [number, number][] = [];
   let areaLocked = false;
   let savedArea: [number, number][] | null = null;
+  // 範囲の縮小：縮み方（サーバーの値）と、地図で縮む先を選んでいる途中か
+  let plan: ShrinkPlan = { ...DEFAULT_SHRINK_PLAN };
+  let picking = false;
+  /** 描く地図に見せる「最後はここまで縮む」形と縮む先（毎回ランダムなら形は見せない） */
+  const planPreview = () => {
+    if (!savedArea || draft.length) return null;
+    const center = plan.to === 'pick' && plan.pick ? plan.pick : plan.to === 'mid' ? midOf(savedArea) : null;
+    if (!center || plan.times === 0) return center ? { center } : null;
+    return { center, preview: scalePts(savedArea, center, Math.sqrt(plan.finalArea)) };
+  };
   const drawArea = () =>
     areaMap.update({
       me: null,
@@ -542,9 +593,22 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       area: savedArea,
       draft: draft.length ? draft : null,
       frameBase: 'campus',
+      zone: planPreview(),
     });
+  const sendPlan = (patch: Partial<ShrinkPlan>) => {
+    plan = { ...plan, ...patch };
+    actions.command('shrink-plan', { plan });
+    refreshShrink();
+    drawArea();
+  };
   const areaMap = createOverview({
     onTap: (p) => {
+      if (picking) {
+        // 縮む先を選ぶ：押した場所（範囲の中でなければ、始めるときに範囲の真ん中になる）
+        picking = false;
+        sendPlan({ to: 'pick', pick: [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6] });
+        return;
+      }
       if (areaLocked || draft.length >= AREA_MAX_PTS) return;
       draft = [...draft, [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6]];
       drawArea();
@@ -592,6 +656,47 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     if (confirm('遊ぶ範囲をなくす（どこまで行っても「戻れ」は出ない）。よいか？')) actions.command('area', { area: null });
   });
 
+  // 範囲の縮小のボタン：押したらすぐ送る（試合中は変えられない）
+  const shrinkBtns = (k: string) => [...el.querySelectorAll(`[data-shrink-${k}]`)] as HTMLButtonElement[];
+  const missionBox = el.querySelector('[data-shrink-mission]') as HTMLInputElement;
+  const nowBtn = el.querySelector('[data-act="shrink-now"]') as HTMLButtonElement;
+  shrinkBtns('times').forEach((b) => b.addEventListener('click', () => sendPlan({ times: Number(b.dataset.shrinkTimes) })));
+  shrinkBtns('final').forEach((b) => b.addEventListener('click', () => sendPlan({ finalArea: Number(b.dataset.shrinkFinal) })));
+  shrinkBtns('to').forEach((b) =>
+    b.addEventListener('click', () => {
+      const to = b.dataset.shrinkTo as ShrinkPlan['to'];
+      if (to === 'pick') {
+        // 次に地図を押した場所が縮む先
+        picking = true;
+        refreshShrink();
+        return;
+      }
+      picking = false;
+      sendPlan({ to });
+    }),
+  );
+  missionBox.addEventListener('change', () => sendPlan({ mission: missionBox.checked }));
+  nowBtn.addEventListener('click', () => actions.command('shrink-now'));
+  let shrinkKey = '';
+  const refreshShrink = () => {
+    const off = areaLocked || !savedArea;
+    shrinkBtns('times').forEach((b) => {
+      b.setAttribute('aria-pressed', String(Number(b.dataset.shrinkTimes) === plan.times));
+      b.disabled = off;
+    });
+    shrinkBtns('final').forEach((b) => {
+      b.setAttribute('aria-pressed', String(Number(b.dataset.shrinkFinal) === plan.finalArea));
+      b.disabled = off || plan.times === 0;
+    });
+    shrinkBtns('to').forEach((b) => {
+      b.setAttribute('aria-pressed', String(picking ? b.dataset.shrinkTo === 'pick' : b.dataset.shrinkTo === plan.to));
+      b.disabled = off;
+    });
+    missionBox.checked = plan.mission;
+    missionBox.disabled = off;
+    q('area').classList.toggle('is-picking', picking);
+  };
+
   return {
     el,
     update(input) {
@@ -612,6 +717,44 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
           q('areaNote').textContent = locked
             ? '試合中は範囲を変えられない（走っている人の「外」が急に変わらないように）。時間が0になったら変えられる。'
             : '地図を押して角を足していく（3つ以上）。「決める」で全員の地図に線が出る。逃げ始めてからゲームの終わりまで、範囲の外へ 15m 出て3秒たった人のスマホに「戻れ」と戻る向きが出る。';
+        }
+        // 範囲の縮小
+        const sp = game.shrinkPlan ?? DEFAULT_SHRINK_PLAN;
+        if (JSON.stringify(sp) !== JSON.stringify(plan) || changed) {
+          plan = { ...sp };
+          refreshShrink();
+        }
+        q('shrink').hidden = game.shrinkPlan === undefined;
+        const zone = zoneAt(game.area, game.shrink, game.timer, serverNow);
+        const live = !!game.shrink && game.stage === 'timer' && !!game.timer && !isDone(game.timer, serverNow);
+        const pos = game.timer ? positionAt(game.timer, serverNow) : null;
+        const canNow = live && !!zone && pos?.kind === 'phase' && pos.index >= 1 && pos.index <= 2;
+        nowBtn.disabled = !canNow;
+        const st = zone?.status;
+        const nowText = !pts
+          ? '範囲を決めると使える'
+          : !live
+            ? shrinkActive(sp)
+              ? `${sp.times ? `時間で${sp.times}回・最後は広さ${sp.finalArea === 0.5 ? '半分' : `1/${Math.round(1 / sp.finalArea)}`}` : '時間では縮まない'}${sp.mission ? '・ミッションで1段' : ''}`
+              : '縮まない'
+            : st?.kind === 'warn'
+              ? `予告中：あと${Math.ceil(st.leftMs / 1000)}秒で縮み始める`
+              : st?.kind === 'move'
+                ? `縮んでいる：あと${Math.ceil(st.leftMs / 1000)}秒`
+                : `今の広さ ${Math.round((zone?.scale ?? 1) ** 2 * 100)}%` + (st?.kind === 'idle' && st.nextInMs !== null ? `・次の予告まで ${formatClock(st.nextInMs)}` : '');
+        const steps = timeSteps(sp, game.durations);
+        const note = picking
+          ? '地図を押した場所が縮む先になる（範囲の中を押す）'
+          : locked
+            ? `試合中は縮み方を変えられない。「今すぐ1段縮める」は逃げ始めてからゲームの終わりまで押せる（広さ ×${ZONE_STEP_AREA}。${ZONE_WARN_MS / 1000}秒の予告のあと${ZONE_MOVE_MS / 1000}秒で縮む）。`
+            : `縮む先へ向けて、形のまま小さくなる。1回ごとに、全員の地図に次の範囲（蓄光の点線）が出て${ZONE_WARN_MS / 1000}秒後に縮み始め、${ZONE_MOVE_MS / 1000}秒で縮む。取り残された人には「戻れ」、20秒で失格。` +
+              (steps.length ? `予告の始まり（ゲームの残り）：${steps.map((x) => formatClock(game.durations[2] - (x.at - game.durations[0] - game.durations[1]))).join('・')}。` : '') +
+              (sp.to === 'random' ? '毎回ランダムは、開始を押したときに範囲の中のどこかに決まる。' : '');
+        const sk = `${nowText}|${note}`;
+        if (sk !== shrinkKey) {
+          shrinkKey = sk;
+          q('shrinkNow').textContent = nowText;
+          q('shrinkNote').textContent = note;
         }
         drawArea();
       }
@@ -781,7 +924,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         const litNow = (input.glow?.runs ?? []).filter((r) => serverNow - r.at <= RUN_STALE_MS).length;
         const onMap = (input.mates?.people ?? []).filter((m) => serverNow - m.at <= MATES_STALE_MS);
         const oniOn = onMap.filter((m) => m.role === 'oni').length;
-        const areaPts = game.area?.pts ?? null;
+        const areaPts = zoneAt(game.area, game.shrink, game.timer, serverNow);
         const outside = areaPts ? onMap.filter((m) => isFarOutside(areaPts, m)) : [];
         q('glowCount').textContent =
           gp === 'live'

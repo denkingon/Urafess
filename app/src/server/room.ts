@@ -32,6 +32,7 @@ import type {
 } from '../shared/protocol';
 import { decideWinner, everyoneJailed } from '../shared/jail';
 import { cleanAreaPts, isValidAreaPts, type Area } from '../shared/area';
+import { cleanShrinkPlan, DEFAULT_SHRINK_PLAN, extraStep, isShrinkPlan, makeLive, type ShrinkLive, type ShrinkPlan } from '../shared/shrink';
 import {
   CAMPUS_CENTER,
   CLAIM_GRACE_MS,
@@ -111,6 +112,10 @@ interface GameState {
   micMode: MicMode;
   /** 遊ぶ範囲（主催者がゲームの前に描く）。新しい夜を始めても残る。古い保存データには無い */
   area?: Area | null;
+  /** 範囲の縮み方（主催者が試合の前に決める）。新しい夜でも残る。古い保存データには無い */
+  shrinkPlan?: ShrinkPlan;
+  /** このラウンドの縮小（試合を始めたときに決まり、配役・やり直しで消える）。古い保存データには無い */
+  shrink?: ShrinkLive | null;
   /** 次に名簿に入る人の番号（名簿に入った順。画面には出さない。部屋を空にしても戻さない） */
   nextNum: number;
   counts: { oni: number; runner: number };
@@ -608,6 +613,8 @@ export class GameRoom extends DurableObject<Env> {
     this.loadPhotos();
     if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
     if (this.game.area === undefined) this.game.area = null;
+    if (!isShrinkPlan(this.game.shrinkPlan)) this.game.shrinkPlan = { ...DEFAULT_SHRINK_PLAN };
+    if (this.game.shrink === undefined) this.game.shrink = null;
     // 配役の希望を入れる前の版で作った部屋には、決め方が無い
     if (!isWishMode(this.game.wishMode)) this.game.wishMode = DEFAULT_WISH_MODE;
     if (this.game.wishStat === undefined) this.game.wishStat = null;
@@ -2694,6 +2701,7 @@ export class GameRoom extends DurableObject<Env> {
           allCaughtAt: null,
           counts: { oni, runner },
           wishStat,
+          shrink: null,
           ...this.missionReset(now, 'assign'),
         };
         this.ctx.storage.transactionSync(() => {
@@ -2740,8 +2748,13 @@ export class GameRoom extends DurableObject<Env> {
       }
       case 'start':
         if (g.stage !== 'assigned') return this.reject(ws, att, op, 'not-allowed');
-        this.commit({ stage: 'timer', timer: startTimer(g.durations, now), result: null });
-        this.log('start', { at: now, data: { durations: g.durations } });
+        {
+          // 範囲の縮小：縮む先（毎回ランダムならここで引く）と、時間の段をこのラウンドの分だけ決める
+          const shrink = makeLive(g.shrinkPlan, g.area?.pts, g.durations, Math.random);
+          this.commit({ stage: 'timer', timer: startTimer(g.durations, now), result: null, shrink });
+          this.log('start', { at: now, data: { durations: g.durations } });
+          if (shrink && shrink.steps.length) this.log('shrink-plan', { at: now, data: { center: shrink.center, steps: shrink.steps.length } });
+        }
         break;
       case 'pause':
         if (g.stage !== 'timer' || !g.timer || g.timer.status !== 'running' || timerDone) {
@@ -2790,7 +2803,7 @@ export class GameRoom extends DurableObject<Env> {
             p.caughtVia = null;
           }
         }
-        this.commit({ stage: 'assigned', timer: null, result: null, allCaughtAt: null, resultAuto: false });
+        this.commit({ stage: 'assigned', timer: null, result: null, allCaughtAt: null, resultAuto: false, shrink: null });
         break;
       }
       case 'end': {
@@ -2877,6 +2890,22 @@ export class GameRoom extends DurableObject<Env> {
         this.log('area', { at: now, data: { pts: area.pts } });
         break;
       }
+      case 'shrink-plan': {
+        // 縮み方：遊ぶ範囲と同じく、試合中（時間が0になる前）は変えない
+        if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        if (!isShrinkPlan(msg.plan)) return this.reject(ws, att, op, 'bad-input');
+        const plan = cleanShrinkPlan(msg.plan);
+        if (JSON.stringify(plan) === JSON.stringify(g.shrinkPlan)) break;
+        this.commit({ shrinkPlan: plan });
+        this.log('shrink-plan', { at: now, data: { ...plan } });
+        break;
+      }
+      case 'shrink-now': {
+        // 主催者の手で今すぐ1段（予告のあと縮む）。逃げ始めてからゲームの終わりまで
+        const res = this.addShrinkStep('host', now, {});
+        if (res !== true) return this.reject(ws, att, op, res);
+        break;
+      }
       case 'clear': {
         // 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。
         // 名簿・時間の設定・名簿の番号は残す。試合中はできない
@@ -2895,6 +2924,7 @@ export class GameRoom extends DurableObject<Env> {
           wishStat: null,
           night: g.night + 1,
           nightAt: now,
+          shrink: null,
           ...this.missionReset(now, 'clear'),
         };
         this.dropJail();
@@ -3019,8 +3049,28 @@ export class GameRoom extends DurableObject<Env> {
         }
       }
     }
+    // 成功で範囲も縮める（主催者が縮み方で選んでいれば）。1枚の写真で縮むのは1回だけ。範囲・試合の外なら何もしない
+    if (msg.ok && this.game.shrinkPlan?.mission && this.game.shrink && !this.game.shrink.byPhoto.includes(ph.id)) {
+      this.addShrinkStep('mission', now, { photo: ph.id, by: ph.name });
+    }
     // 成功したかどうかは全員に見せる
     this.broadcastNow();
+  }
+
+  /**
+   * 範囲を1段縮める（ミッション・主催者）。予告を今から始める。逃げ始めてからゲームの終わりまで（止めている間も）。
+   * 縮めたら true、できなければ理由
+   */
+  private addShrinkStep(why: 'mission' | 'host', now: number, data: { photo?: string; by?: string }): true | 'not-allowed' {
+    const g = this.game;
+    if (!g.area || !g.shrink || g.stage !== 'timer' || !g.timer) return 'not-allowed';
+    const pos = positionAt(g.timer, now);
+    if (pos.kind !== 'phase' || pos.index < 1 || pos.index > CAPTURE_PHASE_INDEX) return 'not-allowed';
+    const step = extraStep(elapsedAt(g.timer, now), why);
+    const byPhoto = data.photo ? [...g.shrink.byPhoto, data.photo] : g.shrink.byPhoto;
+    this.commit({ shrink: { ...g.shrink, steps: [...g.shrink.steps, step], byPhoto } });
+    this.log('shrink', { at: now, data: { why, at: step.at, ...data } });
+    return true;
   }
 
   /**
@@ -3211,6 +3261,8 @@ export class GameRoom extends DurableObject<Env> {
       resultAuto: g.resultAuto === true,
       micMode: g.micMode,
       area: g.area ?? null,
+      shrinkPlan: g.shrinkPlan ?? DEFAULT_SHRINK_PLAN,
+      shrink: g.shrink ?? null,
       wishMode: g.wishMode,
       wishes: this.wishCounts(),
     };

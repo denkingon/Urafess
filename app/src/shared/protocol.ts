@@ -1,4 +1,5 @@
 import type { Area } from './area';
+import type { ShrinkLive, ShrinkPlan } from './shrink';
 import type { Candidate, CaptureVia } from './capture';
 import type { PhotoStatus } from './mission';
 
@@ -55,6 +56,10 @@ export interface GameView {
   micMode?: 'always' | 'hold';
   /** 遊ぶ範囲（主催者がゲームの前に地図に描いた多角形）。null＝範囲なし。古いサーバーからは来ない */
   area?: Area | null;
+  /** 範囲の縮み方（主催者が試合の前に決める）。古いサーバーからは来ない */
+  shrinkPlan?: ShrinkPlan;
+  /** このラウンドの縮小（試合を始めると決まる。縮む先と段）。範囲が無い・始める前は null。古いサーバーからは来ない */
+  shrink?: ShrinkLive | null;
   /** 配役の決め方（wish＝希望を聞く／lot＝くじだけ）。古いサーバーからは来ない（そのときは希望の板を出さない） */
   wishMode?: WishMode;
   /** 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（誰かは送らない）。古いサーバーからは来ない */
@@ -245,6 +250,10 @@ export type HostOp =
   | 'wish-mode'
   /** 遊ぶ範囲を決める（area＝頂点の並び、null で範囲なし）。試合中（時間が0になる前）は変えられない */
   | 'area'
+  /** 範囲の縮み方を決める（plan）。試合中（時間が0になる前）は変えられない */
+  | 'shrink-plan'
+  /** 範囲を今すぐ1段縮める（予告のあと縮む）。逃げ始めてからゲームの終わりまで */
+  | 'shrink-now'
   | 'remove'
   /** 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。名簿は残る */
   | 'clear'
@@ -296,6 +305,8 @@ export type ClientMsg =
       wishMode?: WishMode;
       /** 遊ぶ範囲の頂点（[緯度, 経度] の並び）。null で範囲なし */
       area?: [number, number][] | null;
+      /** 範囲の縮み方 */
+      plan?: ShrinkPlan;
       pid?: string;
       by?: string;
       rid?: string;

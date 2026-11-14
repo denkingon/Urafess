@@ -1,4 +1,5 @@
 import { AREA_DQ_MS, AREA_OUT_MARGIN_M, AreaWatch, isFarOutside } from '../../shared/area';
+import { zoneAt, type ZoneNow } from '../../shared/shrink';
 import type { GlowEntry } from '../../shared/protocol';
 import { MATES_STALE_MS, RUN_STALE_MS } from '../../shared/rules';
 import { bearingDeg, compassName, compassNameEn, distanceM, distanceText, distanceTextEn, type LatLon } from '../../shared/run';
@@ -40,7 +41,8 @@ export interface BoardInput {
   /** 自分の役（全体の地図の自分の印と、仲間の色に使う） */
   myKind?: OvKind;
   /** 遊ぶ範囲（全体の地図に線を引き、外を暗くする）。外にいる人は輪で囲む */
-  area?: [number, number][] | null;
+  /** 遊ぶ範囲：頂点の並び、または縮小の入った今の範囲（zoneAt） */
+  area?: [number, number][] | ZoneNow | null;
   /** 自分が範囲の外にいる（見張りが決めた） */
   meOut?: boolean;
 }
@@ -222,7 +224,17 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
         }
         // 範囲の外にいる人（届いた位置だけで見る。光っている相手は数えない）
         if (area) for (const p of points) if (p.kind !== 'unknown') p.out = isFarOutside(area, p.pos);
-        ov.update({ me: me ? { ...me, acc: meAcc ?? 0 } : null, meKind: myKind ?? 'unknown', meLit, points, labelMax, area: area ?? null, meOut });
+        const z = area && !Array.isArray(area) ? area : null;
+        ov.update({
+          me: me ? { ...me, acc: meAcc ?? 0 } : null,
+          meKind: myKind ?? 'unknown',
+          meLit,
+          points,
+          labelMax,
+          area: Array.isArray(area) ? area : (z?.pts ?? null),
+          meOut,
+          zone: z ? { inner: z.inner, next: z.next, center: z.center } : null,
+        });
       }
 
       // 一覧：近い順（自分の位置が分からなければ、光った順）
@@ -341,6 +353,11 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
       <div class="area-out-dq"><b class="u" data-k="dqSec"></b><span data-k="dqLbl"></span></div>
       <i class="area-out-bar" data-k="dqBar"></i>
     </div>
+    <div class="zone-chip" data-k="zone" role="status" hidden>
+      <svg class="zone-chip-icon" viewBox="-12 -12 24 24" aria-hidden="true"><rect x="-10" y="-10" width="20" height="20" rx="2"/><rect x="-5" y="-5" width="10" height="10" rx="1"/></svg>
+      <span class="zone-chip-word" data-k="zoneWord"></span>
+      <b class="u zone-chip-sec" data-k="zoneSec"></b>
+    </div>
   `;
   // 失格の画面：参加者の画面いっぱいに被せる（捕獲・牢屋の操作も隠れる）
   const dq = document.createElement('div');
@@ -392,10 +409,14 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
   const litChip = root?.querySelector('[data-k="lit"]') as HTMLElement | null;
   const board = createLightsBoard({ listMax: 1, start: 'all', labelMax: 8, bilingual: true });
   el.append(board.el);
+  // 範囲が縮む知らせは地図の上に重ねる（「戻れ」の帯と並んでも、地図の高さを取らない）
+  board.el.querySelector('.ov')?.append(q('zone'));
   const outBox = q('out');
   const outArrow = el.querySelector('.area-out-arrow') as SVGElement;
   const dqBar = q('dqBar');
   const watch = new AreaWatch();
+  const zoneBox = q('zone');
+  let lastZoneKind = 'idle';
   let lastOutBuzz = 0;
   let lastSecBuzz = -1;
   /** 失格は「今の配役」ごと。同じ配役のうちは、アプリを開き直しても失格のまま */
@@ -495,11 +516,29 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
       const pos = sensors.position(now);
 
       // 遊ぶ範囲の見張り：逃げ始めてからゲームの終わりまで（止めている間・見学は見ない）。外なら戻る向きと距離
-      const area = state.game?.area?.pts ?? null;
+      // 範囲の縮小が入っていれば、今の範囲（全員が同じ時計で同じ形を出す）
+      const area = zoneAt(state.game?.area, state.game?.shrink, state.game?.timer, serverNow ?? now);
       const bounded = view.role !== 'なし' && (view.step === 3 || view.step === 4) && !view.paused;
       const out = bounded && watch.feed(area, pos ? { lat: pos.lat, lon: pos.lon } : null, now);
       if (!bounded) watch.reset();
       applyDq(view, state);
+      // 範囲が縮む知らせ：予告（次の範囲の線が出ている）と、縮んでいる間。予告が始まった瞬間に一度震える
+      const zs = area && (view.step === 3 || view.step === 4) ? area.status : null;
+      const zoneOn = !!zs && zs.kind !== 'idle';
+      setHidden(zoneBox, !zoneOn);
+      if (zs && zs.kind !== 'idle') {
+        zoneBox.dataset.kind = zs.kind;
+        const word: Pair =
+          zs.kind === 'warn'
+            ? zs.why === 'mission'
+              ? ['ミッション成功。範囲が縮む', 'MISSION DONE. ZONE SHRINKS IN']
+              : ['範囲が縮む', 'ZONE SHRINKS IN']
+            : ['範囲が縮んでいる', 'ZONE SHRINKING'];
+        setHTML(q('zoneWord'), say(word));
+        setHTML(q('zoneSec'), esc(String(Math.ceil(zs.leftMs / 1000))));
+        if (zs.kind === 'warn' && lastZoneKind !== 'warn') vibrate([200, 100, 200]);
+      }
+      lastZoneKind = zs?.kind ?? 'idle';
       const showOut = out && !watch.disqualified;
       setHidden(outBox, !showOut);
       if (root && root.classList.contains('is-out') !== showOut) root.classList.toggle('is-out', showOut);
