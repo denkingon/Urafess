@@ -14,10 +14,11 @@ import {
   MATES_STALE_MS,
   RUN_STALE_MS,
   START_LEAD_MS,
+  type WishMode,
 } from '../../shared/rules';
 import { isDone, positionAt } from '../../shared/schedule';
 import { MISSION_DEFAULT_TITLE, MISSION_TITLE_MAX, PHOTO_STATUS_NAME, PHOTO_STORE_MAX_BYTES, type PhotoStatus } from '../../shared/mission';
-import { glowPhase, hostStatus } from '../../shared/viewmodel';
+import { glowPhase, hostStatus, wishNote } from '../../shared/viewmodel';
 import { checkNewHostKey, HOST_KEY_MIN } from '../../shared/hostkey';
 import type { ClientState } from '../core/game-client';
 import type { Sensors } from '../sense';
@@ -57,6 +58,7 @@ export interface HostActions {
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      wishMode?: WishMode;
       area?: [number, number][] | null;
       pid?: string;
       by?: string;
@@ -148,6 +150,14 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         <button type="button" data-mic="hold" aria-pressed="false">押している間だけ</button>
       </div>
       <p class="note" data-k="micNote"></p>
+    </div>
+    <div class="mic-mode wish-mode">
+      <span>配役の決め方</span>
+      <div class="seg" role="group" aria-label="配役の決め方">
+        <button type="button" data-wishmode="wish" aria-pressed="false">希望を聞く</button>
+        <button type="button" data-wishmode="lot" aria-pressed="false">くじだけ</button>
+      </div>
+      <p class="note" data-k="wishNote"></p>
     </div>
     <details class="durations">
       <summary>時間の設定</summary>
@@ -314,6 +324,15 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       );
     });
   });
+
+  // 配役の決め方：希望を聞く（割合は守る。枠より多い希望はくじ）／くじだけ。次の配役から効く
+  const wishBtns = [...el.querySelectorAll('[data-wishmode]')] as HTMLButtonElement[];
+  wishBtns.forEach((b) =>
+    b.addEventListener('click', () => {
+      if (b.getAttribute('aria-pressed') === 'true') return;
+      actions.command('wish-mode', { wishMode: b.dataset.wishmode as WishMode });
+    }),
+  );
 
   btn('csv').addEventListener('click', () => {
     const b = btn('csv');
@@ -615,6 +634,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         `時間：${PHASES.map((p, i) => `${p.label} ${fmt(game.durations[i])}`).join(' → ')}` +
         `　／　割合 鬼${(game.ratio ?? DEFAULT_RATIO).oni}：逃走者${(game.ratio ?? DEFAULT_RATIO).runner}` +
         `　／　鬼のマイク ${(game.micMode ?? 'always') === 'always' ? 'ずっと聞く' : '押している間だけ'}` +
+        `　／　配役 ${(game.wishMode ?? 'lot') === 'wish' ? '希望を聞く' : 'くじだけ'}` +
         (host.waiting ? `　／　次の配役を待っている人 ${host.waiting}人` : '') +
         (host.registry !== undefined ? `　／　名簿 ${host.registry}人` : '');
       // 前の夜のまま集め始めないように：待合室で、夜を始めてから半日以上たっていたら知らせる
@@ -702,6 +722,14 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         mic === 'always'
           ? 'マイクをオンにした鬼は、押さなくても聞いている。逃走者の長押しの間に拾えば記録される'
           : '鬼は「捕まえた」を押している間だけ聞く（前の版と同じ）';
+
+      const wishMode = game.wishMode ?? 'lot';
+      wishBtns.forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.wishmode === wishMode));
+        // 古いサーバー（決め方を送ってこない）では切り替えられない
+        b.disabled = !canEditDurations || game.wishMode === undefined;
+      });
+      q('wishNote').textContent = wishNote(game, host);
 
       const canEditRatio = canEditDurations;
       const ratio = game.ratio ?? DEFAULT_RATIO;

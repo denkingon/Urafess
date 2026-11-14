@@ -9,6 +9,7 @@ import { getCodec } from './sound/codec';
 import { SoundEmitter } from './sound/emitter';
 import { SoundListener } from './sound/listener';
 import { Sensors } from './sense';
+import { callAccount, createAccount, errorText } from './views/account';
 import { createCapture } from './views/capture';
 import { createGlow } from './views/glow';
 import { createHost } from './views/host';
@@ -17,6 +18,8 @@ import { createInstall, type InstallScreen } from './views/install';
 import { createJoin, type EntryMode } from './views/join';
 import { createLab } from './views/lab';
 import { createMission, createPhotoLoader } from './views/mission';
+import { createWish } from './views/wish';
+import { mountBackdrop } from './views/backdrop';
 import { createRunLab } from './views/lab-run';
 import { createPhone } from './views/phone';
 import { createScreenKeeper } from './wake-lock';
@@ -60,6 +63,8 @@ if (isLab) {
   if (!token) showTokenForm();
   else startHost(token);
 } else {
+  // 背景の地図：参加者の画面の後ろに SFC の地図を敷く（?bg=off で消せる）
+  if (params.get('bg') !== 'off') mountBackdrop();
   const path = installPath();
   if (path === 'line' && escapeLine()) {
     // LINE が外のブラウザで開き直す。この画面はこのまま閉じられる
@@ -154,12 +159,38 @@ function sessionSet(k: string, v: string): void {
 function startPlayer(): void {
   const client = makeClient({ kind: 'player' });
   startUpdateChecks(() => !(client.state.phase === 'ready' && inMatch(client.state.game?.stage)));
+  // 自分のページ（ステータスと設定）。開いている間は、試合が始まるまでこちらを出す
+  let accountOpen = false;
+  const account = createAccount({
+    gameId,
+    identity: () => client.state.identity,
+    renamed: (name) => client.setName(name),
+    forget: () => {
+      accountOpen = false;
+      client.forget();
+    },
+    close: () => {
+      accountOpen = false;
+    },
+  });
+  const openAccount = () => {
+    if (!client.state.identity) return;
+    accountOpen = true;
+    account.open();
+  };
   const join = createJoin({
     join: (name) => client.join(name),
     enter: () => client.enter(),
     forget: () => client.forget(),
     reclaim: () => client.reclaim(),
     backToName: (message) => client.backToName(message),
+    openAccount,
+    take: async (code) => {
+      const r = await callAccount<{ pid: string; key: string; num: number; name: string }>(gameId, 'POST', null, { op: 'take', code });
+      if (!r.ok) return errorText(r.error);
+      client.adopt(r.value);
+      return null;
+    },
   }, {
     href: `/host${gameId === 'main' ? '' : `?g=${gameId}`}`,
     // 一度主催者で入ったスマホにだけ、右上に「主催者 HOST」を出す
@@ -169,6 +200,7 @@ function startPlayer(): void {
   let entryMode: EntryMode = 'name';
   let askedPersist = false;
   const phone = createPhone();
+  phone.mine.addEventListener('click', openAccount);
   // 捕獲：逃走者のスマホは長押しの間3桁を鳴らし、鬼のスマホはマイクで聞く
   const emitter = new SoundEmitter();
   const listener = new SoundListener();
@@ -176,6 +208,9 @@ function startPlayer(): void {
   // 牢屋：牢屋の人はマイクで聞き、外の逃走者は「助ける」で鳴らす
   const jail = createJail({ client, emitter, listener });
   phone.slot.append(jail.el, capture.el);
+  // 配役の希望：次の配役の前（待合室・結果発表）に、逃走者／鬼の板を出す
+  const wish = createWish({ client });
+  phone.slot.append(wish.el);
   // ミッション（集合写真）：題と「写真を撮る」は長押しの上に、成功した写真は結果発表の間だけ真ん中に
   const mission = createMission({
     gameId,
@@ -261,6 +296,17 @@ function startPlayer(): void {
       askedPersist = true;
       void navigator.storage?.persist?.().catch(() => false);
     }
+    if (accountOpen) {
+      // 試合が始まった（今夜に入っている）・このスマホが名前を忘れた → 自分のページを閉じる
+      const inGame = s.phase === 'ready' && inMatch(s.game?.stage);
+      if (!s.identity || inGame) {
+        accountOpen = false;
+      } else {
+        show(account.el);
+        account.update(false);
+        return;
+      }
+    }
     const mode = entryModeOf(s.phase);
     if (mode || s.phase === 'joining') {
       if (mode) entryMode = mode;
@@ -277,18 +323,22 @@ function startPlayer(): void {
       show(phone.el);
       const waiting = connectingView(s.online);
       lastView = waiting;
+      phone.mine.hidden = true;
       phone.update(waiting);
       mission.update(null, null);
+      wish.update(waiting, s);
       glow.update(waiting, s, client.serverNow());
       return;
     }
     show(phone.el);
+    phone.mine.hidden = inMatch(s.game.stage);
     const view = participantView(s.game, s.me, client.serverNow() ?? Date.now(), s.online);
     lastView = view;
     phone.update(view);
     capture.update(view, s);
     mission.update(s.game, s.me);
     jail.update(view, s);
+    wish.update(view, s);
     glow.update(view, s, client.serverNow());
     // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）
     if (s.me.code && s.me.code !== preparedCode) {
