@@ -196,6 +196,40 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .mic-mode .seg button:first-child { border-radius: 10px 0 0 10px; }
 .mic-mode .seg button:last-child { border-radius: 0 10px 10px 0; border-left: none; }
 .mic-mode .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+/* 主催者：配役をいじる */
+.cast-sort { display: flex; flex-wrap: wrap; gap: 6px; }
+.cast-sort button { min-height: 40px; padding: 0 12px; font-size: 13px; border-radius: 999px; }
+.cast-sort button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.cast-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; color: var(--quiet); }
+.cast-pick input { width: 64px; min-height: 40px; margin: 0 6px; text-align: center; }
+.cast-pick button { min-height: 40px; padding: 0 12px; font-size: 13px; }
+.cast-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; overscroll-behavior: contain; }
+.cast-row { flex: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; text-align: left; padding: 10px 12px; min-height: 48px; border-radius: 10px; font-size: 15px; }
+.cast-row[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 2px var(--ink); background: var(--field); }
+.cast-row[data-on="0"] .cast-name { color: var(--quiet); }
+.cast-name { font-weight: 900; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cast-marks { display: flex; flex-wrap: wrap; gap: 4px; }
+.cast-marks:empty { display: none; }
+.cast-marks i { font-style: normal; font-size: 12px; line-height: 1; padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--ink); }
+.cast-marks i[data-kind="pin"], .cast-marks i[data-kind="role"] { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 900; }
+.cast-marks i[data-kind="wish"] { border-style: dashed; }
+.cast-marks i[data-kind="last"] { border-color: var(--line); color: var(--quiet); }
+.cast-host .cap-host-head { flex-wrap: wrap; }
+.cast-host .cap-host-head b { flex: none; }
+.cast-marks i[data-kind="tag"] { border-color: var(--line); color: var(--quiet); }
+.cast-stat { font-size: 12px; font-weight: 500; color: var(--quiet); line-height: 1.5; white-space: normal; }
+.cast-act { position: sticky; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 3; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--bg); }
+.cast-act[hidden] { display: none; }
+.cast-act b { font-size: 14px; }
+.cast-roles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.cast-roles button { min-height: 48px; font-weight: 900; }
+.cast-roles .ghost { grid-column: span 2; min-height: 40px; font-weight: 500; font-size: 13px; }
+.cast-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.cast-tags button { min-height: 40px; padding: 0 12px; font-size: 13px; border-radius: 999px; }
+.cast-tags button[aria-pressed="true"] { border-style: dashed; }
+.cast-act form { display: flex; gap: 6px; }
+.cast-act form input { flex: 1; min-width: 0; min-height: 40px; }
+.cast-act form button { min-height: 40px; padding: 0 14px; font-size: 13px; }
 .durations, .ratio { border-top: 1px solid var(--line); padding-top: 12px; font-size: 14px; color: var(--quiet); }
 .durations summary, .ratio summary { cursor: pointer; }
 .durations form, .ratio form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -626,3 +660,36 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .area-btns button { flex: 1 1 30%; min-height: 44px; font-size: 16px; }
 .area-btns button.primary { flex-basis: 100%; font-weight: 900; }
 .area-host.is-locked .area-map { opacity: 0.6; }
+
+/* 名前の見張り（主催者） */
+.names-list { display: flex; flex-direction: column; gap: 6px; }
+.names-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.names-row.is-hit { border-left: 3px solid #ff6a3d; padding-left: 8px; }
+.names-name { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.names-name em { font-style: normal; font-size: 12px; color: var(--quiet); }
+.names-name em.names-hit { color: #ff6a3d; font-weight: 700; }
+.names-name small { font-size: 12px; color: var(--quiet); }
+.names-row button { min-height: 44px; padding: 0 12px; font-size: 14px; white-space: nowrap; }
+.names-ban-form { display: flex; gap: 8px; margin: 8px 0; }
+.names-ban-form input { flex: 1 1 auto; min-width: 0; }
+.names-ban-form button { flex: 0 0 auto; min-height: 44px; padding: 0 14px; white-space: nowrap; }
+.names-ban-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.names-chip { min-height: 36px; padding: 0 10px; font-size: 13px; }
+
+/* 牢屋の場所：月白の薄い面と実線、真ん中に「牢屋 JAIL」。描いている途中は点線 */
+.ov-jail { fill: rgba(241, 237, 228, 0.22); stroke: #f1ede4; stroke-width: 2.5; stroke-linejoin: round; }
+.ov-jail.is-old { opacity: 0.4; }
+.ov-jail-name {
+  font-size: 16px; font-weight: 900; fill: #f1ede4; font-family: inherit;
+  paint-order: stroke; stroke: #0b0c10; stroke-width: 4px; stroke-linejoin: round;
+}
+.ov-draft-line.is-jail { stroke-dasharray: 6 4; }
+/* 牢屋への向き：月白の帯（範囲の外の朱と分ける）。着いたら枠だけ */
+.area-out.jail-go { background: #f1ede4; }
+.area-out.jail-go.is-arrived { background: transparent; color: #f1ede4; border: 2px solid #f1ede4; }
+/* 主催者：遊ぶ範囲・牢屋の札 */
+.area-layers { display: flex; gap: 8px; margin: 6px 0 8px; }
+.area-layers button { flex: 1 1 0; min-height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 16px; border-radius: 12px; }
+.area-layers button b { font-size: 17px; }
+.area-layers button span { font-size: 16px; opacity: 0.7; }
+.area-layers button[aria-selected="true"] { outline: 2px solid currentColor; outline-offset: -2px; font-weight: 900; }

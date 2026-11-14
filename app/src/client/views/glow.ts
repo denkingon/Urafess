@@ -1,4 +1,4 @@
-import { AREA_DQ_MS, AREA_OUT_MARGIN_M, AreaWatch, isFarOutside } from '../../shared/area';
+import { AREA_DQ_MS, AREA_OUT_MARGIN_M, AreaWatch, checkArea, isFarOutside, JAIL_ARRIVE_M } from '../../shared/area';
 import { zoneAt, type ZoneNow } from '../../shared/shrink';
 import type { GlowEntry } from '../../shared/protocol';
 import { MATES_STALE_MS, RUN_STALE_MS } from '../../shared/rules';
@@ -43,6 +43,8 @@ export interface BoardInput {
   /** 遊ぶ範囲（全体の地図に線を引き、外を暗くする）。外にいる人は輪で囲む */
   /** 遊ぶ範囲：頂点の並び、または縮小の入った今の範囲（zoneAt） */
   area?: [number, number][] | ZoneNow | null;
+  /** 牢屋の場所（全体の地図に「牢屋」を出す） */
+  jail?: [number, number][] | null;
   /** 自分が範囲の外にいる（見張りが決めた） */
   meOut?: boolean;
 }
@@ -139,7 +141,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
 
   return {
     el,
-    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, meOut }) {
+    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, jail, meOut }) {
       const now = serverNow ?? Date.now();
       const all: GlowEntry[] = (glow?.runs ?? []).filter((r) => now - r.at <= RUN_STALE_MS);
       const meListed = myNum !== null && all.some((r) => r.num === myNum);
@@ -232,6 +234,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
           points,
           labelMax,
           area: Array.isArray(area) ? area : (z?.pts ?? null),
+          jail: jail ?? null,
           meOut,
           zone: z ? { inner: z.inner, next: z.next, center: z.center } : null,
         });
@@ -358,6 +361,10 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
       <span class="zone-chip-word" data-k="zoneWord"></span>
       <b class="u zone-chip-sec" data-k="zoneSec"></b>
     </div>
+    <div class="area-out jail-go" data-k="jailGo" role="status" hidden>
+      <svg class="area-out-arrow" viewBox="-20 -20 40 40" aria-hidden="true"><path d="M0,-15 L11,6 L3,3 L3,15 L-3,15 L-3,3 L-11,6 Z"/></svg>
+      <div class="area-out-text"><b data-k="jailWord"></b><span data-k="jailWhere"></span></div>
+    </div>
   `;
   // 失格の画面：参加者の画面いっぱいに被せる（捕獲・牢屋の操作も隠れる）
   const dq = document.createElement('div');
@@ -417,6 +424,8 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
   const watch = new AreaWatch();
   const zoneBox = q('zone');
   let lastZoneKind = 'idle';
+  const jailBox = q('jailGo');
+  const jailArrow = jailBox.querySelector('.area-out-arrow') as SVGElement;
   let lastOutBuzz = 0;
   let lastSecBuzz = -1;
   /** 失格は「今の配役」ごと。同じ配役のうちは、アプリを開き直しても失格のまま */
@@ -519,8 +528,31 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
       // 範囲の縮小が入っていれば、今の範囲（全員が同じ時計で同じ形を出す）
       const area = zoneAt(state.game?.area, state.game?.shrink, state.game?.timer, serverNow ?? now);
       const bounded = view.role !== 'なし' && (view.step === 3 || view.step === 4) && !view.paused;
-      const out = bounded && watch.feed(area, pos ? { lat: pos.lat, lon: pos.lon } : null, now);
-      if (!bounded) watch.reset();
+      // 牢屋の場所：捕まった人には、範囲の外の「戻れ」の代わりに牢屋への向きと距離（着いたら「牢屋に着いた」）
+      const jail = state.game?.jail?.pts ?? null;
+      const toJail = view.caught && !!jail && view.role !== 'なし';
+      setHidden(jailBox, !toJail);
+      if (toJail) {
+        const c = pos ? checkArea(jail, { lat: pos.lat, lon: pos.lon }) : null;
+        const arrived = !!c && (c.inside || c.edgeM <= JAIL_ARRIVE_M);
+        jailBox.classList.toggle('is-arrived', arrived);
+        jailArrow.style.display = !c || arrived ? 'none' : '';
+        if (!c || !pos) {
+          setHTML(q('jailWord'), say(['牢屋へ行く', 'GO TO JAIL']));
+          setHTML(q('jailWhere'), say(['地図の「牢屋」へ。位置を待っている…', 'Follow the map. Waiting for your location…']));
+        } else if (arrived) {
+          setHTML(q('jailWord'), say(['牢屋に着いた', 'YOU ARE IN JAIL']));
+          setHTML(q('jailWhere'), say(['ここで仲間の助けを待つ', 'Wait here for a teammate']));
+        } else {
+          const deg = bearingDeg(pos, c.nearest);
+          const head = sensors.heading(now);
+          jailArrow.style.transform = `rotate(${(head === null ? deg : deg - head).toFixed(0)}deg)`;
+          setHTML(q('jailWord'), say(['牢屋へ行く', 'GO TO JAIL']));
+          setHTML(q('jailWhere'), say([`${compassName(deg)} ${distanceText(c.edgeM)}`, `${compassNameEn(deg)} ${distanceTextEn(c.edgeM)}`]));
+        }
+      }
+      const out = bounded && !toJail && watch.feed(area, pos ? { lat: pos.lat, lon: pos.lon } : null, now);
+      if (!bounded || toJail) watch.reset();
       applyDq(view, state);
       // 範囲が縮む知らせ：予告（次の範囲の線が出ている）と、縮んでいる間。予告が始まった瞬間に一度震える
       const zs = area && (view.step === 3 || view.step === 4) ? area.status : null;
@@ -584,6 +616,7 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
         meAcc: pos?.acc ?? null,
         myKind: view.role === '鬼' ? 'oni' : view.role === '逃走者' ? 'runner' : 'unknown',
         area,
+        jail,
         meOut: out,
       });
       // 光っている間は、ひとことの場所に「光っている」（全員の一覧に自分が入ったら「…」が取れる）

@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { assignRoles, assignWithWishes } from '../shared/allocate';
+import { allocateCounts, assignWithWishes, castCounts } from '../shared/allocate';
 import { autoPick, CAPTURE_PHASE_INDEX, captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
 import {
   cleanMissionTitle,
@@ -15,6 +15,7 @@ import type {
   GameView,
   GlowEntry,
   HostCapture,
+  HostCastEntry,
   HostPhoto,
   HostOp,
   HostSummary,
@@ -66,6 +67,7 @@ import {
   type Ratio,
   type RoleId,
   type WishMode,
+  WISH_MISS_MAX,
 } from '../shared/rules';
 import {
   GONE_NAME,
@@ -81,7 +83,10 @@ import {
   type AccountEvent,
   type AccountView,
 } from '../shared/account';
+import type { NameState } from '../shared/account';
+import { bannedHit, BAN_MAX_WORDS, DEFAULT_BANNED, isSpecialName, normalizeBanWord, REDO_NAME, SHAME_NAME } from '../shared/badnames';
 import { nameKey, normalizeName } from '../shared/names';
+import { castStatsAll, cleanTag, TAGS_MAX, type CastEvent, type CastStat } from '../shared/cast';
 import { distanceM } from '../shared/run';
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
@@ -116,6 +121,8 @@ interface GameState {
   shrinkPlan?: ShrinkPlan;
   /** このラウンドの縮小（試合を始めたときに決まり、配役・やり直しで消える）。古い保存データには無い */
   shrink?: ShrinkLive | null;
+  /** 牢屋の場所（主催者がゲームの前に描く）。新しい夜を始めても残る。古い保存データには無い */
+  jail?: Area | null;
   /** 次に名簿に入る人の番号（名簿に入った順。画面には出さない。部屋を空にしても戻さない） */
   nextNum: number;
   counts: { oni: number; runner: number };
@@ -191,6 +198,10 @@ interface Member {
   nights: number;
   firstNight: number;
   lastNight: number;
+  /** 主催者が付けた印（男・女・速い…）。主催者の画面にしか出さない */
+  tags: string[];
+  /** 名前の状態（主催者が手を入れたか） */
+  nameState: NameState;
 }
 
 type MemberRow = {
@@ -204,6 +215,8 @@ type MemberRow = {
   nights: number;
   first_night: number;
   last_night: number;
+  tags: string | null;
+  name_state: string | null;
 };
 
 /** 記録に名前を残す相手（今夜の参加者でも、名簿の人でもよい） */
@@ -238,6 +251,8 @@ interface Participant {
   wishMiss: number;
   /** いまの配役を決める前の wishMiss（引き直しは、ここからやり直す。外れた回数を二重に数えない） */
   wishMissPrev: number;
+  /** 主催者の指名：この人はこの役（希望やくじより強い）。配役のあとに主催者が動かした人にも付く。開始で消える */
+  pin: RoleId | null;
 }
 
 /** 逃走者の「捕まった」。最初に長押しを始めた（または鬼に手動で選ばれた）ときに開き、本人が選ぶまで開いている */
@@ -327,6 +342,7 @@ type ParticipantRow = {
   wish: string | null;
   wish_miss: number | null;
   wish_miss_prev: number | null;
+  pin: string | null;
 };
 
 /**
@@ -370,8 +386,11 @@ export class GameRoom extends DurableObject<Env> {
   private readonly people = new Map<string, Participant>();
   /** 名簿（ずっと残る） */
   private readonly members = new Map<string, Member>();
+  private castStatCache: { key: string; stats: Map<string, CastStat> } | null = null;
   /** 名前の形 → 名簿の人（同じ形が2人いれば先に入った人） */
   private readonly memberByName = new Map<string, Member>();
+  /** 主催者が足した、名前に使えない言葉 */
+  private bans: string[] = [];
   private readonly claims = new Map<string, Claim>();
   /** 人 → 最近の長押し（古い順） */
   private readonly holds = new Map<string, HoldRec[]>();
@@ -448,6 +467,8 @@ export class GameRoom extends DurableObject<Env> {
       ['wish', 'wish TEXT'],
       ['wish_miss', 'wish_miss INTEGER NOT NULL DEFAULT 0'],
       ['wish_miss_prev', 'wish_miss_prev INTEGER NOT NULL DEFAULT 0'],
+      // 配役をいじる（主催者の指名）を入れたときに足した列
+      ['pin', 'pin TEXT'],
     ];
     for (const [name, ddl] of columns) {
       if (!have.has(name)) this.sql.exec(`ALTER TABLE participants ADD COLUMN ${ddl}`);
@@ -494,6 +515,13 @@ export class GameRoom extends DurableObject<Env> {
       )`,
     );
     this.sql.exec(`CREATE INDEX IF NOT EXISTS members_name_key ON members (name_key)`);
+    // 主催者が付ける印（配役を決めるときに見る）。すでにある部屋には後から足す
+    const memberCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(members)`).toArray().map((r) => r.name));
+    if (!memberCols.has('tags')) this.sql.exec(`ALTER TABLE members ADD COLUMN tags TEXT`);
+    // 名前の状態（主催者が「付け直させる」「切り替える」をしたか）
+    if (!memberCols.has('name_state')) this.sql.exec(`ALTER TABLE members ADD COLUMN name_state TEXT NOT NULL DEFAULT 'ok'`);
+    // 主催者が足した、名前に使えない言葉
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS name_bans (word TEXT PRIMARY KEY, at INTEGER NOT NULL)`);
     // 新しいスマホへ移す合言葉（古いスマホに出し、新しいスマホで打つ）。休止をまたいでも残すため保存する
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS handoffs (
@@ -615,6 +643,7 @@ export class GameRoom extends DurableObject<Env> {
     if (this.game.area === undefined) this.game.area = null;
     if (!isShrinkPlan(this.game.shrinkPlan)) this.game.shrinkPlan = { ...DEFAULT_SHRINK_PLAN };
     if (this.game.shrink === undefined) this.game.shrink = null;
+    if (this.game.jail === undefined) this.game.jail = null;
     // 配役の希望を入れる前の版で作った部屋には、決め方が無い
     if (!isWishMode(this.game.wishMode)) this.game.wishMode = DEFAULT_WISH_MODE;
     if (this.game.wishStat === undefined) this.game.wishStat = null;
@@ -641,6 +670,7 @@ export class GameRoom extends DurableObject<Env> {
         wish: isRoleId(r.wish) ? r.wish : null,
         wishMiss: r.wish_miss ?? 0,
         wishMissPrev: r.wish_miss_prev ?? 0,
+        pin: isRoleId(r.pin) ? r.pin : null,
       });
     }
     // 捕獲・牢屋を入れる前の版で配役した部屋（公開の瞬間に試合中だった等）は、3桁が無い。ここで配る
@@ -722,10 +752,14 @@ export class GameRoom extends DurableObject<Env> {
         nights: r.nights,
         firstNight: r.first_night,
         lastNight: r.last_night,
+        tags: parseTags(r.tags),
+        nameState: r.name_state === 'due' || r.name_state === 'shamed' ? r.name_state : 'ok',
       };
       this.members.set(m.pid, m);
-      if (!this.memberByName.has(m.nameKey)) this.memberByName.set(m.nameKey, m);
+      // 主催者が付けた仮の名前・切り替えた名前は何人いてもいい（名前の引き当てには入れない）
+      if (!isSpecialName(m.name) && !this.memberByName.has(m.nameKey)) this.memberByName.set(m.nameKey, m);
     }
+    this.bans = this.sql.exec<{ word: string }>(`SELECT word FROM name_bans ORDER BY at`).toArray().map((r) => r.word);
   }
 
   /** このラウンドの写真の一覧（画像そのものは読まない）と、保存している合計 */
@@ -817,6 +851,8 @@ export class GameRoom extends DurableObject<Env> {
   ): void {
     const at = e.at ?? Date.now();
     const g = this.game;
+    // 試合の外で記録が増えたら、配役のための数字を数え直す
+    if (g.stage !== 'timer') this.castStatCache = null;
     let phase: number | null = null;
     let elapsed: number | null = null;
     if (g.stage === 'timer' && g.timer) {
@@ -1122,7 +1158,14 @@ export class GameRoom extends DurableObject<Env> {
         m.pid,
       )
       .toArray();
-    return { name: m.name, since: m.createdAt, stats: summarizeAccount(rows, m.pid), busy: this.inMatchTonight(m.pid) };
+    return {
+      name: m.name,
+      since: m.createdAt,
+      stats: summarizeAccount(rows, m.pid),
+      // 付け直すよう言われた人は、試合中でも付け直せる
+      busy: m.nameState !== 'due' && this.inMatchTonight(m.pid),
+      nameState: m.nameState,
+    };
   }
 
   /** この人につながっている接続（今夜に入っている・名前のボタンを待っている） */
@@ -1143,35 +1186,56 @@ export class GameRoom extends DurableObject<Env> {
     answer: (body: unknown, status?: number) => Response,
     fail: (e: AccountError, status: number) => Response,
   ): Response {
-    if (this.inMatchTonight(m.pid)) return fail('busy', 409);
+    if (m.nameState === 'shamed') return fail('name-locked', 409);
+    if (m.nameState !== 'due' && this.inMatchTonight(m.pid)) return fail('busy', 409);
     const name = normalizeName(raw);
-    if (!name || isGoneName(name)) return fail('invalid', 400);
+    if (!name || isGoneName(name) || isSpecialName(name)) return fail('invalid', 400);
+    const hit = bannedHit(name, this.bans);
+    if (hit) {
+      this.log('bad-name', { p: m, at: now, data: { typed: name, hit, rename: true } });
+      return fail('banned', 400);
+    }
     const key = nameKey(name);
     const owner = this.memberByName.get(key);
     if (owner && owner.pid !== m.pid) return fail('taken', 409);
-    if (name === m.name) return answer({ name });
+    if (name === m.name && m.nameState === 'ok') return answer({ name });
+    this.setMemberName(m, name, 'ok', now, 'rename');
+    return answer({ name });
+  }
+
+  /**
+   * 名簿の人の名前を変える（本人が変える・主催者が付け直させる・主催者が切り替える）。
+   * 今夜の一覧・写真の名前も変え、開いているスマホにも届ける。仮の名前・切り替えた名前は名前の引き当てに入れない
+   */
+  private setMemberName(m: Member, name: string, state: NameState, now: number, kind: 'rename' | 'name-redo' | 'name-shame'): void {
     const from = m.name;
+    const key = nameKey(name);
     const p = this.people.get(m.pid);
     this.ctx.storage.transactionSync(() => {
-      this.sql.exec(`UPDATE members SET name = ?, name_key = ? WHERE pid = ?`, name, key, m.pid);
+      this.sql.exec(`UPDATE members SET name = ?, name_key = ?, name_state = ? WHERE pid = ?`, name, key, state, m.pid);
       if (p) this.sql.exec(`UPDATE participants SET name = ? WHERE pid = ?`, name, m.pid);
       this.sql.exec(`UPDATE photos SET name = ? WHERE pid = ?`, name, m.pid);
-      this.log('rename', { p: { pid: m.pid, num: m.num, name }, at: now, data: { from } });
+      this.log(kind, { p: { pid: m.pid, num: m.num, name }, at: now, data: { from } });
     });
     this.forgetName(m);
     m.name = name;
     m.nameKey = key;
-    this.memberByName.set(key, m);
+    m.nameState = state;
+    if (!isSpecialName(name)) this.memberByName.set(key, m);
     if (p) p.name = name;
     for (const ph of this.photos.values()) if (ph.pid === m.pid) ph.name = name;
     // 開いているスマホにも新しい名前を届ける（今夜に入っていれば合い鍵ごと、名前のボタンなら名前だけ）
     for (const { ws, att } of this.socketsOf(m.pid)) {
-      if (att.pid && p) this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name });
-      else this.send(ws, { t: 'known', name });
+      if (att.pid && p) this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name, ...this.nsOf(m) });
+      else this.send(ws, { t: 'known', name, ...this.nsOf(m) });
     }
     this.scheduleBroadcast();
     this.scheduleHostUpdate();
-    return answer({ name });
+  }
+
+  /** welcome・known に付ける名前の状態（ふつうは付けない） */
+  private nsOf(m: Member | undefined): { ns?: 'due' | 'shamed' } {
+    return m && m.nameState !== 'ok' ? { ns: m.nameState } : {};
   }
 
   /** 新しいスマホへ移す合言葉を出す（前に出した合言葉は消える） */
@@ -1347,8 +1411,15 @@ export class GameRoom extends DurableObject<Env> {
    */
   private onJoin(ws: WebSocket, att: Attachment, rawName: unknown, now: number): void {
     const name = normalizeName(rawName);
-    if (!name || isGoneName(name)) {
+    if (!name || isGoneName(name) || isSpecialName(name)) {
       this.send(ws, { t: 'unknown' });
+      return;
+    }
+    // 使えない言葉が入っている名前は入れない（記録には打った名前と引っかかった言葉を残す）
+    const hit = bannedHit(name, this.bans);
+    if (hit) {
+      this.log('bad-name', { at: now, data: { typed: name, hit } });
+      this.send(ws, { t: 'bad-name' });
       return;
     }
     const key = nameKey(name);
@@ -1370,6 +1441,8 @@ export class GameRoom extends DurableObject<Env> {
       nights: 1,
       firstNight: night,
       lastNight: night,
+      tags: [],
+      nameState: 'ok',
     };
     this.game.nextNum += 1;
     const p = this.newParticipant(m, att.ua || null, now);
@@ -1434,7 +1507,7 @@ export class GameRoom extends DurableObject<Env> {
     att.host = false;
     delete att.syncErr;
     ws.serializeAttachment(att);
-    this.send(ws, { t: 'known', name: m.name });
+    this.send(ws, { t: 'known', name: m.name, ...this.nsOf(m) });
     // 今夜の様子（段階・人数）だけ送る。本人の部分は今夜に入ってから
     this.sendSnap(ws, att);
     this.scheduleHostUpdate();
@@ -1516,6 +1589,7 @@ export class GameRoom extends DurableObject<Env> {
       wish: null,
       wishMiss: 0,
       wishMissPrev: 0,
+      pin: null,
     };
   }
 
@@ -1566,7 +1640,7 @@ export class GameRoom extends DurableObject<Env> {
     delete att.reclaim;
     att.host = false;
     ws.serializeAttachment(att);
-    this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name: p.name });
+    this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name: p.name, ...this.nsOf(this.members.get(p.pid)) });
     this.sendSnap(ws, att);
     this.sendGlowTo(ws, Date.now());
     this.scheduleBroadcast();
@@ -2573,6 +2647,31 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    // 名前の見張り。1人ずつ・言葉ずつの操作なので版番号を見ない
+    if (op === 'name-redo' || op === 'name-shame') {
+      const m = typeof msg.pid === 'string' ? this.members.get(msg.pid) : undefined;
+      if (!m) return this.reject(ws, att, op, 'not-found');
+      if (op === 'name-redo') this.setMemberName(m, REDO_NAME, 'due', now, 'name-redo');
+      else this.setMemberName(m, SHAME_NAME, 'shamed', now, 'name-shame');
+      return;
+    }
+    if (op === 'ban-add' || op === 'ban-remove') {
+      const word = normalizeBanWord(msg.word);
+      if (!word) return this.reject(ws, att, op, 'invalid');
+      if (op === 'ban-add') {
+        if (this.bans.includes(word)) return;
+        if (this.bans.length >= BAN_MAX_WORDS) return this.reject(ws, att, op, 'full');
+        this.sql.exec(`INSERT OR IGNORE INTO name_bans (word, at) VALUES (?, ?)`, word, now);
+        this.bans.push(word);
+      } else {
+        this.sql.exec(`DELETE FROM name_bans WHERE word = ?`, word);
+        this.bans = this.bans.filter((w) => w !== word);
+      }
+      this.log(op, { at: now, data: { word } });
+      this.scheduleHostUpdate();
+      return;
+    }
+
     // 「前の◯◯に戻りたい」人をつなぐ・断る。1人ずつの操作なので版番号を見ない
     if (op === 'link') {
       const rid = typeof msg.rid === 'string' ? msg.rid : '';
@@ -2659,17 +2758,19 @@ export class GameRoom extends DurableObject<Env> {
         if (active.length === 0) return this.reject(ws, att, op, 'no-participants');
         const isReroll = g.stage === 'assigned';
         const rules = ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] }));
-        // 希望を聞く：人数は割合のまま。枠より多い希望はくじで、前に外れた人から先に通す。
+        // 主催者の指名で片方の役が0人になるなら、配役しない（主催者の画面に理由を出す）
+        if (!castCounts(active.length, rules, rules.map((r) => active.filter((p) => p.pin === r.id).length))) {
+          return this.reject(ws, att, op, 'empty-role');
+        }
+        // 主催者の指名が先。残りの枠は、希望を聞く：枠より多い希望はくじで、前に外れた人から先に通す（くじだけのときは全員くじ）。
         // 引き直しは、引き直す前の回数からやり直す（遊んでいない配役で外れた分を数えない）
         const missBase = new Map(active.map((p) => [p.pid, isReroll ? p.wishMissPrev : p.wishMiss] as const));
-        const wished =
-          g.wishMode === 'wish'
-            ? assignWithWishes(
-                active.map((p) => ({ pid: p.pid, wish: p.wish, miss: missBase.get(p.pid) ?? 0 })),
-                rules,
-              )
-            : null;
-        const roles = wished ? wished.roles : assignRoles(active.map((p) => p.pid), rules);
+        const drawn = assignWithWishes(
+          active.map((p) => ({ pid: p.pid, wish: g.wishMode === 'wish' ? p.wish : null, miss: missBase.get(p.pid) ?? 0, pin: p.pin })),
+          rules,
+        );
+        const wished = g.wishMode === 'wish' ? drawn : null;
+        const roles = drawn.roles;
         const missAfter = new Map(active.map((p) => [p.pid, wished ? (wished.miss.get(p.pid) ?? 0) : (missBase.get(p.pid) ?? 0)] as const));
         const missedNow = new Set(wished ? wished.missed : []);
         const wishStat = wished
@@ -2728,9 +2829,12 @@ export class GameRoom extends DurableObject<Env> {
             const p = this.people.get(pid)!;
             // 希望を聞いた配役では、その人の希望（wish）・通らなかったか（missed）・先に通る強さ（prio＝配役の前の、続けて外れた回数）も残す
             const wishData = wished ? { wish: p.wish, missed: missedNow.has(pid), prio: missBase.get(pid) ?? 0 } : {};
-            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid), ...wishData } });
+            // 主催者が指名した人には pin（指名した役）を残す
+            const pinData = p.pin ? { pin: p.pin } : {};
+            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid), ...wishData, ...pinData } });
           }
-          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll, how: g.wishMode, ...(wishStat ? { wish: wishStat } : {}) } });
+          const pins = active.filter((p) => p.pin !== null).length;
+          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll, how: g.wishMode, ...(wishStat ? { wish: wishStat } : {}), ...(pins ? { pins } : {}) } });
         });
         this.photos.clear();
         for (const [pid, role] of roles) {
@@ -2748,6 +2852,9 @@ export class GameRoom extends DurableObject<Env> {
       }
       case 'start':
         if (g.stage !== 'assigned') return this.reject(ws, att, op, 'not-allowed');
+        // 主催者の指名は、この試合のためのもの。始まったら消す（次の配役はまっさらから）
+        this.sql.exec(`UPDATE participants SET pin = NULL WHERE pin IS NOT NULL`);
+        for (const p of this.people.values()) p.pin = null;
         {
           // 範囲の縮小：縮む先（毎回ランダムならここで引く）と、時間の段をこのラウンドの分だけ決める
           const shrink = makeLive(g.shrinkPlan, g.area?.pts, g.durations, Math.random);
@@ -2867,6 +2974,80 @@ export class GameRoom extends DurableObject<Env> {
         this.log('wish-mode', { at: now, data: { how: msg.wishMode } });
         break;
       }
+      case 'cast': {
+        // 配役をいじる：まとめて指名する／指名を外す。配役済み（開始の前）なら、役がちがう人をその場で動かす。
+        // 試合中（時間が0になる前）はできない
+        if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        const role = msg.role === null ? null : isRoleId(msg.role) ? msg.role : undefined;
+        const ids = Array.isArray(msg.pids) ? [...new Set(msg.pids.filter((x): x is string => typeof x === 'string'))] : [];
+        if (role === undefined || ids.length === 0 || ids.length > 1_000) return this.reject(ws, att, op, 'bad-input');
+        const targets = ids.map((pid) => this.people.get(pid)).filter((p): p is Participant => p !== undefined && !p.removed);
+        if (targets.length !== ids.length) return this.reject(ws, att, op, 'not-found');
+        // 配役済みのときだけ、いまの配役に入っていて役がちがう人を動かす
+        const movers = g.stage === 'assigned' && role !== null ? targets.filter((p) => this.inRound(p.pid) && p.role !== role) : [];
+        const counts = { ...g.counts };
+        for (const p of movers) {
+          counts[p.role as RoleId] -= 1;
+          counts[role as RoleId] += 1;
+        }
+        // 2人以上いるのに片方の役が0人になる動かし方は断る
+        if (movers.length > 0 && counts.oni + counts.runner >= ROLES.length && ROLES.some((r) => counts[r.id] < r.min)) {
+          return this.reject(ws, att, op, 'empty-role');
+        }
+        const changed = targets.filter((p) => p.pin !== role);
+        if (changed.length === 0 && movers.length === 0) break;
+        // 動かした人の「続けて外れた回数」は、この配役の前の回数から数え直す（希望どおりになれば 0、希望とちがえば 1 増える）
+        const moved = new Set(movers.map((p) => p.pid));
+        const missOf = (p: Participant): number =>
+          g.wishStat == null || p.wish === null ? p.wishMiss : role === p.wish ? 0 : Math.min(WISH_MISS_MAX, p.wishMissPrev + 1);
+        this.ctx.storage.transactionSync(() => {
+          for (const p of targets) {
+            if (moved.has(p.pid)) {
+              const from = p.role;
+              const miss = missOf(p);
+              this.sql.exec(`UPDATE participants SET pin = ?, role = ?, ack_id = 0, wish_miss = ? WHERE pid = ?`, role, role, miss, p.pid);
+              p.role = role;
+              p.ackId = 0;
+              p.wishMiss = miss;
+              this.log('recast', { p, at: now, data: { role, from, wish: p.wish, missed: p.wish !== null && p.wish !== role } });
+            } else if (p.pin !== role) {
+              this.sql.exec(`UPDATE participants SET pin = ? WHERE pid = ?`, role, p.pid);
+            }
+            p.pin = role;
+          }
+          this.log('cast', { at: now, data: { role, people: targets.length, moved: movers.length } });
+        });
+        // 動かしたあとの人数と、希望が通らなかった人数を数え直す
+        const inRound = [...this.people.values()].filter((p) => this.inRound(p.pid));
+        const wishStat =
+          g.wishStat != null && movers.length > 0
+            ? { ...g.wishStat, missed: inRound.filter((p) => p.wish !== null && p.role !== p.wish).length }
+            : g.wishStat;
+        this.commit(movers.length > 0 ? { counts, wishStat } : {});
+        break;
+      }
+      case 'tag': {
+        // 印を付ける・外す（男・女・速い…）。名簿に残る。いつでもできる（主催者の画面にしか出ない）
+        const tag = cleanTag(msg.tag);
+        const ids = Array.isArray(msg.pids) ? [...new Set(msg.pids.filter((x): x is string => typeof x === 'string'))] : [];
+        if (tag === null || typeof msg.on !== 'boolean' || ids.length === 0 || ids.length > 1_000) {
+          return this.reject(ws, att, op, 'bad-input');
+        }
+        const targets = ids.map((pid) => this.members.get(pid)).filter((m): m is Member => m !== undefined);
+        if (targets.length !== ids.length) return this.reject(ws, att, op, 'not-found');
+        const on = msg.on;
+        const changed = targets.filter((m) => m.tags.includes(tag) !== on);
+        if (on && changed.some((m) => m.tags.length >= TAGS_MAX)) return this.reject(ws, att, op, 'too-many-tags');
+        if (changed.length === 0) break;
+        this.ctx.storage.transactionSync(() => {
+          for (const m of changed) {
+            m.tags = on ? [...m.tags, tag] : m.tags.filter((t) => t !== tag);
+            this.sql.exec(`UPDATE members SET tags = ? WHERE pid = ?`, m.tags.length ? JSON.stringify(m.tags) : null, m.pid);
+          }
+        });
+        this.commit({});
+        break;
+      }
       case 'mic': {
         // いつでも切り替えられる（どちらがいいか試すため）。試合中に変えても、そのときから全員のスマホに効く
         if (!isMicMode(msg.mic)) return this.reject(ws, att, op, 'bad-input');
@@ -2877,17 +3058,20 @@ export class GameRoom extends DurableObject<Env> {
       }
       case 'area': {
         // ゲームの前に決める。試合中（時間が0になる前）は変えない（走っている人の「外」が急に変わらないように）
+        // 牢屋の場所（layer＝jail）も同じ決まりで同じ形
         if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        const layer = msg.layer === 'jail' ? 'jail' : 'area';
+        const kind = layer === 'jail' ? 'jail-place' : 'area';
         if (msg.area === null) {
-          if (!g.area) break;
-          this.commit({ area: null });
-          this.log('area', { at: now, data: { area: null } });
+          if (!g[layer]) break;
+          this.commit({ [layer]: null });
+          this.log(kind, { at: now, data: { pts: null } });
           break;
         }
         if (!isValidAreaPts(msg.area, CAMPUS_CENTER)) return this.reject(ws, att, op, 'bad-input');
-        const area: Area = { pts: cleanAreaPts(msg.area), at: now };
-        this.commit({ area });
-        this.log('area', { at: now, data: { pts: area.pts } });
+        const place: Area = { pts: cleanAreaPts(msg.area), at: now };
+        this.commit({ [layer]: place });
+        this.log(kind, { at: now, data: { pts: place.pts } });
         break;
       }
       case 'shrink-plan': {
@@ -3263,21 +3447,31 @@ export class GameRoom extends DurableObject<Env> {
       area: g.area ?? null,
       shrinkPlan: g.shrinkPlan ?? DEFAULT_SHRINK_PLAN,
       shrink: g.shrink ?? null,
+      jail: g.jail ?? null,
       wishMode: g.wishMode,
-      wishes: this.wishCounts(),
+      ...this.wishCounts(),
     };
   }
 
-  /** 配役の希望：いま入室している人のうち、それぞれの役を希望している人数 */
-  private wishCounts(): { oni: number; runner: number } {
-    let oni = 0;
-    let runner = 0;
+  /**
+   * 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（wishes）と、開いている枠（wishSlots）。
+   * 主催者が指名した人は希望に数えず、その分の枠も引く（残りの枠を、指名されていない人で分けるため）
+   */
+  private wishCounts(): { wishes: { oni: number; runner: number }; wishSlots: { oni: number; runner: number } } {
+    const wishes = { oni: 0, runner: 0 };
+    const pinned = { oni: 0, runner: 0 };
+    let n = 0;
     for (const p of this.people.values()) {
       if (p.removed) continue;
-      if (p.wish === 'oni') oni++;
-      else if (p.wish === 'runner') runner++;
+      n++;
+      if (p.pin !== null) pinned[p.pin]++;
+      else if (p.wish !== null) wishes[p.wish]++;
     }
-    return { oni, runner };
+    const rules = ROLES.map((r) => ({ ...r, weight: this.game.ratio[r.id] }));
+    // 指名で配役できない形（片方が0人）になっている間は、割合のままの人数で出す
+    const counts = castCounts(n, rules, rules.map((r) => pinned[r.id])) ?? allocateCounts(n, rules);
+    const slot = (id: RoleId) => Math.max(0, counts[rules.findIndex((r) => r.id === id)] - pinned[id]);
+    return { wishes, wishSlots: { oni: slot('oni'), runner: slot('runner') } };
   }
 
   private meView(pid: string, now = Date.now()): MeView | undefined {
@@ -3317,6 +3511,7 @@ export class GameRoom extends DurableObject<Env> {
       wishMiss: p.wishMiss,
       // 役が決まってからゲームの終わりまで、その配役の人は希望を変えられないので、その間はこれで合っている
       wishMissed: live && g.wishStat != null && p.wish !== null && p.role !== null && p.role !== p.wish,
+      hostCast: p.pin !== null,
     };
   }
 
@@ -3354,7 +3549,27 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
+  /** 配役を決めるための数字。記録を全部読むので、段階・配役・夜が変わったときだけ数え直す（試合中は前のまま） */
+  private castStats(): Map<string, CastStat> {
+    const g = this.game;
+    const key = `${g.night}:${g.round}:${g.assignId}:${g.stage}:${g.result ?? ''}`;
+    if (this.castStatCache?.key === key) return this.castStatCache.stats;
+    const rows = this.sql
+      .exec<CastEvent>(
+        `SELECT at, assign_id, kind, pid, other_pid, elapsed,
+           CASE WHEN kind = 'run-end' THEN json_object('ms', json_extract(data, '$.ms'), 'm', json_extract(data, '$.m')) ELSE data END AS data
+         FROM events
+         WHERE kind IN ('clear', 'start', 'reset', 'skip', 'role', 'recast', 'capture', 'release', 'run-end')
+         ORDER BY id`,
+      )
+      .toArray();
+    const stats = castStatsAll(rows);
+    this.castStatCache = { key, stats };
+    return stats;
+  }
+
   private hostSummary(): HostSummary {
+    const stats = this.castStats();
     const active = this.activePeople();
     const connected = new Set<string>();
     const synced = new Set<string>();
@@ -3411,7 +3626,39 @@ export class GameRoom extends DurableObject<Env> {
       photoBytes: this.photoBytes,
       wishStat: g.stage === 'lobby' ? null : (g.wishStat ?? null),
       wishPrio: active.filter((p) => p.wish !== null && p.wishMiss > 0).length,
+      cast: [...active]
+        .sort((a, b) => a.num - b.num)
+        .map(
+          (p): HostCastEntry => ({
+            pid: p.pid,
+            num: p.num,
+            name: p.name,
+            wish: p.wish,
+            pin: p.pin,
+            role: g.assignId > 0 && p.assignId === g.assignId ? p.role : null,
+            prio: p.wish !== null && p.wishMiss > 0,
+            on: connected.has(p.pid),
+            ...(this.members.get(p.pid)?.tags.length ? { tags: this.members.get(p.pid)!.tags } : {}),
+            ...(stats.has(p.pid) ? { stat: stats.get(p.pid)! } : {}),
+          }),
+        ),
+      names: this.watchNames(active),
+      bans: { custom: [...this.bans], builtin: DEFAULT_BANNED.length },
     };
+  }
+
+  /** 名前の見張り：今夜の人（引っかかる人を先に）と、今夜いないが引っかかる・手を入れた名簿の人 */
+  private watchNames(active: Participant[]): NonNullable<HostSummary['names']> {
+    const out: NonNullable<HostSummary['names']> = [];
+    const tonight = new Set(active.map((p) => p.pid));
+    for (const m of this.members.values()) {
+      const hit = m.nameState === 'ok' ? bannedHit(m.name, this.bans) : null;
+      const here = tonight.has(m.pid);
+      if (!here && !hit && m.nameState === 'ok') continue;
+      out.push({ pid: m.pid, num: m.num, name: m.name, hit, state: m.nameState, tonight: here });
+    }
+    const rank = (x: (typeof out)[number]) => (x.hit ? 0 : x.state === 'due' ? 1 : x.state === 'shamed' ? 2 : 3);
+    return out.sort((a, b) => rank(a) - rank(b) || a.num - b.num);
   }
 
   private snapFor(att: Attachment, game: GameView, host: HostSummary | null): ServerMsg {
@@ -3574,4 +3821,14 @@ function randomKey(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function parseTags(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return Array.isArray(v) ? v.map(cleanTag).filter((t): t is string => t !== null).slice(0, TAGS_MAX) : [];
+  } catch {
+    return [];
+  }
 }

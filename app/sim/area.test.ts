@@ -203,8 +203,22 @@ describe('遊ぶ範囲', () => {
     host.command('area', { area: null });
     await waitFor('範囲なし', () => host.state.game?.area === null);
 
+    // 牢屋の場所：同じ道具（layer＝jail）。遊ぶ範囲とは別に持つ
+    host.command('area', { area: sq(200), layer: 'area' });
+    await waitFor('範囲を戻す', () => !!host.state.game?.area);
+    host.command('area', { area: sq(15), layer: 'jail' });
+    await waitFor('牢屋が届く', () => host.state.game?.jail?.pts.length === 4);
+    expect(host.state.game!.area!.pts.length).toBe(4);
+    expect(JSON.stringify(host.state.game!.jail!.pts)).not.toBe(JSON.stringify(host.state.game!.area!.pts));
+    host.command('area', { area: sq(15).slice(0, 2), layer: 'jail' });
+    await waitFor('牢屋も2点は断る', () => host.state.lastReject?.op === 'area' && host.state.lastReject.reason === 'bad-input');
+    host.command('area', { area: null, layer: 'jail' });
+    await waitFor('牢屋なし', () => host.state.game?.jail === null);
+    expect(host.state.game!.area).not.toBe(null);
+
     // 記録に残る
     const rows = await log();
-    expect(rows.filter((r) => r.kind === 'area').length).toBe(3);
+    expect(rows.filter((r) => r.kind === 'area').length).toBe(4);
+    expect(rows.filter((r) => r.kind === 'jail-place').length).toBe(2);
   }, 120_000);
 });
