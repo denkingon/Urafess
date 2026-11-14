@@ -23,6 +23,8 @@ import { checkNewHostKey, HOST_KEY_MIN } from '../../shared/hostkey';
 import type { ClientState } from '../core/game-client';
 import type { Sensors } from '../sense';
 import { createLightsBoard } from './glow';
+import { createChatHost, type ChatHostScreen } from './chat-host';
+import type { ChatJail, ChatMode } from '../../shared/chat';
 import { createOverview } from './overview';
 import { AREA_MAX_PTS, AREA_MIN_PTS, isFarOutside } from '../../shared/area';
 import { distanceM } from '../../shared/run';
@@ -48,6 +50,8 @@ export interface HostInput {
   glow?: ClientState['glow'];
   /** 全体の地図：全員の位置（主催者には役つきで届く） */
   mates?: ClientState['mates'];
+  /** チャット：全部の回線（主催者には送った人と役つきで届く） */
+  chat?: ClientState['chat'];
 }
 
 export interface HostActions {
@@ -68,8 +72,13 @@ export interface HostActions {
       photo?: string;
       free?: boolean;
       n?: number;
+      chatMode?: ChatMode;
+      chatJail?: ChatJail;
+      places?: string[];
     },
   ): void;
+  /** チャット：本部から送る（to＝all・oni・runner・pid:<その人>）。古い呼び出し側には無い */
+  chat?(to: string, text: string): boolean;
   /** 1イベント＝1行の記録を CSV で保存する */
   downloadLog(): Promise<void>;
   /** ミッションの写真を取り出して、画面で使える URL にする */
@@ -90,6 +99,8 @@ export interface AlbumData {
 export interface HostScreen {
   el: HTMLElement;
   update(input: HostInput): void;
+  /** チャットの部品（本部が置き場所を変える・要対応に出す） */
+  chat?: ChatHostScreen;
 }
 
 const REASONS: Record<string, string> = {
@@ -592,10 +603,19 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     if (confirm('遊ぶ範囲をなくす（どこまで行っても「戻れ」は出ない）。よいか？')) actions.command('area', { area: null });
   });
 
+  // チャット：流れと送る欄・制約。同じ名前の一覧の上に置く
+  const chatHost = createChatHost({
+    chat: (to, text) => actions.chat?.(to, text) ?? false,
+    command: (op, extra) => actions.command(op, extra),
+  });
+  q('duplist').before(chatHost.feed, chatHost.settings);
+
   return {
     el,
+    chat: chatHost,
     update(input) {
       const { game, host, serverNow, online, lastReject } = input;
+      chatHost.update({ game, chat: input.chat, online });
       if (!game || !host) return;
       {
         // 遊ぶ範囲

@@ -72,7 +72,9 @@
 .hq-body { flex: 1 1 0; min-height: 0; overflow-y: auto; margin-top: 10px; padding: 0 16px 16px; -webkit-overflow-scrolling: touch; }
 .hq-panel { display: none; flex-direction: column; gap: 16px; }
 .hq[data-tab="map"] .hq-panel[data-panel="map"], .hq[data-tab="people"] .hq-panel[data-panel="people"],
-.hq[data-tab="mission"] .hq-panel[data-panel="mission"], .hq[data-tab="deck"] .hq-panel[data-panel="deck"] { display: flex; }
+.hq[data-tab="mission"] .hq-panel[data-panel="mission"], .hq[data-tab="deck"] .hq-panel[data-panel="deck"],
+.hq[data-tab="chat"] .hq-panel[data-panel="chat"] { display: flex; }
+.hq .hq-card > .chat-host { border-top: none; padding-top: 0; }
 .hq[data-stage="timer"] .area-host { display: none; }
 /* 地図：地図を先に、説明はあと。本部の地図は道具なので無彩色で、参加者の画面より明るく */
 .hq .glow-host > .cap-host-head { order: -2; }
@@ -174,9 +176,12 @@
   .hq .hq-panel { display: flex; min-width: 0; }
   .hq-panel[data-panel="deck"] { grid-column: 1; grid-row: 1 / span 2; }
   .hq-panel[data-panel="map"] { grid-column: 2; grid-row: 1 / span 2; }
+  .hq-panel[data-panel="deck"], .hq-panel[data-panel="map"] { grid-row: 1 / span 3; }
   .hq-panel[data-panel="people"] { grid-column: 3; grid-row: 1; }
-  .hq-panel[data-panel="mission"] { grid-column: 3; grid-row: 2; }
-  .hq[data-stage="timer"] .hq-panel[data-panel="people"] { grid-column: 1; grid-row: 1 / span 2; }
-  .hq[data-stage="timer"] .hq-panel[data-panel="mission"] { grid-column: 3; grid-row: 1; }
-  .hq[data-stage="timer"] .hq-panel[data-panel="deck"] { grid-column: 3; grid-row: 2; }
+  .hq-panel[data-panel="chat"] { grid-column: 3; grid-row: 2; }
+  .hq-panel[data-panel="mission"] { grid-column: 3; grid-row: 3; }
+  .hq[data-stage="timer"] .hq-panel[data-panel="people"] { grid-column: 1; grid-row: 1 / span 3; }
+  .hq[data-stage="timer"] .hq-panel[data-panel="chat"] { grid-column: 3; grid-row: 1; }
+  .hq[data-stage="timer"] .hq-panel[data-panel="mission"] { grid-column: 3; grid-row: 2; }
+  .hq[data-stage="timer"] .hq-panel[data-panel="deck"] { grid-column: 3; grid-row: 3; }
 }

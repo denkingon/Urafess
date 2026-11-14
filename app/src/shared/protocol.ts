@@ -1,5 +1,6 @@
 import type { Area } from './area';
 import type { Candidate, CaptureVia } from './capture';
+import type { ChatCh, ChatJail, ChatMode, ChatMsg } from './chat';
 import type { PhotoStatus } from './mission';
 
 /** 牢屋からどうやって出たか。sound＝助ける人の音を拾った、together＝同時に長押し、mission＝ミッション成功、host＝主催者が手で */
@@ -59,6 +60,8 @@ export interface GameView {
   wishMode?: WishMode;
   /** 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（誰かは送らない）。古いサーバーからは来ない */
   wishes?: { oni: number; runner: number };
+  /** チャット：仲間の回線で送れるもの・牢屋の人の決まり・場所の名前。古いサーバーからは来ない（そのときはチャットを出さない） */
+  chat?: { mode: ChatMode; jail: ChatJail; places: string[] };
 }
 
 export interface MissionView {
@@ -260,6 +263,10 @@ export type HostOp =
   | 'skip'
   /** 夜を終える：全員の画面を SEE YOU AGAIN にする。試合中（時間が0になる前）はできない */
   | 'end'
+  /** チャット：仲間の回線で送れるもの（chatMode）・牢屋の人の決まり（chatJail）を切り替える。いつでも */
+  | 'chat-mode'
+  /** チャット：札に代入する場所の名前を変える（places） */
+  | 'chat-places'
   /** ミッションを出す（title＝題。空なら既定の題）。前のミッションが開いていれば締め切ってから出す */
   | 'mission'
   /** ミッションを締め切る（写真をもう受け付けない。成功した写真はそのまま） */
@@ -305,6 +312,9 @@ export type ClientMsg =
       free?: boolean;
       /** ミッション成功で出す人数（省くと全員） */
       n?: number;
+      chatMode?: ChatMode;
+      chatJail?: ChatJail;
+      places?: string[];
     }
   /**
    * 長押し。on=true は押し始め（HOLD_MIN_MS 押し続けたら送る）、false は離した。
@@ -342,7 +352,26 @@ export type ClientMsg =
    * 配役の希望：次の配役でなりたい役（null＝どちらでも）。配役の前（待合室・結果発表）と、見学の人だけ変えられる。
    * 役が決まってからゲームが終わるまでの分は、サーバーが捨てて今の状態を送り直す
    */
-  | { t: 'wish'; role: RoleId | null };
+  | { t: 'wish'; role: RoleId | null }
+  /**
+   * チャットを送る。参加者：card＝札の id（person＝仲間の番号、place＝場所の名前、位置は取れていれば付ける）、
+   * emoji＝絵文字の札の番号の並び、digit＝数字。どれを送れるかはサーバーが決め、合わない分は捨てる。
+   * 主催者：ch は hq、text＝文、to＝all（全員）・oni・runner・pid:<その人>（1人への返事）
+   */
+  | {
+      t: 'chat';
+      ch: ChatCh;
+      card?: string;
+      person?: number;
+      place?: string;
+      emoji?: number[];
+      digit?: string;
+      text?: string;
+      to?: string;
+      lat?: number;
+      lon?: number;
+      acc?: number;
+    };
 
 /**
  * 本人だけに出す短い知らせ（画面の帯・振動）。状態そのものは snap の me で届く。
@@ -381,4 +410,9 @@ export type ServerMsg =
   /** 走ると光る：いま光っている全員（全員に同じものを送る。変わるたびに、まとめて）。s はサーバーの時刻 */
   | { t: 'glow'; s: number; runs: GlowEntry[] }
   /** 全体の地図：見えてよい人の位置（その人の役で中身が変わる）。s はサーバーの時刻 */
-  | { t: 'mates'; s: number; scope: MatesScope; people: MateEntry[] };
+  | { t: 'mates'; s: number; scope: MatesScope; people: MateEntry[] }
+  /**
+   * チャット。reset＝true は「いま見えてよい全部」（つないだとき・配役が変わったとき。手元の分を入れ替える）、無ければ足す分。
+   * team は同じ役の仲間（「◯◯、一緒に来て！」で選ぶ相手。自分は入らない）。reset のときだけ付く
+   */
+  | { t: 'chat'; s: number; reset?: boolean; msgs: ChatMsg[]; team?: { num: number; name: string }[] };

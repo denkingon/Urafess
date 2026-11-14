@@ -57,6 +57,9 @@ const KIND_NAME: Record<string, string> = {
   photo: '写真を送った',
   'photo-ok': '写真：成功',
   'photo-no': '写真：やり直し',
+  chat: 'チャット',
+  'chat-mode': 'チャットの制約',
+  'chat-places': 'チャットの場所の名前',
 };
 
 /** 走ると光る：消えた理由 */

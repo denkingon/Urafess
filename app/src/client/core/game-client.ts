@@ -1,5 +1,6 @@
 import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
+import { CHAT_KEEP, type ChatCh, type ChatJail, type ChatMode, type ChatMsg } from '../../shared/chat';
 import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
 import { SILENCE_LIMIT_MS, type RoleId, type WishMode } from '../../shared/rules';
 
@@ -81,7 +82,15 @@ export interface ClientState {
   glow: { seq: number; s: number; runs: GlowEntry[] } | null;
   /** 全体の地図：見えてよい人の位置（届くたびに seq が増える）。scope は誰の位置か（同じ役・全員・誰も） */
   mates: { seq: number; s: number; scope: MatesScope; people: MateEntry[] } | null;
+  /** チャット：いま見えてよい分（古い順）と、同じ役の仲間。届くたびに seq が増える。古いサーバーからは来ない（null のまま） */
+  chat: { seq: number; msgs: ChatMsg[]; team: { num: number; name: string }[] } | null;
 }
+
+/** チャットで送るもの（参加者）。何を送れるかはサーバーが決める */
+export type ChatSend =
+  | { ch: ChatCh; card: string; person?: number; place?: string; pos?: { lat: number; lon: number; acc: number } | null }
+  | { ch: 'team'; emoji: number[] }
+  | { ch: 'team'; digit: string };
 
 const CONNECTING = 0;
 const OPEN = 1;
@@ -148,6 +157,7 @@ export class GameClient {
   private rosterSeq = 0;
   private glowSeq = 0;
   private matesSeq = 0;
+  private chatSeq = 0;
   /** 走ると光る：最後に知らせたセンサーの状態（つなぎ直したら送り直す） */
   private senseState: { motion: SenseState; geo: SenseState } | null = null;
   private stopped = false;
@@ -173,6 +183,7 @@ export class GameClient {
       roster: null,
       glow: null,
       mates: null,
+      chat: null,
     };
   }
 
@@ -384,6 +395,25 @@ export class GameClient {
     return true;
   }
 
+  /** チャットを送る（参加者）。切れている間は送れない（false）。届いた分は、サーバーから戻ってきて画面に出る */
+  chat(m: ChatSend): boolean {
+    if (!this.isOpen()) return false;
+    if ('card' in m) {
+      const { pos, ...rest } = m;
+      this.send({ t: 'chat', ...rest, ...(pos ? { lat: pos.lat, lon: pos.lon, acc: Math.round(pos.acc) } : {}) });
+    } else {
+      this.send({ t: 'chat', ...m });
+    }
+    return true;
+  }
+
+  /** チャットを送る（本部）。to＝all・oni・runner・pid:<その人> */
+  hostChat(to: string, text: string): boolean {
+    if (!this.isOpen()) return false;
+    this.send({ t: 'chat', ch: 'hq', to, text });
+    return true;
+  }
+
   /** 逃走者が「捕まった」を取り下げる */
   cancelClaim(): void {
     this.pending = { kind: 'cancel', at: this.deps.now() };
@@ -428,6 +458,9 @@ export class GameClient {
       photo?: string;
       free?: boolean;
       n?: number;
+      chatMode?: ChatMode;
+      chatJail?: ChatJail;
+      places?: string[];
     } = {},
   ): boolean {
     const game = this.state.game;
@@ -689,6 +722,7 @@ export class GameClient {
           ...this.state,
           identity,
           me: null,
+          chat: null,
           phase: this.pendingEnter ? 'joining' : 'known',
           joinError: null,
           takenName: null,
@@ -771,6 +805,14 @@ export class GameClient {
       case 'glow':
         this.state = { ...this.state, glow: { seq: ++this.glowSeq, s: msg.s, runs: Array.isArray(msg.runs) ? msg.runs : [] } };
         break;
+      case 'chat': {
+        const got = Array.isArray(msg.msgs) ? msg.msgs : [];
+        const prev = msg.reset ? [] : (this.state.chat?.msgs ?? []);
+        const seen = new Set(prev.map((m) => m.id));
+        const msgs = [...prev, ...got.filter((m) => !seen.has(m.id))].sort((a, b) => a.id - b.id).slice(-CHAT_KEEP * 2);
+        this.state = { ...this.state, chat: { seq: ++this.chatSeq, msgs, team: msg.reset ? (msg.team ?? []) : (this.state.chat?.team ?? []) } };
+        break;
+      }
       case 'mates':
         this.state = {
           ...this.state,

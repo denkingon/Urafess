@@ -3,6 +3,7 @@ import { AREA_OUT_CONFIRM_MS, AREA_OUT_MARGIN_M, isFarOutside } from '../../shar
 import { HOLD_MIN_MS, MATES_SEND_EVERY_MS, MATES_STALE_MS, PHASES, RESCUE_IMMUNE_MS, RUN_STALE_MS, RUN_STOP_MS } from '../../shared/rules';
 import { formatClock, isDone, positionAt } from '../../shared/schedule';
 import { glowPhase, hostStatus } from '../../shared/viewmodel';
+import { chatText } from '../../shared/chat';
 import type { Sensors } from '../sense';
 import { createHost, type HostActions, type HostInput, type HostScreen } from './host';
 
@@ -19,8 +20,8 @@ import { createHost, type HostActions, type HostInput, type HostScreen } from '.
  * - スマホは1つの場所だけ、幅の広い画面は3列に全部を並べる
  */
 
-type Tab = 'map' | 'people' | 'mission' | 'deck';
-const TABS: [Tab, string][] = [['map', '地図'], ['people', '人'], ['mission', 'ミッション'], ['deck', 'デッキ']];
+type Tab = 'map' | 'people' | 'chat' | 'mission' | 'deck';
+const TABS: [Tab, string][] = [['map', '地図'], ['people', '人'], ['chat', '話'], ['mission', 'ミッション'], ['deck', 'デッキ']];
 
 /** 下の並びに出すボタンと重さ（wait＝月白の板、hold＝取り返しがつかない操作） */
 type DockItem = [op: string, weight: 'wait' | 'norm' | 'hold'];
@@ -96,6 +97,10 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   panel.map.append(old('[data-k="glow"]'), old('[data-k="area"]'));
   panel.people.append(old('[data-k="asklist"]'), lobbyNote, rolesBox, old('[data-k="cap"]'), old('[data-k="duplist"]'));
   panel.mission.append(old('[data-k="missionPhoto"]'));
+  // チャット：流れと送る欄は「話」、制約と場所の名前はデッキの札
+  panel.chat.append(old('[data-k="chatFeed"]'));
+  const chatCard = make('section', 'hq-card');
+  chatCard.append(old('[data-k="chatSet"]'));
 
   // デッキ：時間（＋−）・鬼と逃走者（＋−）・鬼のマイク・固定の札／そろい具合／夜とやり直し／記録
   const durations = old<HTMLDetailsElement>('details.durations');
@@ -144,7 +149,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   leave.hidden = !onLeave;
   leave.addEventListener('click', () => onLeave?.());
   rec.append(csv, old('[data-k="foot"]'), leave);
-  panel.deck.append(timeCard, ratioCard, wishCard, micCard, fixed, ready, night, rec, durations, ratio);
+  panel.deck.append(timeCard, ratioCard, wishCard, micCard, chatCard, fixed, ready, night, rec, durations, ratio);
   durations.classList.add('hq-gone');
   ratio.classList.add('hq-gone');
 
@@ -203,6 +208,16 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       const ok = b.dataset.ok === '1';
       if (ok && b.dataset.here === '1' && !confirm(`${b.dataset.name} はいまも別のスマホでつながっている。それでもつなぐか？`)) return;
       actions.command('link', { rid: b.dataset.rid, ok });
+    } else if (b.dataset.chat) {
+      // 本部あての1通：「返事」はあて先をその人にして「話」へ、「見た」は済みにする
+      const id = Number(b.dataset.chat);
+      if (b.dataset.ok === '1') {
+        tabPicked = true;
+        showTab('chat');
+        inner.chat?.replyTo(id);
+      } else {
+        inner.chat?.dismiss(id);
+      }
     } else if (b.dataset.go) {
       tabPicked = true;
       showTab(b.dataset.go as Tab);
@@ -312,6 +327,10 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
         const d = `data-rid="${esc(a.rid)}" data-name="${esc(a.name)}" data-here="${a.here ? 1 : 0}"`;
         items.push(`<span>「${esc(a.name)}」に戻りたい人</span><button type="button" class="hq-wait" ${d} data-ok="1">つなぐ</button><button type="button" ${d} data-ok="0">断る</button>`);
       }
+      const asks = inner.chat?.pending() ?? [];
+      for (const m of asks) {
+        items.push(`<span>本部あて：${esc(m.from?.name ?? '')}「${esc(chatText(m)[0])}」</span><button type="button" class="hq-wait" data-chat="${m.id}" data-ok="1">返事</button><button type="button" data-chat="${m.id}" data-ok="0">見た</button>`);
+      }
       const pending = (host.photos ?? []).filter((p) => p.status === 'pending');
       if (pending.length) items.push(`<span>写真が届いた：${esc(pending.map((p) => p.name).join('・'))}</span><button type="button" class="hq-wait" data-go="mission">見て決める</button>`);
       const areaPts = game.area?.pts ?? null;
@@ -331,6 +350,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
           i.textContent = String(n);
         });
       badge('mission', pending.length);
+      badge('chat', asks.length);
       badge('people', (host.reclaims ?? []).length + host.dupNames.length);
       badge('map', outside.length);
 
