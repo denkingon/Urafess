@@ -1,0 +1,182 @@
+/*
+ * 本部（新しい主催者画面）の見た目。キャンバス「Urafess 本部（管理者画面）」の並び。
+ * 前の主催者画面（.host）の部品を並べ替えて使うので、ここは「.hq の下でだけ」効くように書く。
+ *
+ * 色：枠は無彩色（闇・月白・月白の影）。朱＝鬼と範囲の外、蓄光＝光っている人。
+ * 月白の板（塗り）は「返事を待っている」ものだけ：.hq-wait、つなぐ、見ていない写真の「成功」、範囲の「決める」。
+ * 字はいちばん小さくて 16px。押す場所は 44px 以上。
+ */
+.phone.host.hq {
+  --yami: #0b0c10; --raised: #181a21; --sen: #2b2e38; --tsuki: #f1ede4; --muted: #a29d93; --shu: #ff6a3d; --chikko: #b8ff5a;
+  --bg: var(--yami); --ink: var(--tsuki); --quiet: var(--muted); --faint: var(--muted); --line: var(--sen); --line-strong: var(--muted); --field: var(--raised);
+  max-width: 430px; height: 100dvh; min-height: 0; padding: env(safe-area-inset-top) 0 0; gap: 0;
+  background: var(--yami); color: var(--tsuki); font-size: 16px; line-height: 1.5;
+}
+.hq .hq-gone { display: none !important; }
+.hq button, .hq input, .hq select { font-size: 16px; }
+.hq .u { font-family: "URAJI", "Hiragino Sans", system-ui, sans-serif; font-weight: 900; letter-spacing: .02em; }
+.hq h1, .hq h2 { margin: 0; }
+.hq-m { width: 22px; height: 22px; flex: none; overflow: visible; }
+
+/* 上の行 */
+.hq-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px 0; }
+.hq-head h1 { display: flex; align-items: baseline; gap: 8px; font-size: 20px; line-height: 28px; font-weight: 700; }
+.hq-head h1 .u { font-size: 20px; line-height: 1; letter-spacing: .04em; color: var(--muted); }
+.hq-head-r { display: flex; align-items: center; gap: 14px; color: var(--muted); white-space: nowrap; }
+.hq-conn { color: var(--tsuki); }
+.hq-conn.is-bad::after { content: ""; display: inline-block; width: 10px; height: 10px; margin-left: 6px; border-radius: 50%; background: var(--shu); }
+
+/* 段階の帯（参加者の画面の段階バーと同じ名前） */
+.hq-rail { flex: none; list-style: none; margin: 10px 16px 0; padding: 0; display: flex; gap: 4px; }
+.hq-rail li { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.hq-rail .lbl { font-size: 16px; line-height: 24px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.hq-rail li:not(:first-child):not(:last-child) .lbl { font-family: "URAJI", "Hiragino Sans", system-ui, sans-serif; font-weight: 900; font-size: 20px; letter-spacing: .02em; }
+.hq-rail .bar { display: block; width: 100%; height: 6px; border-radius: 3px; background: var(--sen); overflow: hidden; }
+.hq-rail .bar i { display: block; height: 6px; width: 0; background: var(--muted); }
+.hq-rail li[data-state="now"] .lbl { color: var(--tsuki); }
+.hq-rail li[data-state="now"] .bar i { background: var(--tsuki); }
+
+/* いま */
+.hq-now { flex: none; margin: 10px 16px 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: end; }
+.hq-now-l { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.hq-label, .hq-next { color: var(--muted); line-height: 22px; }
+.hq-next:empty { display: none; }
+.hq-big { font-size: 32px; line-height: 44px; font-weight: 700; white-space: nowrap; }
+.hq-big.u { font-size: 76px; line-height: 60px; }
+.hq-big.u[data-len="mid"] { font-size: 52px; line-height: 52px; }
+.hq-big.u[data-len="long"] { font-size: 36px; line-height: 44px; }
+.hq[data-paused] .hq-big { color: var(--muted); }
+.hq-big-mix { display: flex; align-items: center; gap: 8px; }
+.hq-big-mix .u { font-size: 64px; line-height: 60px; margin-right: 10px; }
+.hq-big-mix small { font-size: 20px; line-height: 28px; font-weight: 700; align-self: flex-end; margin-left: -12px; }
+.hq-big-mix .hq-m { width: 32px; height: 32px; }
+.hq-counts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.hq-counts:empty { display: none; }
+.hq-counts li { display: flex; align-items: center; gap: 6px; color: var(--muted); line-height: 24px; }
+.hq-counts b { min-width: 34px; text-align: right; font-size: 24px; line-height: 24px; color: var(--tsuki); }
+.hq-pips { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
+.hq-pips[hidden] { display: none; }
+.hq-pips i { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--tsuki); }
+.hq-pips i[data-s="g"] { background: var(--chikko); }
+.hq-pips i[data-s="j"] { background: none; border: 2px solid var(--muted); }
+
+/* 要対応：いちばん上の1件を、選択肢つきで */
+.hq-strip { flex: none; margin: 10px 16px 0; min-height: 56px; display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 8px; border: 1px solid var(--muted); border-radius: 6px; background: var(--raised); }
+.hq-strip[hidden] { display: none; }
+.hq-strip > span { flex: 1 1 0; min-width: 0; font-weight: 700; line-height: 20px; }
+.hq-strip button { flex: none; min-height: 44px; padding: 0 12px; border-radius: 6px; font-size: 16px; }
+.hq-badge { flex: none; min-width: 28px; height: 28px; padding: 0 8px; border-radius: 14px; background: var(--tsuki); color: var(--yami); display: inline-flex; align-items: center; justify-content: center; font-size: 20px; line-height: 1; }
+.hq .reject { flex: none; margin: 10px 16px 0; font-size: 16px; }
+
+/* 4つの場所 */
+.hq-body { flex: 1 1 0; min-height: 0; overflow-y: auto; margin-top: 10px; padding: 0 16px 16px; -webkit-overflow-scrolling: touch; }
+.hq-panel { display: none; flex-direction: column; gap: 16px; }
+.hq[data-tab="map"] .hq-panel[data-panel="map"], .hq[data-tab="people"] .hq-panel[data-panel="people"],
+.hq[data-tab="mission"] .hq-panel[data-panel="mission"], .hq[data-tab="deck"] .hq-panel[data-panel="deck"] { display: flex; }
+.hq[data-stage="timer"] .area-host { display: none; }
+/* 地図：地図を先に、説明はあと。本部の地図は道具なので無彩色で、参加者の画面より明るく */
+.hq .glow-host > .cap-host-head { order: -2; }
+.hq .glow-host > [data-k="glowBoard"] { order: -1; }
+.hq .ov-tiles img { filter: invert(1) grayscale(1) brightness(1.9) contrast(1.05); }
+.hq .buttons button:disabled { display: none; }
+
+/* 押すもの */
+.hq-dock { flex: none; display: flex; gap: 8px; padding: 10px 16px 8px; }
+.hq .hq-dock button, .hq .buttons button, .hq-card > button {
+  min-height: 56px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--muted); background: transparent; color: var(--tsuki); font-size: 16px; font-weight: 700;
+}
+.hq .hq-dock button { flex: 1 1 0; min-width: 0; }
+.hq .hq-dock button:disabled, .hq .buttons button:disabled, .hq-card > button:disabled { color: var(--muted); border-color: var(--sen); }
+.hq .hq-dock button.hq-wait { flex-grow: 1.8; background: var(--tsuki); color: var(--yami); border-color: var(--tsuki); font-size: 20px; }
+.hq .hq-dock button.hq-wait:disabled { background: transparent; color: var(--muted); border-color: var(--sen); }
+.hq .hq-dock button.hq-hold { border-style: dashed; }
+.hq .hq-dock button[data-short] { font-size: 0; }
+.hq .hq-dock button[data-short]::after { content: attr(data-short); font-size: 16px; }
+.hq .hq-dock button.hq-wait[data-short]::after { font-size: 20px; }
+
+/* タブ */
+.hq-tabs { flex: none; display: flex; border-top: 1px solid var(--sen); padding: 0 8px calc(8px + env(safe-area-inset-bottom)); }
+.hq-tabs button { flex: 1 1 auto; min-width: 0; min-height: 56px; padding: 0; border: 0; border-top: 3px solid transparent; border-radius: 0; background: transparent; color: var(--muted);
+  display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 16px; font-weight: 700; white-space: nowrap; }
+.hq-tabs button[aria-current] { color: var(--tsuki); border-top-color: var(--tsuki); }
+.hq-tabs i { font-style: normal; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--tsuki); color: var(--yami); display: inline-flex; align-items: center; justify-content: center;
+  font-family: "URAJI", "Hiragino Sans", system-ui, sans-serif; font-weight: 900; font-size: 16px; line-height: 1; }
+.hq-tabs i[hidden] { display: none; }
+
+/* デッキの札 */
+.hq-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--muted); border-radius: 6px; background: var(--raised); }
+.hq-card h2 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 16px; line-height: 24px; font-weight: 700; }
+.hq-card h2 span { font-weight: 400; color: var(--muted); }
+.hq-card[hidden] { display: none; }
+.hq-step { display: flex; align-items: center; gap: 8px; }
+.hq-step > span { flex: 1 1 0; min-width: 0; }
+.hq-step output { min-width: 92px; text-align: center; font-size: 32px; line-height: 40px; }
+.hq-step button { flex: none; width: 48px; min-height: 48px; padding: 0; border-radius: 6px; border: 1px solid var(--muted); font-size: 24px; line-height: 1; }
+.hq-step button:disabled { border-color: var(--sen); color: var(--muted); }
+.hq-fixed ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.hq-fixed li { display: flex; flex-direction: column; line-height: 22px; }
+.hq-fixed li span { color: var(--muted); }
+.hq-roles { display: flex; flex-direction: column; gap: 8px; }
+.hq-roles[hidden] { display: none; }
+.hq-roles h2 { display: flex; align-items: center; gap: 6px; font-size: 16px; line-height: 24px; font-weight: 700; }
+.hq-roles h2 b { font-size: 20px; }
+.hq-roles div { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 8px; }
+.hq-roles span { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border: 1px solid var(--muted); border-radius: 22px; font-weight: 700; }
+.hq-roles span[data-r="oni"] { color: var(--shu); }
+.hq-leave { align-self: flex-start; }
+
+/* 前の画面の部品を、本部の決まりにそろえる */
+.hq .note, .hq .cap-host-head span, .hq .stats span, .hq .mic-mode, .hq .mission label, .hq .mission button, .hq .mission > b, .hq .cap-host-grid button,
+.hq button.ghost, .hq figcaption, .hq .ask-row, .hq .dup-row, .hq .dup-row button, .hq .ask-row button, .hq .mic-mode .seg button, .hq .album-head, .hq .mission-free-pick,
+.hq select, .hq summary, .hq .mission-host form button, .hq .mission-host form input, .hq .mission-host button, .hq .area-btns button, .hq .photo-judge button, .hq .cap-host-head b, .hq .ov-credit, .hq .glow-list, .hq .glow-list * { font-size: 16px; }
+.hq input, .hq select { min-height: 44px; font-size: 16px; }
+.hq .cap-host { border-top: 0; padding-top: 0; }
+.hq .cap-host-grid { gap: 8px; }
+.hq .cap-host-grid button { min-height: 44px; padding: 0 14px 0 10px; border: 1px solid var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.hq .cap-host-grid button::before { content: ""; flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--tsuki); }
+.hq .cap-host-grid button[data-state="caught"] { background: transparent; color: var(--muted); border-color: var(--muted); }
+.hq .cap-host-grid button[data-state="caught"]::before { background: none; border: 2px solid var(--muted); }
+.hq .cap-host-grid button[data-state="open"] { border-style: dashed; border-color: var(--tsuki); }
+.hq .cap-host-grid button[data-state="immune"] { border-style: double; border-width: 3px; border-color: var(--tsuki); }
+.hq .mission button, .hq .area-btns button, .hq button.ghost { min-height: 44px; border-radius: 6px; }
+.hq .mic-mode { border-top: 0; padding-top: 0; }
+.hq .mic-mode .seg { gap: 6px; }
+.hq .mic-mode .seg button, .hq .mic-mode .seg button:first-child, .hq .mic-mode .seg button:last-child { border-radius: 6px; border: 1px solid var(--muted); color: var(--muted); }
+.hq .mic-mode .seg button[aria-pressed="true"] { background: var(--sen); color: var(--tsuki); border: 2px solid var(--tsuki); }
+.hq .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.hq .stats div { border-radius: 6px; }
+.hq .photo-judge button.primary { background: var(--sen); color: var(--tsuki); border: 2px solid var(--tsuki); }
+.hq figure[data-status="pending"] .photo-judge button[data-ok="1"] { background: var(--tsuki); color: var(--yami); border-color: var(--tsuki); }
+
+/* 幅の広い画面（PC）：上に「いま」の帯、下に3列。試合中は 人｜地図｜ミッション・デッキ、それ以外は デッキ｜地図｜人・ミッション */
+@media (min-width: 1024px) {
+  .phone.host.hq {
+    max-width: none; width: 100%; height: auto; min-height: 100dvh; padding: 16px 24px 24px;
+    display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 0 32px; align-items: center; align-content: start;
+    grid-template-areas: "head now rail dock" "strip strip strip strip" "reject reject reject reject" "body body body body";
+  }
+  .hq-head { grid-area: head; padding: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
+  .hq-head h1, .hq-head h1 .u { font-size: 24px; line-height: 32px; }
+  .hq-head-r { flex-direction: column; align-items: flex-start; gap: 0; }
+  .hq-now { grid-area: now; margin: 0; }
+  .hq-rail { grid-area: rail; margin: 0; }
+  .hq-rail li:not(:first-child):not(:last-child) .lbl { font-size: 24px; }
+  .hq-dock { grid-area: dock; padding: 0; }
+  .hq .hq-dock button { flex: none; min-height: 64px; padding: 0 24px; font-size: 20px; white-space: nowrap; }
+  .hq .hq-dock button[data-short]::after { font-size: 20px; }
+  .hq-strip { grid-area: strip; margin: 16px 0 0; }
+  .hq .reject { grid-area: reject; margin: 12px 0 0; }
+  .hq-tabs { display: none; }
+  .hq-body {
+    grid-area: body; overflow: visible; margin-top: 16px; padding: 20px 0 0; border-top: 1px solid var(--sen);
+    display: grid; grid-template-columns: 360px minmax(0, 1fr) 380px; gap: 24px 32px; align-items: start;
+  }
+  .hq .hq-panel { display: flex; min-width: 0; }
+  .hq-panel[data-panel="deck"] { grid-column: 1; grid-row: 1 / span 2; }
+  .hq-panel[data-panel="map"] { grid-column: 2; grid-row: 1 / span 2; }
+  .hq-panel[data-panel="people"] { grid-column: 3; grid-row: 1; }
+  .hq-panel[data-panel="mission"] { grid-column: 3; grid-row: 2; }
+  .hq[data-stage="timer"] .hq-panel[data-panel="people"] { grid-column: 1; grid-row: 1 / span 2; }
+  .hq[data-stage="timer"] .hq-panel[data-panel="mission"] { grid-column: 3; grid-row: 1; }
+  .hq[data-stage="timer"] .hq-panel[data-panel="deck"] { grid-column: 3; grid-row: 2; }
+}
