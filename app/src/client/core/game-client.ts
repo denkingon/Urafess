@@ -74,6 +74,8 @@ export interface ClientState {
   joinError: string | null;
   /** taken・reclaiming のときの、名簿にある名前 */
   takenName: string | null;
+  /** 名前の状態：ok／due＝主催者に付け直すよう言われた／shamed＝主催者が名前を変えた */
+  nameState: 'ok' | 'due' | 'shamed';
   notice: Notice | null;
   /** 手動で選ぶための一覧（頼んだあとに届く）。seq は届くたびに増える */
   roster: { seq: number; people: RosterEntry[] } | null;
@@ -169,6 +171,7 @@ export class GameClient {
       lastReject: null,
       joinError: null,
       takenName: null,
+      nameState: 'ok',
       notice: null,
       roster: null,
       glow: null,
@@ -260,10 +263,13 @@ export class GameClient {
   /** 自分のページで名前を変えた（サーバーからも届くが、切れていてもすぐ画面に出す） */
   setName(name: string): void {
     const identity = this.state.identity;
-    if (!identity || identity.name === name) return;
+    if (!identity) return;
+    // 自分で付け直せた＝主催者の「付け直させる」は済んだ
+    const nameState = this.state.nameState === 'due' ? 'ok' : this.state.nameState;
+    if (identity.name === name && nameState === this.state.nameState) return;
     const next = { ...identity, name };
     this.saveIdentity(next);
-    this.state = { ...this.state, identity: next };
+    this.state = { ...this.state, identity: next, nameState };
     this.emit();
   }
 
@@ -426,6 +432,7 @@ export class GameClient {
       rid?: string;
       ok?: boolean;
       title?: string;
+      word?: string;
       photo?: string;
       free?: boolean;
       n?: number;
@@ -677,7 +684,7 @@ export class GameClient {
         this.pendingEnter = false;
         this.pendingReclaimName = null;
         this.saveIdentity(identity);
-        this.state = { ...this.state, identity, takenName: null, joinError: null };
+        this.state = { ...this.state, identity, takenName: null, joinError: null, nameState: msg.ns ?? 'ok' };
         break;
       }
       case 'known': {
@@ -693,9 +700,20 @@ export class GameClient {
           phase: this.pendingEnter ? 'joining' : 'known',
           joinError: null,
           takenName: null,
+          nameState: msg.ns ?? 'ok',
         };
         break;
       }
+      case 'bad-name':
+        // 入れた名前に使えない言葉が入っている
+        this.pendingJoinName = null;
+        this.state = {
+          ...this.state,
+          phase: 'need-name',
+          takenName: null,
+          joinError: 'その名前は使えない。ちがう名前で入る。／That name is not allowed.',
+        };
+        break;
       case 'taken':
         // 入れた名前は名簿のほかの人のもの。「前の◯◯？」と聞く
         this.pendingJoinName = null;

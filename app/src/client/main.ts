@@ -165,6 +165,7 @@ function startPlayer(): void {
   const account = createAccount({
     gameId,
     identity: () => client.state.identity,
+    nameState: () => client.state.nameState,
     renamed: (name) => client.setName(name),
     forget: () => {
       accountOpen = false;
@@ -297,9 +298,11 @@ function startPlayer(): void {
       askedPersist = true;
       void navigator.storage?.persist?.().catch(() => false);
     }
+    // 主催者に「名前を付け直させる」と言われた：試合中でも、付け直すまで自分のページ（名前を変える）を出す
+    if (s.identity && s.nameState === 'due' && !accountOpen) openAccount();
     if (accountOpen) {
       // 試合が始まった（今夜に入っている）・このスマホが名前を忘れた → 自分のページを閉じる
-      const inGame = s.phase === 'ready' && inMatch(s.game?.stage);
+      const inGame = s.phase === 'ready' && inMatch(s.game?.stage) && s.nameState !== 'due';
       if (!s.identity || inGame) {
         accountOpen = false;
       } else {
