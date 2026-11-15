@@ -76,6 +76,8 @@ export interface WishView {
   slots: { oni: number; runner: number };
   /** 前の配役で希望が通らなかったので、次の配役では優先される */
   priority: boolean;
+  /** 主催者がこの人の役を決めている（希望は出せるが、今回は主催者の決めた役になる） */
+  fixed?: boolean;
 }
 
 /** 配役の希望の板に渡す中身を作る。サーバーが希望を聞いていなければ null */
@@ -86,8 +88,10 @@ export function wishView(game: GameView, me: MeView): WishView | null {
   return {
     mine: me.wish ?? null,
     want: { oni: game.wishes.oni, runner: game.wishes.runner },
-    slots: { oni, runner },
+    // 主催者が指名した分を引いた枠（新しいサーバーが送る）。無ければ人数と割合から出す
+    slots: game.wishSlots ?? { oni, runner },
     priority: (me.wishMiss ?? 0) > 0,
+    ...(me.hostCast ? { fixed: true } : {}),
   };
 }
 
@@ -231,11 +235,17 @@ export function participantView(
   if (game.stage === 'assigned') {
     // 希望が枠より多くて通らなかった人には、次は先に通ることを伝える
     const missed = me.wishMissed === true;
+    // 主催者が決めた・動かした役：そう伝える（希望とちがえば、次は優先）
+    const byHost = me.hostCast === true;
     return {
       ...base, step: 1, label: 'あなたの役', big: roleName,
-      message: missed ? `希望が多かったので、今回は${roleName}。次の配役は優先される。${MESSAGES[role][0]}` : MESSAGES[role][0],
+      message: byHost
+        ? `主催者が決めた。今回は${roleName}。${missed ? '次の配役は優先される。' : ''}${MESSAGES[role][0]}`
+        : missed ? `希望が多かったので、今回は${roleName}。次の配役は優先される。${MESSAGES[role][0]}` : MESSAGES[role][0],
       ...SCENES[role][0], glow,
-      note: missed ? ['希望が多かった。次は優先', 'Too many wished. Priority next time'] : null,
+      note: byHost
+        ? missed ? ['主催者が決めた。次は優先', 'Host’s pick. Priority next time'] : ['主催者が決めた', 'Host’s pick']
+        : missed ? ['希望が多かった。次は優先', 'Too many wished. Priority next time'] : null,
     };
   }
 
@@ -425,6 +435,8 @@ export function wishPreview(w: WishView, role: RoleId | null): WishView {
 
 /** 板の下のひとこと。いまの数のまま配役されたら、自分の希望がどうなるか */
 export function wishCaption(w: WishView): Pair {
+  // 主催者が役を決めている人：希望とちがう役になったら、次は優先される
+  if (w.fixed) return ['今回は主催者が役を決める', 'The host picks your role this time'];
   if (w.mine === null) return ['選ばなければ、どちらかになる', 'No pick = either one'];
   if (w.want[w.mine] <= w.slots[w.mine]) return ['このままなら希望どおり', 'As it stands, you get it'];
   // 枠より多い：前に外れた人は優先される（同じ回数の人が枠より多ければ、その中でくじ）
@@ -451,8 +463,12 @@ export function wishNote(game: GameView, host: HostSummary): string {
   const want = game.wishes ?? { oni: 0, runner: 0 };
   const total = game.counts.total;
   const ratio = game.ratio ?? DEFAULT_RATIO;
-  const [oniSlots, runnerSlots] = allocateCounts(Math.max(0, total), ROLES.map((x) => ({ ...x, weight: ratio[x.id] })));
-  const none = Math.max(0, total - want.oni - want.runner);
+  const [oniAll, runnerAll] = allocateCounts(Math.max(0, total), ROLES.map((x) => ({ ...x, weight: ratio[x.id] })));
+  // 主催者が指名した人は、希望の数にも枠にも入らない
+  const pinned = (host.cast ?? []).filter((c) => c.pin !== null).length;
+  const oniSlots = game.wishSlots?.oni ?? oniAll;
+  const runnerSlots = game.wishSlots?.runner ?? runnerAll;
+  const none = Math.max(0, total - pinned - want.oni - want.runner);
   const overRunner = Math.max(0, want.runner - runnerSlots);
   const overOni = Math.max(0, want.oni - oniSlots);
   const outcome =
@@ -462,7 +478,8 @@ export function wishNote(game: GameView, host: HostSummary): string {
         ? `このまま配役すると、逃走者を希望した${overRunner}人が鬼になる（くじ。前に外れた人を優先）。`
         : overOni > 0
           ? `このまま配役すると、鬼を希望した${overOni}人が逃走者になる（くじ。前に外れた人を優先）。`
-          : 'このまま配役すると、全員が希望どおり。';
+          : pinned > 0 ? 'このまま配役すると、指名のほかは全員が希望どおり。' : 'このまま配役すると、全員が希望どおり。';
   const prio = host.wishPrio ? `前に外れて優先される人 ${host.wishPrio}人。` : '';
-  return `希望：逃走者 ${want.runner}人（枠${runnerSlots}）・鬼 ${want.oni}人（枠${oniSlots}）・どちらでも ${none}人。${outcome}${prio}`;
+  const pins = pinned ? `主催者の指名 ${pinned}人（枠から引いてある）。` : '';
+  return `希望：逃走者 ${want.runner}人（枠${runnerSlots}）・鬼 ${want.oni}人（枠${oniSlots}）・どちらでも ${none}人。${pins}${outcome}${prio}`;
 }

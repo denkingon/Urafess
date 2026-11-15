@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allocateCounts, assignRoles, assignWithWishes, type WishEntry } from '../src/shared/allocate';
+import { allocateCounts, assignRoles, assignWithWishes, castCounts, type WishEntry } from '../src/shared/allocate';
 import { ROLES, WISH_MISS_MAX, type RoleId } from '../src/shared/rules';
 
 /** 計画書の規則を素直に書いたもの：人数×0.3に一番近い整数、ちょうど半分なら鬼を少なく、2人以上なら両方1人以上 */
@@ -221,5 +221,105 @@ describe('希望を聞く配役', () => {
     // 鬼希望150人のうち90人が通り、60人が逃走者へ。逃走者希望150人は全員通る
     expect(missed).toHaveLength(60);
     for (const pid of missed) expect(roles.get(pid)).toBe('runner');
+  });
+});
+
+describe('主催者の指名（この人はこの役）', () => {
+  const ten = (pins: Record<number, RoleId>, wishes: Record<number, RoleId> = {}, miss: Record<number, number> = {}): WishEntry[] =>
+    Array.from({ length: 10 }, (_, i) => ({ pid: `p${i}`, wish: wishes[i] ?? null, miss: miss[i] ?? 0, pin: pins[i] ?? null }));
+
+  it('指名した人は必ずその役。人数は、指名が枠に収まっていれば割合のまま', () => {
+    // 10人（鬼3・逃走者7）。p0・p1 を鬼に、p2 を逃走者に指名
+    const people = ten({ 0: 'oni', 1: 'oni', 2: 'runner' });
+    for (let seed = 1; seed <= 100; seed++) {
+      const { roles, counts } = assignWithWishes(people, ROLES, seeded(seed));
+      expect(roles.get('p0')).toBe('oni');
+      expect(roles.get('p1')).toBe('oni');
+      expect(roles.get('p2')).toBe('runner');
+      expect(counts).toEqual([3, 7]);
+      expect([countOf(roles, 'oni'), countOf(roles, 'runner')]).toEqual([3, 7]);
+    }
+  });
+
+  it('残りの鬼の枠は、指名されていない人のくじ（誰もがほぼ同じ確率）', () => {
+    // p0・p1 が鬼に指名 → 残りの鬼の枠は1。指名されていない8人の誰かが鬼
+    const people = ten({ 0: 'oni', 1: 'oni' });
+    const hits = new Map<string, number>();
+    const rand = seeded(777);
+    const runs = 16_000;
+    for (let r = 0; r < runs; r++) {
+      for (const [pid, role] of assignWithWishes(people, ROLES, rand).roles) if (role === 'oni' && pid !== 'p0' && pid !== 'p1') hits.set(pid, (hits.get(pid) ?? 0) + 1);
+    }
+    expect(hits.size).toBe(8);
+    for (const [pid, h] of hits) expect(Math.abs(h / runs - 1 / 8), pid).toBeLessThan(0.015);
+  });
+
+  it('指名が枠より多ければ、人数は指名に合わせてずれる（鬼を5人指名 → 鬼5・逃走者5）', () => {
+    const people = ten({ 0: 'oni', 1: 'oni', 2: 'oni', 3: 'oni', 4: 'oni' });
+    const { roles, counts } = assignWithWishes(people, ROLES, seeded(4));
+    expect(counts).toEqual([5, 5]);
+    for (let i = 0; i < 5; i++) expect(roles.get(`p${i}`)).toBe('oni');
+    for (let i = 5; i < 10; i++) expect(roles.get(`p${i}`)).toBe('runner');
+    expect(castCounts(10, ROLES, [5, 0])).toEqual([5, 5]);
+    expect(castCounts(10, ROLES, [0, 9])).toEqual([1, 9]);
+    expect(castCounts(10, ROLES, [2, 8])).toEqual([2, 8]);
+    expect(castCounts(10, ROLES, [1, 2])).toEqual([3, 7]);
+  });
+
+  it('全員を指名すれば、配役はそのとおり（意図した配役）', () => {
+    const pins: Record<number, RoleId> = { 0: 'oni', 1: 'runner', 2: 'runner', 3: 'oni', 4: 'runner', 5: 'runner', 6: 'runner', 7: 'oni', 8: 'oni', 9: 'runner' };
+    const { roles, counts } = assignWithWishes(ten(pins), ROLES, seeded(9));
+    for (const [i, role] of Object.entries(pins)) expect(roles.get(`p${i}`)).toBe(role);
+    expect(counts).toEqual([4, 6]);
+  });
+
+  it('指名で片方の役が0人になるなら配役できない（2人以上のとき）', () => {
+    expect(castCounts(10, ROLES, [0, 10])).toBeNull();
+    expect(castCounts(10, ROLES, [10, 0])).toBeNull();
+    expect(castCounts(2, ROLES, [2, 0])).toBeNull();
+    expect(() => assignWithWishes(ten(Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i, 'runner' as RoleId]))), ROLES, seeded(1))).toThrow();
+    // 1人だけの部屋は、どちらに指名してもそのとおり
+    expect(castCounts(1, ROLES, [1, 0])).toEqual([1, 0]);
+    expect(castCounts(1, ROLES, [0, 1])).toEqual([0, 1]);
+    expect(castCounts(0, ROLES, [0, 0])).toEqual([0, 0]);
+    // 指名の人数が部屋の人数より多い（ありえない）ときも null
+    expect(castCounts(3, ROLES, [2, 2])).toBeNull();
+  });
+
+  it('指名は希望より強い。指名で希望とちがう役になった人は「外れた」に数え、次は優先される', () => {
+    // p0 は逃走者を希望しているが、鬼に指名。p1 は鬼を希望していて、鬼に指名（希望どおり）。p2 は希望なしで鬼に指名
+    const people = ten({ 0: 'oni', 1: 'oni', 2: 'oni' }, { 0: 'runner', 1: 'oni', 5: 'runner' }, { 1: 2, 2: 4 });
+    const { roles, missed, miss } = assignWithWishes(people, ROLES, seeded(11));
+    expect(roles.get('p0')).toBe('oni');
+    expect(missed).toEqual(['p0']);
+    expect(miss.get('p0')).toBe(1);
+    // 指名が希望どおりなら、通ったものとして 0 に戻る。希望なしの人の回数はそのまま
+    expect(miss.get('p1')).toBe(0);
+    expect(miss.get('p2')).toBe(4);
+    // 指名されていない p5 は、逃走者の枠（7）に収まるので希望どおり
+    expect(roles.get('p5')).toBe('runner');
+  });
+
+  it('希望と優先は、指名を引いた残りの枠で決まる', () => {
+    // 10人（鬼3・逃走者7）。逃走者に3人指名 → 残りの逃走者の枠は4。指名されていない7人が全員逃走者を希望、うち p3〜p6 は前に外れた
+    const people = ten({ 0: 'runner', 1: 'runner', 2: 'runner' }, { 3: 'runner', 4: 'runner', 5: 'runner', 6: 'runner', 7: 'runner', 8: 'runner', 9: 'runner' }, { 3: 1, 4: 1, 5: 1, 6: 1 });
+    for (let seed = 1; seed <= 100; seed++) {
+      const { roles, missed } = assignWithWishes(people, ROLES, seeded(seed));
+      for (const i of [3, 4, 5, 6]) expect(roles.get(`p${i}`), `seed=${seed}`).toBe('runner');
+      expect(missed.sort()).toEqual(['p7', 'p8', 'p9']);
+    }
+  });
+
+  it('おかしな指名（知らない役）は、指名なしとして扱う。指名なしなら今までと同じ', () => {
+    const odd = [{ pid: 'a', wish: null, miss: 0, pin: 'third' as unknown as RoleId }, { pid: 'b', wish: null, miss: 0 }, { pid: 'c', wish: null, miss: 0, pin: null }];
+    const { roles, counts } = assignWithWishes(odd, ROLES, seeded(3));
+    expect(counts).toEqual([1, 2]);
+    expect(roles.size).toBe(3);
+    // 指名なしの10人で2万回：誰もがほぼ3割の確率で鬼（くじのまま）
+    const people = ten({});
+    const hits = new Map(people.map((p) => [p.pid, 0]));
+    const rand = seeded(4242);
+    for (let r = 0; r < 20_000; r++) for (const [pid, role] of assignWithWishes(people, ROLES, rand).roles) if (role === 'oni') hits.set(pid, hits.get(pid)! + 1);
+    for (const [pid, h] of hits) expect(Math.abs(h / 20_000 - 0.3), pid).toBeLessThan(0.015);
   });
 });

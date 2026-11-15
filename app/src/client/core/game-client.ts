@@ -133,6 +133,7 @@ export class GameClient {
   private sawHeartbeat = false;
   private roughOffset: number | null = null;
   private ackedAssignId = 0;
+  private ackedRole: RoleId | null = null;
   private pendingJoinName: string | null = null;
   /** 名前のボタンを押した（つなぎ直したら送り直す） */
   private pendingEnter = false;
@@ -396,6 +397,16 @@ export class GameClient {
     this.send({ t: 'sense', motion, geo });
   }
 
+  /** 範囲の外に20秒いて失格になったことを伝える（同じ配役のうちは何度送ってもサーバーが1回だけ数える） */
+  disqualified(): void {
+    this.send({ t: 'dq' });
+  }
+
+  /** 失格のあと牢屋に出頭したことを伝える（何度送ってもサーバーが1回だけ数える） */
+  reportedToJail(): void {
+    this.send({ t: 'dq-ok' });
+  }
+
   /**
    * 配役の希望：次の配役でなりたい役を送る（null＝どちらでも）。届いたかどうかは、返ってくる状態（me.wish）で分かる。
    * 切れている間は送れない（false を返す。画面の板は押せなくしてある）
@@ -441,7 +452,12 @@ export class GameClient {
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
       wishMode?: WishMode;
+      pids?: string[];
+      role?: RoleId | null;
+      tag?: string;
+      on?: boolean;
       area?: [number, number][] | null;
+      plan?: import('../../shared/shrink').ShrinkPlan;
       layer?: 'area' | 'jail';
       pid?: string;
       by?: string;
@@ -523,6 +539,7 @@ export class GameClient {
       this.lastRecvAt = this.deps.now();
       // つなぎ直したら受け取りの返事も送り直す（サーバー側で重複は無視される）
       this.ackedAssignId = 0;
+      this.ackedRole = null;
       this.state = { ...this.state, online: true };
       this.hello();
       this.burst(BURST_ON_CONNECT, BURST_JITTER_MS);
@@ -790,8 +807,10 @@ export class GameClient {
         }
         // 役を受け取ったことをサーバーに返す（主催者画面の「受け取り済み」）
         const me = msg.me;
-        if (me && me.role && me.assignId === msg.game.assignId && this.ackedAssignId !== me.assignId) {
+        // 同じ配役のまま主催者が役を動かしたときも、新しい役を受け取ったことを返し直す
+        if (me && me.role && me.assignId === msg.game.assignId && (this.ackedAssignId !== me.assignId || this.ackedRole !== me.role)) {
           this.ackedAssignId = me.assignId;
+          this.ackedRole = me.role;
           this.send({ t: 'ack', assignId: me.assignId });
         }
         break;

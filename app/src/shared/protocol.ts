@@ -1,5 +1,7 @@
 import type { Area } from './area';
+import type { ShrinkLive, ShrinkPlan } from './shrink';
 import type { Candidate, CaptureVia } from './capture';
+import type { CastStat } from './cast';
 import type { MeetScope, MissionKind, PhotoStatus } from './mission';
 
 /** 牢屋からどうやって出たか。sound＝助ける人の音を拾った、together＝同時に長押し、mission＝ミッション成功、host＝主催者が手で */
@@ -55,12 +57,24 @@ export interface GameView {
   micMode?: 'always' | 'hold';
   /** 遊ぶ範囲（主催者がゲームの前に地図に描いた多角形）。null＝範囲なし。古いサーバーからは来ない */
   area?: Area | null;
+  /** 範囲の縮み方（主催者が試合の前に決める）。古いサーバーからは来ない */
+  shrinkPlan?: ShrinkPlan;
+  /** このラウンドの縮小（試合を始めると決まる。縮む先と段）。範囲が無い・始める前は null。古いサーバーからは来ない */
+  shrink?: ShrinkLive | null;
   /** 牢屋の場所（遊ぶ範囲と同じく、主催者がゲームの前に地図に描いた多角形）。null＝決めていない。古いサーバーからは来ない */
   jail?: Area | null;
   /** 配役の決め方（wish＝希望を聞く／lot＝くじだけ）。古いサーバーからは来ない（そのときは希望の板を出さない） */
   wishMode?: WishMode;
-  /** 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（誰かは送らない）。古いサーバーからは来ない */
+  /**
+   * 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（誰かは送らない）。
+   * 主催者が指名した人は数えない（その人の役は希望と関係なく決まるため）。古いサーバーからは来ない
+   */
   wishes?: { oni: number; runner: number };
+  /**
+   * 配役の希望：いまの人数と割合での、それぞれの役の「開いている枠」（主催者の指名の分を引いたあと）。
+   * 古いサーバーからは来ない（そのときは、人数と割合からスマホが出す）
+   */
+  wishSlots?: { oni: number; runner: number };
 }
 
 export interface MissionView {
@@ -155,8 +169,13 @@ export interface MeView {
   wish?: RoleId | null;
   /** 配役の希望：続けて希望が通らなかった回数（1以上なら、次の配役で先に通る） */
   wishMiss?: number;
-  /** 配役の希望：いまの配役で、希望を出したのに通らなかった（希望が枠より多かった） */
+  /** 配役の希望：いまの配役で、希望を出したのに通らなかった（希望が枠より多かった・主催者が決めた） */
   wishMissed?: boolean;
+  /**
+   * 主催者がこの人の役を決めている（配役の前の指名、または配役のあとに主催者が動かした）。開始で消える。
+   * 本人の画面の文を合わせるために送る（配役の前は、板のひとことを「配役を待つ」にする。配役のあとは「主催者が決めた」）
+   */
+  hostCast?: boolean;
 }
 
 /** 主催者が見る、今の配役の捕獲 */
@@ -225,12 +244,38 @@ export interface HostSummary {
   /** 配役の希望：次の配役で先に通る人（前に外れた人）の数 */
   wishPrio?: number;
   /**
+   * 配役をいじる：今夜の参加者の1人ずつ（名簿に入った順）。主催者が指名する・配役のあとに動かすための一覧。
+   * 古いサーバーは送らない
+   */
+  cast?: HostCastEntry[];
+  /**
    * 名前の見張り：今夜の人と、使えない言葉に引っかかる・主催者が手を入れた名簿の人。
    * hit＝引っかかった言葉、state＝名前の状態、tonight＝今夜に入っている。古いサーバーは送らない
    */
   names?: { pid: string; num: number; name: string; hit: string | null; state: 'ok' | 'due' | 'shamed'; tonight: boolean }[];
   /** 名前に使えない言葉：主催者が足した言葉と、最初から入っている言葉の数 */
   bans?: { custom: string[]; builtin: number };
+}
+
+/** 主催者が配役をいじるための1人 */
+export interface HostCastEntry {
+  pid: string;
+  num: number;
+  name: string;
+  /** 本人の希望（null＝どちらでも） */
+  wish: RoleId | null;
+  /** 主催者の指名（null＝指名していない。開始で消える） */
+  pin: RoleId | null;
+  /** いまの配役での役（配役前・途中で来た人は null） */
+  role: RoleId | null;
+  /** 前に希望が外れていて、次の配役で優先される */
+  prio: boolean;
+  /** いまつながっている */
+  on: boolean;
+  /** 主催者が付けた印（男・女・速い…）。名簿に残る */
+  tags?: string[];
+  /** 今までの記録から出した数字（記録が無い人には付かない） */
+  stat?: CastStat;
 }
 
 /**
@@ -286,8 +331,19 @@ export type HostOp =
   | 'mic'
   /** 配役の決め方を切り替える（wish＝希望を聞く／lot＝くじだけ）。次の配役から効く */
   | 'wish-mode'
+  /**
+   * 配役をいじる：pids の人たちをまとめて role に指名する（role=null で指名を外す＝くじ・希望に戻す）。
+   * 配役の前は指名だけ。配役済み（開始の前）なら、役がちがう人をその場で動かす。試合中はできない。指名は開始で消える
+   */
+  | 'cast'
+  | 'tag'
+  /** 遊ぶ範囲を決める（area＝頂点の並び、null で範囲なし）。試合中（時間が0になる前）は変えられない */
   /** 遊ぶ範囲・牢屋の場所を決める（layer で選ぶ。area＝頂点の並び、null でなし）。試合中（時間が0になる前）は変えられない */
   | 'area'
+  /** 範囲の縮み方を決める（plan）。試合中（時間が0になる前）は変えられない */
+  | 'shrink-plan'
+  /** 範囲を今すぐ1段縮める（予告のあと縮む）。逃げ始めてからゲームの終わりまで */
+  | 'shrink-now'
   | 'remove'
   /** 新しい夜を始める（部屋を空にする）：今夜の参加者を全員外し、配役前に戻す。名簿は残る */
   | 'clear'
@@ -348,8 +404,17 @@ export type ClientMsg =
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
       wishMode?: WishMode;
+      /** 配役をいじる：動かす人たち */
+      pids?: string[];
+      /** 配役をいじる：指名する役（null で指名を外す） */
+      role?: RoleId | null;
+      /** 印を付ける・外す（op: 'tag'。pids の人たちに） */
+      tag?: string;
+      on?: boolean;
       /** 遊ぶ範囲の頂点（[緯度, 経度] の並び）。null で範囲なし */
       area?: [number, number][] | null;
+      /** 範囲の縮み方 */
+      plan?: ShrinkPlan;
       /** area で決めるのはどれか（既定は遊ぶ範囲） */
       layer?: 'area' | 'jail';
       pid?: string;
@@ -411,6 +476,16 @@ export type ClientMsg =
   | { t: 'sense'; motion: SenseState; geo: SenseState }
   /** 全体の地図：自分の位置（ゲームの段階の間だけ MATES_SEND_EVERY_MS ごとに送る。段階の外・捕まった人の分は、サーバーが捨てる） */
   | { t: 'pos'; lat: number; lon: number; acc: number }
+  /**
+   * 遊ぶ範囲の外に20秒いて失格になった（スマホが自分で決める）。逃走者は「捕まった」扱いで牢屋の助けでは出られず、鬼は記録だけ。
+   * 同じ配役のうちは何度送っても1回だけ数える（つなぎ直しの送り直し用）
+   */
+  | { t: 'dq' }
+  /**
+   * 失格したあと、牢屋に出頭した（本人が長押しで伝える）。逃走者は「捕まった」のまま、ふつうの牢屋の人になる（仲間の助けで出られる）。
+   * 同じ配役のうちに失格していなければ無視する
+   */
+  | { t: 'dq-ok' }
   /**
    * 配役の希望：次の配役でなりたい役（null＝どちらでも）。配役の前（待合室・結果発表）と、見学の人だけ変えられる。
    * 役が決まってからゲームが終わるまでの分は、サーバーが捨てて今の状態を送り直す

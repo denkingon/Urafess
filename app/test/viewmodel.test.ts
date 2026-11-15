@@ -309,4 +309,25 @@ describe('配役の希望（逃走者／鬼の板）', () => {
     // 古いサーバーでは何も出さない
     expect(wishNote(game({}), host)).toBe('');
   });
+  it('主催者が役を決める人：枠は指名の分だけ減り、板のひとことが変わる。配役のあとは「主催者が決めた」', () => {
+    const g = wishing({ stage: 'lobby', assignId: 0, wishes: { oni: 0, runner: 6 }, wishSlots: { oni: 1, runner: 6 } });
+    const pinned = wishView(g, { ...lobbyMe, wish: 'runner', hostCast: true })!;
+    expect(pinned.slots).toEqual({ oni: 1, runner: 6 });
+    expect(pinned.fixed).toBe(true);
+    expect(wishCaption(pinned)[0]).toBe('今回は主催者が役を決める');
+    // 指名されていない人はふつうのひとこと
+    expect(wishCaption(wishView(g, { ...lobbyMe, wish: 'runner', hostCast: false })!)[0]).toBe('このままなら希望どおり');
+    const host = { wishStat: null, wishPrio: 0, cast: [{ pin: 'oni' }, { pin: 'oni' }, { pin: 'runner' }, { pin: null }] } as unknown as HostSummary;
+    const note = wishNote(g, host);
+    expect(note).toContain('希望：逃走者 6人（枠6）・鬼 0人（枠1）・どちらでも 1人。主催者の指名 3人（枠から引いてある）。');
+    expect(note).toContain('指名のほかは全員が希望どおり。');
+    const a = wishing({ stage: 'assigned' });
+    const moved = participantView(a, { ...runner, wish: 'oni', wishMiss: 1, wishMissed: true, hostCast: true }, 0, true);
+    expect(moved.message).toContain('主催者が決めた。今回は逃走者。次の配役は優先される。');
+    expect(moved.note).toEqual(['主催者が決めた。次は優先', 'Host’s pick. Priority next time']);
+    const same = participantView(a, { ...runner, wish: 'runner', wishMiss: 0, wishMissed: false, hostCast: true }, 0, true);
+    expect(same.message).toContain('主催者が決めた。今回は逃走者。');
+    expect(same.message).not.toContain('優先');
+    expect(same.note).toEqual(['主催者が決めた', 'Host’s pick']);
+  });
 });
