@@ -11,6 +11,7 @@ import { SoundListener } from './sound/listener';
 import { Sensors } from './sense';
 import { callAccount, createAccount, errorText } from './views/account';
 import { createCapture } from './views/capture';
+import { createDrum } from './views/drum';
 import { createGlow } from './views/glow';
 import { createHost, type HostActions } from './views/host';
 import { createHQ } from './views/hq';
@@ -41,6 +42,22 @@ const storage: KeyValueStore = {
 };
 
 const root = document.getElementById('app')!;
+
+/** 覚えておくだけの値（無くても動く。使えない端末では何もしない） */
+function safeGet(k: string): string | null {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+}
+function safeSet(k: string, v: string): void {
+  try {
+    localStorage.setItem(k, v);
+  } catch {
+    // 保存できない端末（プライベートブラウズなど）
+  }
+}
 
 /** このスマホは主催者で入ったことがある（入室の右上に「主催者 HOST」を出す印。合言葉を変えても残る） */
 const HOST_DEVICE_KEY = 'urafess:host-device';
@@ -232,6 +249,18 @@ function startPlayer(): void {
   // 走ると光る：走っているかはこのスマホが決め、光っている間だけ位置を送る
   const glow = createGlow({ sensors, root: phone.el, onDisqualified: () => client.disqualified(), onReported: () => client.reportedToJail() });
   phone.stage.append(glow.el);
+  // 配役のドラムロール：止めた（役を見た）配役の番号をこのスマホに覚えておく（開き直しても、もう一度は流さない）
+  const seenKey = `urafess:seen:${gameId}`;
+  let seenAssign = Number(safeGet(seenKey) ?? 0) || 0;
+  let seenSent = 0;
+  const drum = createDrum({
+    onTap: () => {
+      const id = client.state.game?.assignId ?? 0;
+      seenAssign = id;
+      safeSet(seenKey, String(id));
+    },
+  });
+  phone.el.append(drum.el);
   const reporter = new RunReporter();
   let lastView: PhoneView | null = null;
   let lastMatePos = 0;
@@ -343,9 +372,13 @@ function startPlayer(): void {
     }
     show(phone.el);
     phone.mine.hidden = inMatch(s.game.stage);
-    const view = participantView(s.game, s.me, client.serverNow() ?? Date.now(), s.online);
+    const view = participantView(s.game, s.me, client.serverNow() ?? Date.now(), s.online, seenAssign === s.game.assignId);
     lastView = view;
     phone.update(view);
+    drum.update(view, s.me.assignId === s.game.assignId ? s.me.role : null);
+    // 役が画面に出たら、一度だけサーバーに知らせる（主催者の画面の「役が出た」）
+    const showing = !view.drum && s.me.role !== null && s.me.assignId === s.game.assignId && s.game.assignId > 0 && (s.game.stage === 'assigned' || s.game.stage === 'timer');
+    if (showing && seenSent !== s.game.assignId && client.seen(s.game.assignId)) seenSent = s.game.assignId;
     capture.update(view, s);
     mission.update(s.game, s.me);
     jail.update(view, s);

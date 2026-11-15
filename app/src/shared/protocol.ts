@@ -6,7 +6,7 @@ import type { MeetScope, MissionKind, PhotoStatus } from './mission';
 
 /** 牢屋からどうやって出たか。sound＝助ける人の音を拾った、together＝同時に長押し、mission＝ミッション成功、host＝主催者が手で */
 export type RescueVia = 'sound' | 'together' | 'mission' | 'host';
-import type { RoleId, WishMode } from './rules';
+import type { RevealMode, RoleId, WishMode } from './rules';
 import type { Timer } from './schedule';
 
 /** ゲーム全体の段階（サーバーが持つ正解） */
@@ -75,6 +75,13 @@ export interface GameView {
    * 古いサーバーからは来ない（そのときは、人数と割合からスマホが出す）
    */
   wishSlots?: { oni: number; runner: number };
+  /** 配役の出し方の設定（sync＝全員同時にドン／tap＝タップした人から／now＝すぐ出す）。次の配役から効く。古いサーバーからは来ない */
+  revealMode?: RevealMode;
+  /**
+   * いまの配役の出し方（配役を押したときの設定）。hitAt は sync のとき全員の画面で役が出るサーバー時刻（ほかは null）。
+   * 配役前は null。古いサーバーからは来ない（そのときはすぐ出す）
+   */
+  reveal?: { mode: RevealMode; hitAt: number | null } | null;
 }
 
 export interface MissionView {
@@ -243,6 +250,8 @@ export interface HostSummary {
   wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
   /** 配役の希望：次の配役で先に通る人（前に外れた人）の数 */
   wishPrio?: number;
+  /** 配役の出し方：今の配役で、役が画面に出た人（tap なら、カードを止めた人）。古いサーバーは送らない */
+  seen?: number;
   /**
    * 配役をいじる：今夜の参加者の1人ずつ（名簿に入った順）。主催者が指名する・配役のあとに動かすための一覧。
    * 古いサーバーは送らない
@@ -337,6 +346,8 @@ export type HostOp =
    */
   | 'cast'
   | 'tag'
+  /** 配役の出し方を切り替える（sync＝全員同時にドン／tap＝タップした人から／now＝すぐ出す）。次の配役から効く */
+  | 'reveal'
   /** 遊ぶ範囲を決める（area＝頂点の並び、null で範囲なし）。試合中（時間が0になる前）は変えられない */
   /** 遊ぶ範囲・牢屋の場所を決める（layer で選ぶ。area＝頂点の並び、null でなし）。試合中（時間が0になる前）は変えられない */
   | 'area'
@@ -394,6 +405,8 @@ export type ClientMsg =
   | { t: 'host'; token: string }
   | { t: 'ping'; id: number; a: number }
   | { t: 'ack'; assignId: number }
+  /** 役が画面に出た（ドラムロールが止まった。tap なら、本人がカードを止めた）。主催者画面の「役が出た」と記録に使う */
+  | { t: 'seen'; assignId: number }
   | { t: 'sync'; err: number }
   | {
       t: 'cmd';
@@ -411,6 +424,7 @@ export type ClientMsg =
       /** 印を付ける・外す（op: 'tag'。pids の人たちに） */
       tag?: string;
       on?: boolean;
+      reveal?: RevealMode;
       /** 遊ぶ範囲の頂点（[緯度, 経度] の並び）。null で範囲なし */
       area?: [number, number][] | null;
       /** 範囲の縮み方 */

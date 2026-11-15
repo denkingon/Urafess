@@ -2,7 +2,7 @@ import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
 import type { MeetScope, MissionKind } from '../../shared/mission';
 import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
-import { SILENCE_LIMIT_MS, type RoleId, type WishMode } from '../../shared/rules';
+import { SILENCE_LIMIT_MS, type RevealMode, type RoleId, type WishMode } from '../../shared/rules';
 
 /**
  * しくみの層。接続・時計合わせ・状態だけを持ち、見た目は一切知らない。
@@ -417,6 +417,16 @@ export class GameClient {
     return true;
   }
 
+  /**
+   * 配役のドラムロール：役が画面に出た（止まった）ことを知らせる。主催者画面の「役が出た」と記録に使うだけ。
+   * 切れている間は送れない（false。つながったあとにもう一度呼ぶ）
+   */
+  seen(assignId: number): boolean {
+    if (!this.isOpen() || assignId <= 0) return false;
+    this.send({ t: 'seen', assignId });
+    return true;
+  }
+
   /** 逃走者が「捕まった」を取り下げる */
   cancelClaim(): void {
     this.pending = { kind: 'cancel', at: this.deps.now() };
@@ -452,6 +462,7 @@ export class GameClient {
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
       wishMode?: WishMode;
+      reveal?: RevealMode;
       pids?: string[];
       role?: RoleId | null;
       tag?: string;

@@ -118,12 +118,17 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   const ratioCard = make('section', 'hq-card', `<h2>鬼と逃走者</h2>${stepRow('鬼', 'r-oni')}${stepRow('逃走者', 'r-runner')}`);
   ratioCard.append(old('[data-k="ratioPreview"]'));
   const micCard = make('section', 'hq-card');
-  micCard.append(old('.mic-mode:not(.wish-mode)'));
+  micCard.append(old('.mic-mode:not(.wish-mode):not(.reveal-mode)'));
   // 配役の決め方（希望を聞く／くじだけ）。無い版の画面では札ごと出さない
   const wishCard = make('section', 'hq-card');
   const wishMode = old('.wish-mode');
   if (wishMode) wishCard.append(wishMode);
   else wishCard.hidden = true;
+  // 配役の出し方（全員同時にドン／タップで自分の／すぐ出す）
+  const revealCard = make('section', 'hq-card');
+  const revealMode = old('.reveal-mode');
+  if (revealMode) revealCard.append(revealMode);
+  else revealCard.hidden = true;
   const sec = (ms: number) => `${ms / 1000}秒`;
   const fixed = make('section', 'hq-card hq-fixed',
     '<h2>固定の札<span>いまはコードの中の数字</span></h2><ul>'
@@ -148,7 +153,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   leave.hidden = !onLeave;
   leave.addEventListener('click', () => onLeave?.());
   rec.append(csv, old('[data-k="foot"]'), leave);
-  panel.deck.append(timeCard, ratioCard, wishCard, micCard, fixed, ready, night, rec, durations, ratio);
+  panel.deck.append(timeCard, ratioCard, wishCard, revealCard, micCard, fixed, ready, night, rec, durations, ratio);
   durations.classList.add('hq-gone');
   ratio.classList.add('hq-gone');
 

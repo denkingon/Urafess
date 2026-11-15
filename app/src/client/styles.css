@@ -195,6 +195,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .mic-mode .seg button { flex: 1; min-height: 44px; font-size: 15px; border-radius: 0; }
 .mic-mode .seg button:first-child { border-radius: 10px 0 0 10px; }
 .mic-mode .seg button:last-child { border-radius: 0 10px 10px 0; border-left: none; }
+.mic-mode .seg button:not(:first-child):not(:last-child) { border-radius: 0; border-left: none; }
 .mic-mode .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
 /* 主催者：配役をいじる */
 .cast-sort { display: flex; flex-wrap: wrap; gap: 6px; }

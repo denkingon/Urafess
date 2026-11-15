@@ -14,9 +14,12 @@ import {
   MATES_STALE_MS,
   RUN_STALE_MS,
   START_LEAD_MS,
+  type RevealMode,
   type RoleId,
   type WishMode,
 } from '../../shared/rules';
+
+const REVEAL_LABEL: Record<RevealMode, string> = { sync: '全員同時にドン', tap: 'タップで自分の', now: 'すぐ出す' };
 import { formatClock, isDone, positionAt } from '../../shared/schedule';
 import {
   MISSION_DEFAULT_TITLES,
@@ -87,6 +90,7 @@ export interface HostActions {
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
       wishMode?: WishMode;
+      reveal?: RevealMode;
       pids?: string[];
       role?: RoleId | null;
       tag?: string;
@@ -204,6 +208,15 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         <button type="button" data-wishmode="lot" aria-pressed="false">くじだけ</button>
       </div>
       <p class="note" data-k="wishNote"></p>
+    </div>
+    <div class="mic-mode reveal-mode">
+      <span>配役の出し方</span>
+      <div class="seg" role="group" aria-label="配役の出し方">
+        <button type="button" data-reveal="sync" aria-pressed="false">全員同時</button>
+        <button type="button" data-reveal="tap" aria-pressed="false">タップ</button>
+        <button type="button" data-reveal="now" aria-pressed="false">すぐ出す</button>
+      </div>
+      <p class="note" data-k="revealNote"></p>
     </div>
     <section class="cap-host cast-host" data-k="cast" hidden>
       <div class="cap-host-head"><b>配役をいじる</b><span data-k="castNow"></span></div>
@@ -478,6 +491,15 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     b.addEventListener('click', () => {
       if (b.getAttribute('aria-pressed') === 'true') return;
       actions.command('wish-mode', { wishMode: b.dataset.wishmode as WishMode });
+    }),
+  );
+
+  // 配役の出し方：全員同時にドン／タップで自分の／すぐ出す。次の配役から効く
+  const revealBtns = [...el.querySelectorAll('[data-reveal]')] as HTMLButtonElement[];
+  revealBtns.forEach((b) =>
+    b.addEventListener('click', () => {
+      if (b.getAttribute('aria-pressed') === 'true') return;
+      actions.command('reveal', { reveal: b.dataset.reveal as RevealMode });
     }),
   );
 
@@ -1143,7 +1165,9 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       const assigned = game.stage !== 'lobby';
       q('oni').textContent = assigned ? String(game.counts.oni) : '—';
       q('runner').textContent = assigned ? String(game.counts.runner) : '—';
-      q('received').textContent = assigned ? `${host.received}/${host.assigned}` : '—';
+      q('received').textContent = assigned
+        ? `${host.received}/${host.assigned}` + (host.seen !== undefined && game.reveal && game.reveal.mode !== 'now' ? `（役が出た ${host.seen}）` : '')
+        : '—';
       q('synced').textContent = `${host.synced}/${host.connected}`;
       const asks = host.reclaims ?? [];
       q('asks').textContent = asks.length ? `${asks.length}人` : 'なし';
@@ -1152,6 +1176,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         `　／　割合 鬼${(game.ratio ?? DEFAULT_RATIO).oni}：逃走者${(game.ratio ?? DEFAULT_RATIO).runner}` +
         `　／　鬼のマイク ${(game.micMode ?? 'always') === 'always' ? 'ずっと聞く' : '押している間だけ'}` +
         `　／　配役 ${(game.wishMode ?? 'lot') === 'wish' ? '希望を聞く' : 'くじだけ'}` +
+        (game.revealMode ? `　／　出し方 ${REVEAL_LABEL[game.revealMode]}` : '') +
         (host.waiting ? `　／　次の配役を待っている人 ${host.waiting}人` : '') +
         (host.registry !== undefined ? `　／　名簿 ${host.registry}人` : '');
       // 前の夜のまま集め始めないように：待合室で、夜を始めてから半日以上たっていたら知らせる
@@ -1247,6 +1272,20 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         b.disabled = !canEditDurations || game.wishMode === undefined;
       });
       q('wishNote').textContent = wishNote(game, host);
+
+      const reveal = game.revealMode ?? 'now';
+      revealBtns.forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.reveal === reveal));
+        // 古いサーバー（出し方を送ってこない）では切り替えられない。切り替えはいつでもできる（次の配役から効く）
+        b.disabled = game.revealMode === undefined;
+      });
+      const nowRv = game.stage === 'assigned' && game.reveal && game.reveal.mode !== reveal ? `（いまの配役は「${REVEAL_LABEL[game.reveal.mode]}」。次の配役から変わる）` : '';
+      q('revealNote').textContent =
+        (reveal === 'sync'
+          ? '配役を押すと、全員の画面でカードが流れ、5秒後に全員同時に役が出る'
+          : reveal === 'tap'
+            ? '流れているカードをタップした人から役が出る。押していない人は「開始」で出る'
+            : 'カードは流さず、配役と同時に役が出る（前の版と同じ）') + nowRv;
 
       // 配役をいじる
       const cast = host.cast;
