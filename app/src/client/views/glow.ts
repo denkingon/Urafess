@@ -52,6 +52,8 @@ export interface BoardInput {
   meOut?: boolean;
   /** 司令塔：全体の地図を見られない（司令塔だけが見られる札のとき、司令塔でない人）。光の地図だけになる */
   mapOff?: boolean;
+  /** ミッションの範囲（全体の地図に蓄光の面で出す）。遊ぶ範囲の縮小（zone）とは別のもの */
+  mzone?: [number, number][] | null;
 }
 
 export interface BoardOptions {
@@ -147,7 +149,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
 
   return {
     el,
-    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, jail, meOut, mapOff }) {
+    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, jail, meOut, mapOff, mzone }) {
       // 司令塔：全体の地図を見られない間は、光の地図だけ（切りかえも出さない）。見られるようになったら、全体の地図を開く
       const off = mapOff === true;
       if (off !== wasMapOff) {
@@ -255,6 +257,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
           jail: jail ?? null,
           meOut,
           zone: z ? { inner: z.inner, next: z.next, center: z.center } : null,
+          mzone: mzone ?? null,
         });
       }
 
@@ -681,6 +684,7 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
         jail,
         meOut: out,
         mapOff: !!state.me?.lead && !state.me.lead.map,
+        mzone: openZone(state.game),
       });
       // 司令塔：自分の側のいま（誰が司令塔か・落ちたか）。配役が出てからゲームの終わりまで
       const strip = leadStrip(state);
@@ -707,4 +711,10 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
       }
     },
   };
+}
+
+/** いま開いている範囲のミッションの頂点（無ければ null） */
+export function openZone(game: ClientState['game'] | null | undefined): [number, number][] | null {
+  const m = game?.mission;
+  return m?.open && m.kind === 'zone' && m.zone ? m.zone.pts : null;
 }

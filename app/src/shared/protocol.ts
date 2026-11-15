@@ -1,14 +1,37 @@
 import type { Area } from './area';
 import type { ShrinkLive, ShrinkPlan } from './shrink';
 import type { Candidate, CaptureVia } from './capture';
+import type { ChatCh, ChatJail, ChatMode, ChatMsg } from './chat';
 import type { CastStat } from './cast';
 import type { LeadRules } from './lead';
-import type { PhotoStatus } from './mission';
+import type { MeetScope, MissionKind, PhotoStatus } from './mission';
 
 /** 牢屋からどうやって出たか。sound＝助ける人の音を拾った、together＝同時に長押し、mission＝ミッション成功、host＝主催者が手で */
 export type RescueVia = 'sound' | 'together' | 'mission' | 'host';
-import type { RoleId, WishMode } from './rules';
+import type { AnnounceSettings, AnnounceSound, RoleId, WishMode } from './rules';
 import type { Timer } from './schedule';
+
+/**
+ * 全員に配る「確保」の知らせ（最後の1件）。主催者の設定（AnnounceSettings）で出してよいものだけを入れる。
+ * 名前を出さない設定のときは、サーバーが名前を入れない（誰が鬼か・誰が捕まったかは配らない）
+ */
+export interface CaptureNews {
+  /** 増え続ける番号（配役をまたいでも戻らない）。画面はこれが変わったら帯を出す */
+  seq: number;
+  /** capture＝確保、release＝主催者が確保を取り消した、test＝主催者が試しに出した */
+  kind: 'capture' | 'release' | 'test';
+  /** 帯を出して鳴らす瞬間（サーバー時刻）。全員がこの瞬間に出す */
+  showAt: number;
+  /** 捕まった逃走者（「捕まった人」「捕まえた鬼も」のときだけ） */
+  runner: { num: number; name: string } | null;
+  /** 捕まえた鬼（「捕まえた鬼も」のときで、鬼が分かっているときだけ。主催者が鬼を空欄で記録したら null） */
+  oni: { num: number; name: string } | null;
+  /** この知らせのあとの逃走者の残り（牢屋の外）と、配役の逃走者の数 */
+  left: number;
+  total: number;
+  /** 誰のスマホを鳴らすか（知らせを作ったときの設定） */
+  sound: AnnounceSound;
+}
 
 /** ゲーム全体の段階（サーバーが持つ正解） */
 export type Stage =
@@ -58,6 +81,10 @@ export interface GameView {
   micMode?: 'always' | 'hold';
   /** 遊ぶ範囲（主催者がゲームの前に地図に描いた多角形）。null＝範囲なし。古いサーバーからは来ない */
   area?: Area | null;
+  /** 捕まったときの全員への知らせの設定（主催者が切り替える）。古いサーバーからは来ない */
+  announce?: AnnounceSettings;
+  /** 最後の「確保」の知らせ。配役・リセット・新しい夜で消える。古いサーバーからは来ない */
+  news?: CaptureNews | null;
   /** 範囲の縮み方（主催者が試合の前に決める）。古いサーバーからは来ない */
   shrinkPlan?: ShrinkPlan;
   /** このラウンドの縮小（試合を始めると決まる。縮む先と段）。範囲が無い・始める前は null。古いサーバーからは来ない */
@@ -71,6 +98,8 @@ export interface GameView {
    * 主催者が指名した人は数えない（その人の役は希望と関係なく決まるため）。古いサーバーからは来ない
    */
   wishes?: { oni: number; runner: number };
+  /** チャット：仲間の回線で送れるもの・牢屋の人の決まり・場所の名前。古いサーバーからは来ない（そのときはチャットを出さない） */
+  chat?: { mode: ChatMode; jail: ChatJail; places: string[] };
   /**
    * 配役の希望：いまの人数と割合での、それぞれの役の「開いている枠」（主催者の指名の分を引いたあと）。
    * 古いサーバーからは来ない（そのときは、人数と割合からスマホが出す）
@@ -107,6 +136,31 @@ export interface MissionView {
   /** 出したサーバー時刻 */
   at: number;
   open: boolean;
+  /** 種類（photo＝集合写真、meet＝合流、zone＝範囲）。古いサーバーからは来ない（そのときは集合写真） */
+  kind?: MissionKind;
+  /** 締め切り（サーバー時刻）。無ければ締め切りなし。範囲は必ずある。試合を止めている間は進まない（再開でずれる） */
+  until?: number | null;
+  /** 成功で牢屋から出す人数（null＝全員、0＝出さない）。合流・範囲だけ（集合写真は主催者が成功を押すときに選ぶ） */
+  free?: number | null;
+  /**
+   * 合流：組の数と、成功した組の数。組が MEET_PUBLIC_PAIRS_MAX 以下なら、誰と誰か（pairs）も全員に見せる（鬼にも）。
+   * 自分の相手は MeView.meet で届く
+   */
+  meet?: { scope: MeetScope; groups: number; ok: number; pairs?: MeetPairView[] };
+  /** 範囲：頂点（[緯度, 経度]）・集まる人数・いま中にいる逃走者の数（締め切ったあとは null） */
+  zone?: { pts: [number, number][]; need: number; now: number | null };
+  /**
+   * 合流・範囲の結果（まだなら null）。ok＝成功、count＝成功した組の数／締め切りの瞬間に中にいた人数、
+   * freed＝この成功で牢屋から出た人数。範囲を判定しないまま締め切ったときは null のまま
+   */
+  done?: { ok: boolean; at: number; freed: number; count: number } | null;
+}
+
+/** 合流の1組（2人。人数が奇数のときの最後の組だけ3人） */
+export interface MeetPairView {
+  names: string[];
+  /** 合流した時刻（まだなら null） */
+  okAt: number | null;
 }
 
 export interface MissionOk {
@@ -159,6 +213,16 @@ export interface MeView {
   claim: { at: number; cands: Candidate[] } | null;
   /** ミッション：このラウンドに自分が送った写真（古い順）。古いサーバーからは来ない */
   sent?: { id: string; missionId: number; status: PhotoStatus; at: number }[];
+  /**
+   * 最後の知らせ（game.news）が自分のこと（捕まった本人・捕まえた鬼）なら、その seq。
+   * 本人には自分の知らせ（「捕まった」「捕まえた」）が出るので、全員向けの帯は重ねない。古いサーバーからは来ない
+   */
+  newsAbout?: number | null;
+  /**
+   * ミッション（合流）：自分の組。with＝合流する相手（jailed＝いま牢屋にいる）、okAt＝合流した時刻。
+   * 組に入っていない（鬼・出したときに牢屋にいた・あとから来た）なら null。古いサーバーからは来ない
+   */
+  meet?: { missionId: number; with: { name: string; jailed: boolean }[]; okAt: number | null } | null;
   /** 配役の希望：自分がなりたい役（null＝どちらでも）。古いサーバーからは来ない */
   wish?: RoleId | null;
   /** 配役の希望：続けて希望が通らなかった回数（1以上なら、次の配役で先に通る） */
@@ -228,6 +292,10 @@ export interface HostSummary {
   /** ミッション：このラウンドに届いた写真（古い順）と、写真の保存の使った量（バイト）。古いサーバーは送らない */
   photos?: HostPhoto[];
   photoBytes?: number;
+  /** ミッション（合流）：全部の組（主催者には組が多くても名前で届く）。jailed＝いま牢屋にいる人の名前 */
+  meets?: { names: string[]; okAt: number | null; jailed: string[] }[];
+  /** ミッション（範囲）：いま範囲の中にいる逃走者の名前 */
+  zoneIn?: string[];
   /**
    * 配役の希望：いまの配役を決めたときの数（希望した人数と、通らなかった人数）。くじだけで決めた配役・配役前は null。
    * 古いサーバーは送らない
@@ -358,7 +426,15 @@ export type HostOp =
   | 'skip'
   /** 夜を終える：全員の画面を SEE YOU AGAIN にする。試合中（時間が0になる前）はできない */
   | 'end'
-  /** ミッションを出す（title＝題。空なら既定の題）。前のミッションが開いていれば締め切ってから出す */
+  /** チャット：仲間の回線で送れるもの（chatMode）・牢屋の人の決まり（chatJail）を切り替える。いつでも */
+  | 'chat-mode'
+  /** チャット：札に代入する場所の名前を変える（places） */
+  | 'chat-places'
+  /**
+   * ミッションを出す（title＝題。空なら種類ごとの既定の題）。前のミッションが開いていれば締め切ってから出す。
+   * kind＝種類（省くと集合写真）。合流は scope（all＝全員を2人組／one＝1組だけ）、範囲は zone（頂点）と need（人数）と secs（締め切りまでの秒）。
+   * 合流・範囲は free・n で、成功で牢屋から出す人数を決めておく（free=false で出さない、n を省くと全員）
+   */
   | 'mission'
   /** ミッションを締め切る（写真をもう受け付けない。成功した写真はそのまま） */
   | 'mission-close'
@@ -367,6 +443,10 @@ export type HostOp =
    * 成功のとき free=true なら牢屋の人も出す（n＝人数、省くと全員）。1枚の写真で出すのは最初の成功の1回だけ
    */
   | 'judge'
+  /** 捕まったときの全員への知らせの設定を変える（announce＝新しい設定。いつでも変えられる） */
+  | 'announce'
+  /** 全員のスマホで知らせを試す（帯と音）。試合中（時間が0になる前）はできない */
+  | 'announce-test'
   /** 名前を付け直させる（pid＝名簿の人）。付け直すまで名前は「名前を付け直し中」 */
   | 'name-redo'
   /** 名前を SHAME_NAME に切り替える（pid＝名簿の人）。本人は変えられない */
@@ -404,6 +484,8 @@ export type ClientMsg =
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      /** 捕まったときの全員への知らせの設定 */
+      announce?: AnnounceSettings;
       wishMode?: WishMode;
       /** 配役をいじる：動かす人たち */
       pids?: string[];
@@ -431,6 +513,19 @@ export type ClientMsg =
       n?: number;
       /** 司令塔の札（op: 'lead'。変える札だけ） */
       lead?: Partial<LeadRules>;
+      chatMode?: ChatMode;
+      chatJail?: ChatJail;
+      places?: string[];
+      /** ミッションの種類（省くと集合写真） */
+      kind?: MissionKind;
+      /** 合流：組の作り方 */
+      scope?: MeetScope;
+      /** 範囲：頂点（[緯度, 経度] の並び） */
+      zone?: [number, number][];
+      /** 範囲：集まる人数 */
+      need?: number;
+      /** 締め切りまでの秒（合流は省ける。範囲は要る） */
+      secs?: number | null;
     }
   /**
    * 長押し。on=true は押し始め（HOLD_MIN_MS 押し続けたら送る）、false は離した。
@@ -456,6 +551,11 @@ export type ClientMsg =
    */
   | { t: 'rescue'; on: boolean; at?: number; start?: number }
   /**
+   * ミッション（合流）の長押し。指定された相手と2人で同時に長押しすると、重なった瞬間に成功（牢屋の「助ける」と同じ形）。
+   * on=true は押し始め（HOLD_MIN_MS 押し続けたら送る。at は指を置いた瞬間）、false は離した（start はどの長押しか）
+   */
+  | { t: 'meet'; on: boolean; at?: number; start?: number }
+  /**
    * 走ると光る。on=true は「走っている」（光っている間 RUN_SEND_EVERY_MS ごとに送り直す）、false は「止まった」。
    * 位置が取れていれば付ける（緯度・経度・誤差の半径 m）。ゲームの段階の外・捕まった人の分は、サーバーが捨てる
    */
@@ -478,16 +578,36 @@ export type ClientMsg =
    * 配役の希望：次の配役でなりたい役（null＝どちらでも）。配役の前（待合室・結果発表）と、見学の人だけ変えられる。
    * 役が決まってからゲームが終わるまでの分は、サーバーが捨てて今の状態を送り直す
    */
-  | { t: 'wish'; role: RoleId | null };
+  | { t: 'wish'; role: RoleId | null }
+  /**
+   * チャットを送る。参加者：card＝札の id（person＝仲間の番号、place＝場所の名前、位置は取れていれば付ける）、
+   * emoji＝絵文字の札の番号の並び、digit＝数字。どれを送れるかはサーバーが決め、合わない分は捨てる。
+   * 主催者：ch は hq、text＝文、to＝all（全員）・oni・runner・pid:<その人>（1人への返事）
+   */
+  | {
+      t: 'chat';
+      ch: ChatCh;
+      card?: string;
+      person?: number;
+      place?: string;
+      emoji?: number[];
+      digit?: string;
+      text?: string;
+      to?: string;
+      lat?: number;
+      lon?: number;
+      acc?: number;
+    };
 
 /**
  * 本人だけに出す短い知らせ（画面の帯・振動）。状態そのものは snap の me で届く。
  * captured＝鬼「◯◯を捕まえた」、caught＝逃走者「◯◯に捕まった」、heard＝鬼「◯◯をロックオン（音を拾った）」、
  * nominated＝鬼「◯◯に選んでもらう」、released＝主催者が捕獲を取り消した、closed＝今は記録できない、already＝もう捕まっている。
  * 牢屋：freed＝牢屋の人「◯◯が助けてくれた」（other が無ければミッション・主催者）、saved＝助けた人「◯◯を牢屋から出した」、
- * immune＝その逃走者は解放された直後で、まだ捕まらない
+ * immune＝その逃走者は解放された直後で、まだ捕まらない。
+ * ミッション（合流）：met＝「◯◯と合流した」
  */
-export type NoticeKind = 'captured' | 'caught' | 'heard' | 'nominated' | 'released' | 'closed' | 'already' | 'freed' | 'saved' | 'immune';
+export type NoticeKind = 'captured' | 'caught' | 'heard' | 'nominated' | 'released' | 'closed' | 'already' | 'freed' | 'saved' | 'immune' | 'met';
 
 /** 手動で選ぶ一覧の1人 */
 export interface RosterEntry {
@@ -520,4 +640,9 @@ export type ServerMsg =
   /** 走ると光る：いま光っている全員（全員に同じものを送る。変わるたびに、まとめて）。s はサーバーの時刻 */
   | { t: 'glow'; s: number; runs: GlowEntry[] }
   /** 全体の地図：見えてよい人の位置（その人の役で中身が変わる）。s はサーバーの時刻 */
-  | { t: 'mates'; s: number; scope: MatesScope; people: MateEntry[] };
+  | { t: 'mates'; s: number; scope: MatesScope; people: MateEntry[] }
+  /**
+   * チャット。reset＝true は「いま見えてよい全部」（つないだとき・配役が変わったとき。手元の分を入れ替える）、無ければ足す分。
+   * team は同じ役の仲間（「◯◯、一緒に来て！」で選ぶ相手。自分は入らない）。reset のときだけ付く
+   */
+  | { t: 'chat'; s: number; reset?: boolean; msgs: ChatMsg[]; team?: { num: number; name: string }[] };

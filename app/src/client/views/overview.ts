@@ -41,10 +41,12 @@ export interface OvInput {
   area?: [number, number][] | null;
   /** 牢屋の場所（決まっている形）。無ければ null。月白の薄い面と「牢屋」の字 */
   jail?: [number, number][] | null;
+  /** ミッションの範囲（決まっている形）。無ければ null。蓄光の面と「ミッション」の字。鬼にも逃走者にも同じものを出す */
+  mzone?: [number, number][] | null;
   /** 描いている途中の範囲（主催者が地図を押して足していく点） */
   draft?: [number, number][] | null;
   /** 描いている途中のものがどれか（既定は遊ぶ範囲）。同じものの決まった形を薄くする */
-  draftLayer?: 'area' | 'jail';
+  draftLayer?: 'area' | 'jail' | 'mzone';
   /** 枠の決め方：area＝範囲があれば範囲に合わせる（既定）、campus＝いつもキャンパス全体から（範囲を描くとき） */
   frameBase?: 'area' | 'campus';
   /** 自分が範囲の外にいる */
@@ -91,6 +93,12 @@ export function fromWorld(x: number, y: number): LatLon {
   return { lat: (Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180) / Math.PI, lon: x * 360 - 180 };
 }
 
+/** 枠の外側の余白に足す分（枠の幅・高さに対する割合。0 なら今まで通り）。本部は周りの道や建物まで見せたいので広げる */
+let framePad = 0;
+export function setFramePad(p: number): void {
+  framePad = p;
+}
+
 /**
  * 地図の枠：もとの枠（範囲があれば範囲、無ければキャンパス）と、近くにいる人を全部入れる。返り値は世界の座標の矩形。
  * base に範囲の頂点を渡すと、範囲に合わせる
@@ -104,7 +112,7 @@ export const FRAME_EXPAND_M = 40;
  * 地図の枠：もとの枠（範囲があれば範囲、無ければメビウスリングのまわり）と、そのすぐ外（FRAME_EXPAND_M 以内）にいる人を入れる。
  * 返り値は世界の座標の矩形。pad は余白の割合
  */
-export function frameOf(points: LatLon[], base?: LatLon[] | null, pad = 0.04): { x0: number; y0: number; x1: number; y1: number } {
+export function frameOf(points: LatLon[], base?: LatLon[] | null, pad = 0.04 + framePad): { x0: number; y0: number; x1: number; y1: number } {
   let x0: number;
   let y0: number;
   let x1: number;
@@ -195,20 +203,22 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     const draftPts = (input.draft ?? []).map(([lat, lon]) => ({ lat, lon }));
     const jailPts = (input.jail ?? []).map(([lat, lon]) => ({ lat, lon }));
     const draftJail = input.draftLayer === 'jail';
+    const mzonePts = (input.mzone ?? []).map(([lat, lon]) => ({ lat, lon }));
     const all: LatLon[] = [...input.points.map((p) => p.pos), ...(input.me ? [input.me] : [])];
     const editing = input.frameBase === 'campus';
     // 範囲を描くときは、キャンパスと描いた点が全部入る枠。遊ぶときは範囲に合わせる
     // 描くとき：範囲があれば範囲（と牢屋・描いている点）に、無ければメビウスリングのまわりに合わせ、少し広めの余白。
     // 遊ぶとき：範囲いっぱいに。範囲のすぐ外の人までは入れ、遠い人は地図のふちに寄せる
     const f = editing
-      ? frameOf([...jailPts, ...draftPts], areaPts.length >= 3 ? areaPts : null, 0.12)
-      : frameOf([...all, ...jailPts], areaPts.length >= 3 ? areaPts : null);
+      ? frameOf([...jailPts, ...draftPts], areaPts.length >= 3 ? areaPts : null, 0.12 + framePad)
+      : frameOf([...all, ...jailPts, ...mzonePts], areaPts.length >= 3 ? areaPts : null);
     const S = Math.min(w / (f.x1 - f.x0), h / (f.y1 - f.y0)); // 画面の px ／ 世界の 1
     const cx = (f.x0 + f.x1) / 2;
     const cy = (f.y0 + f.y1) / 2;
     const key = JSON.stringify([
       w,
       h,
+      framePad,
       Math.round(S),
       cx.toFixed(7),
       cy.toFixed(7),
@@ -220,6 +230,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       input.area,
       input.draft,
       input.jail,
+      input.mzone,
       input.draftLayer,
       input.frameBase,
       input.meOut,
@@ -322,6 +333,19 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       const ring = jailPts.map((p) => px(p));
       const d = ring.map((q, i) => `${i ? 'L' : 'M'}${q.x.toFixed(1)},${q.y.toFixed(1)}`).join('') + 'Z';
       areaG.append(svg('path', { d, class: `ov-jail${draftPts.length && draftJail ? ' is-old' : ''}` }));
+    }
+    // ミッションの範囲：蓄光の面と点線、真ん中に「ミッション」
+    if (mzonePts.length >= 3) {
+      const ring = mzonePts.map((p) => px(p));
+      const d = ring.map((q, i) => `${i ? 'L' : 'M'}${q.x.toFixed(1)},${q.y.toFixed(1)}`).join('') + 'Z';
+      // 字は枠の上（中にいる人の点と名前に重ねない）。上に置けなければ枠の下
+      const cx0 = ring.reduce((a, q) => a + q.x / ring.length, 0);
+      const top = Math.min(...ring.map((q) => q.y));
+      const bottom = Math.max(...ring.map((q) => q.y));
+      const ty = top - 11 >= 10 ? top - 11 : Math.min(h - 10, bottom + 12);
+      const t = svg('text', { x: Math.max(44, Math.min(w - 44, cx0)).toFixed(1), y: ty.toFixed(1), class: 'ov-mzone-name', 'text-anchor': 'middle', 'dominant-baseline': 'central' });
+      t.textContent = 'ミッション';
+      areaG.append(svg('path', { d, class: 'ov-mzone' }), t);
     }
     if (draftPts.length) {
       const ring = draftPts.map((p) => px(p));

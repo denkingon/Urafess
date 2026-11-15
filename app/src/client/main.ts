@@ -6,11 +6,14 @@ import { bootQuiet, connectingView, participantView, type PhoneView } from '../s
 import { GameClient, type KeyValueStore } from './core/game-client';
 import { detectInstall, lineEscapeUrl, type InstallPath } from './install/detect';
 import { getCodec } from './sound/codec';
+import { AnnounceChime } from './sound/chime';
 import { SoundEmitter } from './sound/emitter';
 import { SoundListener } from './sound/listener';
 import { Sensors } from './sense';
 import { callAccount, createAccount, errorText } from './views/account';
+import { createAnnounce } from './views/announce';
 import { createCapture } from './views/capture';
+import { createChat } from './views/chat';
 import { createGlow } from './views/glow';
 import { createHost, type HostActions } from './views/host';
 import { createHQ } from './views/hq';
@@ -214,17 +217,27 @@ function startPlayer(): void {
   const wish = createWish({ client });
   phone.slot.append(wish.el);
   // ミッション（集合写真）：題と「写真を撮る」は長押しの上に、成功した写真は結果発表の間だけ真ん中に
+  // 走ると光る・全体の地図のセンサー（ミッションの「範囲」も、自分が中か外かをこの位置で見る）
+  const sensors = new Sensors();
   const mission = createMission({
     gameId,
     identity: () => client.state.identity,
     serverNow: () => client.serverNow() ?? Date.now(),
+    meetStart: (at) => client.meetStart(at),
+    meetEnd: (at) => client.meetEnd(at),
+    position: () => {
+      const p = sensors.position(Date.now());
+      return p ? { lat: p.lat, lon: p.lon } : null;
+    },
   });
   phone.slot.prepend(mission.card);
   phone.stage.prepend(mission.gallery);
   // 走ると光る：走っているかはこのスマホが決め、光っている間だけ位置を送る
-  const sensors = new Sensors();
   const glow = createGlow({ sensors, root: phone.el, onDisqualified: () => client.disqualified(), onReported: () => client.reportedToJail() });
   phone.stage.append(glow.el);
+  // チャット：1行の帯は長押しの板のすぐ上、開いた板は真ん中の絵の場所（長押しの板は出したまま）
+  const chat = createChat({ client, sensors, root: phone.el });
+  phone.slot.before(chat.panel, chat.strip);
   const reporter = new RunReporter();
   let lastView: PhoneView | null = null;
   let lastMatePos = 0;
@@ -253,9 +266,14 @@ function startPlayer(): void {
     }
   }, 250);
   // 音は「画面に触れた直後」にしか出させてもらえない。長押しより前のタップで一度準備しておく
+  // 捕まったときの全員への知らせ（帯と確保の音。全員のスマホで同じ瞬間に出る）
+  const chime = new AnnounceChime();
+  const announce = createAnnounce(chime);
+  phone.el.append(announce.el);
   const unlock = () => {
     emitter.unlock();
     listener.unlock();
+    chime.unlock();
   };
   document.addEventListener('pointerup', unlock, { capture: true, passive: true });
   document.addEventListener('click', unlock, { capture: true, passive: true });
@@ -332,18 +350,28 @@ function startPlayer(): void {
       mission.update(null, null);
       wish.update(waiting, s);
       glow.update(waiting, s, client.serverNow());
+      chat.update(null, s, Date.now());
       return;
     }
     show(phone.el);
     phone.mine.hidden = inMatch(s.game.stage);
-    const view = participantView(s.game, s.me, client.serverNow() ?? Date.now(), s.online);
+    const serverNow = client.serverNow() ?? Date.now();
+    const view = participantView(s.game, s.me, serverNow, s.online);
     lastView = view;
     phone.update(view);
+    {
+      // 古いサーバーは news を送らない（無ければ知らせなし）
+      const news = s.game.news ?? null;
+      const me = s.me;
+      const freeRunner = me.role === 'runner' && me.assignId === s.game.assignId && !me.removed && me.caught == null;
+      announce.update({ news, aboutMe: news !== null && me.newsAbout === news.seq, serverNow, freeRunner, busy: emitter.playing });
+    }
     capture.update(view, s);
     mission.update(s.game, s.me);
     jail.update(view, s);
     wish.update(view, s);
     glow.update(view, s, client.serverNow());
+    chat.update(view, s, client.serverNow() ?? Date.now());
     // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）
     if (s.me.code && s.me.code !== preparedCode) {
       preparedCode = s.me.code;
@@ -404,6 +432,7 @@ function startHost(token: string): void {
   const sensors = new Sensors();
   const hostActions: HostActions = {
     command: (op, extra) => client.command(op, extra),
+    chat: (to, text) => client.hostChat(to, text),
     downloadLog: async () => {
       const res = await fetch(`/api/game/${gameId}/log`, { headers: hostHeaders, cache: 'no-store' });
       if (!res.ok) throw new Error(`log ${res.status}`);
@@ -462,6 +491,12 @@ function startHost(token: string): void {
     host.el.querySelector('.host-head')?.after(go);
   }
   root.replaceChildren(host.el);
+  // 主催者の画面にも全員への知らせを出す（確保の音も鳴る。音のために、どこかのタップで一度準備する）
+  const chime = new AnnounceChime();
+  const announce = createAnnounce(chime);
+  host.el.append(announce.el);
+  document.addEventListener('pointerup', () => chime.unlock(), { capture: true, passive: true });
+  document.addEventListener('click', () => chime.unlock(), { capture: true, passive: true });
   loop(() => {
     const s = client.state;
     screenKeeper.set(inMatch(s.game?.stage));
@@ -480,7 +515,9 @@ function startHost(token: string): void {
       lastReject: s.lastReject,
       glow: s.glow,
       mates: s.mates,
+      chat: s.chat,
     });
+    announce.update({ news: s.game?.news ?? null, aboutMe: false, serverNow: client.serverNow() ?? Date.now(), freeRunner: false, busy: false });
   });
 }
 
