@@ -3,12 +3,35 @@ import type { ShrinkLive, ShrinkPlan } from './shrink';
 import type { Candidate, CaptureVia } from './capture';
 import type { ChatCh, ChatJail, ChatMode, ChatMsg } from './chat';
 import type { CastStat } from './cast';
+import type { LeadRules } from './lead';
 import type { MeetScope, MissionKind, PhotoStatus } from './mission';
 
 /** 牢屋からどうやって出たか。sound＝助ける人の音を拾った、together＝同時に長押し、mission＝ミッション成功、host＝主催者が手で */
 export type RescueVia = 'sound' | 'together' | 'mission' | 'host';
-import type { RoleId, WishMode } from './rules';
+import type { AnnounceSettings, AnnounceSound, RevealMode, RoleId, WishMode } from './rules';
 import type { Timer } from './schedule';
+
+/**
+ * 全員に配る「確保」の知らせ（最後の1件）。主催者の設定（AnnounceSettings）で出してよいものだけを入れる。
+ * 名前を出さない設定のときは、サーバーが名前を入れない（誰が鬼か・誰が捕まったかは配らない）
+ */
+export interface CaptureNews {
+  /** 増え続ける番号（配役をまたいでも戻らない）。画面はこれが変わったら帯を出す */
+  seq: number;
+  /** capture＝確保、release＝主催者が確保を取り消した、test＝主催者が試しに出した */
+  kind: 'capture' | 'release' | 'test';
+  /** 帯を出して鳴らす瞬間（サーバー時刻）。全員がこの瞬間に出す */
+  showAt: number;
+  /** 捕まった逃走者（「捕まった人」「捕まえた鬼も」のときだけ） */
+  runner: { num: number; name: string } | null;
+  /** 捕まえた鬼（「捕まえた鬼も」のときで、鬼が分かっているときだけ。主催者が鬼を空欄で記録したら null） */
+  oni: { num: number; name: string } | null;
+  /** この知らせのあとの逃走者の残り（牢屋の外）と、配役の逃走者の数 */
+  left: number;
+  total: number;
+  /** 誰のスマホを鳴らすか（知らせを作ったときの設定） */
+  sound: AnnounceSound;
+}
 
 /** ゲーム全体の段階（サーバーが持つ正解） */
 export type Stage =
@@ -58,6 +81,10 @@ export interface GameView {
   micMode?: 'always' | 'hold';
   /** 遊ぶ範囲（主催者がゲームの前に地図に描いた多角形）。null＝範囲なし。古いサーバーからは来ない */
   area?: Area | null;
+  /** 捕まったときの全員への知らせの設定（主催者が切り替える）。古いサーバーからは来ない */
+  announce?: AnnounceSettings;
+  /** 最後の「確保」の知らせ。配役・リセット・新しい夜で消える。古いサーバーからは来ない */
+  news?: CaptureNews | null;
   /** 範囲の縮み方（主催者が試合の前に決める）。古いサーバーからは来ない */
   shrinkPlan?: ShrinkPlan;
   /** このラウンドの縮小（試合を始めると決まる。縮む先と段）。範囲が無い・始める前は null。古いサーバーからは来ない */
@@ -78,6 +105,36 @@ export interface GameView {
    * 古いサーバーからは来ない（そのときは、人数と割合からスマホが出す）
    */
   wishSlots?: { oni: number; runner: number };
+  /** 配役の出し方の設定（sync＝全員同時にドン／tap＝タップした人から／now＝すぐ出す）。次の配役から効く。古いサーバーからは来ない */
+  revealMode?: RevealMode;
+  /**
+   * いまの配役の出し方（配役を押したときの設定）。hitAt は sync のとき全員の画面で役が出るサーバー時刻（ほかは null）。
+   * 配役前は null。古いサーバーからは来ない（そのときはすぐ出す）
+   */
+  reveal?: { mode: RevealMode; hitAt: number | null } | null;
+  /** 司令塔の札（本部のデッキで入れたり外したりする）。誰が司令塔かは入れない。古いサーバーからは来ない（そのときは外してある） */
+  lead?: LeadRules;
+}
+
+/**
+ * 司令塔：本人に送る、自分の側のいま。しくみを入れていて、今の配役で役がある人にだけ付く。
+ * mine＝自分が司令塔、name＝自分の側の司令塔の名前（いなければ null）、map＝全体の地図を見られる、
+ * down＝逃走者の司令塔が落ちている（どちらの側にも同じ値）、foes＝相手の全員の居場所が見えている（鬼だけ）
+ */
+export interface MeLead {
+  mine: boolean;
+  name: string | null;
+  map: boolean;
+  down: boolean;
+  foes: boolean;
+}
+
+/** 司令塔：主催者に送る、いまの司令塔（pid が null＝その側にいない） */
+export interface HostLead {
+  oni: { pid: string; name: string } | null;
+  runner: { pid: string; name: string } | null;
+  /** 逃走者の司令塔が落ちている */
+  down: boolean;
 }
 
 export interface MissionView {
@@ -164,6 +221,11 @@ export interface MeView {
   /** ミッション：このラウンドに自分が送った写真（古い順）。古いサーバーからは来ない */
   sent?: { id: string; missionId: number; status: PhotoStatus; at: number }[];
   /**
+   * 最後の知らせ（game.news）が自分のこと（捕まった本人・捕まえた鬼）なら、その seq。
+   * 本人には自分の知らせ（「捕まった」「捕まえた」）が出るので、全員向けの帯は重ねない。古いサーバーからは来ない
+   */
+  newsAbout?: number | null;
+  /**
    * ミッション（合流）：自分の組。with＝合流する相手（jailed＝いま牢屋にいる）、okAt＝合流した時刻。
    * 組に入っていない（鬼・出したときに牢屋にいた・あとから来た）なら null。古いサーバーからは来ない
    */
@@ -179,6 +241,8 @@ export interface MeView {
    * 本人の画面の文を合わせるために送る（配役の前は、板のひとことを「配役を待つ」にする。配役のあとは「主催者が決めた」）
    */
   hostCast?: boolean;
+  /** 司令塔：自分の側のいま（しくみを外してある・役が無いときは付かない） */
+  lead?: MeLead | null;
 }
 
 /** 主催者が見る、今の配役の捕獲 */
@@ -246,6 +310,8 @@ export interface HostSummary {
   wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
   /** 配役の希望：次の配役で先に通る人（前に外れた人）の数 */
   wishPrio?: number;
+  /** 配役の出し方：今の配役で、役が画面に出た人（tap なら、カードを止めた人）。古いサーバーは送らない */
+  seen?: number;
   /**
    * 配役をいじる：今夜の参加者の1人ずつ（名簿に入った順）。主催者が指名する・配役のあとに動かすための一覧。
    * 古いサーバーは送らない
@@ -258,6 +324,8 @@ export interface HostSummary {
   names?: { pid: string; num: number; name: string; hit: string | null; state: 'ok' | 'due' | 'shamed'; tonight: boolean }[];
   /** 名前に使えない言葉：主催者が足した言葉と、最初から入っている言葉の数 */
   bans?: { custom: string[]; builtin: number };
+  /** 司令塔：いまの司令塔（しくみを外してある・配役前は null）。古いサーバーは送らない */
+  lead?: HostLead | null;
 }
 
 /** 主催者が配役をいじるための1人 */
@@ -295,6 +363,11 @@ export interface GlowEntry {
   since: number;
   /** 最後に届いたサーバー時刻 */
   at: number;
+  /**
+   * 司令塔（どちらの側か）。司令塔は走っていなくても、ゲームの段階の間ずっとここに入る（見る代わりに見られる）。
+   * 走っていない司令塔の位置は MATES_SEND_EVERY_MS ごとにしか届かないので、消すまでの長さは MATES_STALE_MS で見る
+   */
+  lead?: RoleId;
 }
 
 /**
@@ -340,6 +413,8 @@ export type HostOp =
    */
   | 'cast'
   | 'tag'
+  /** 配役の出し方を切り替える（sync＝全員同時にドン／tap＝タップした人から／now＝すぐ出す）。次の配役から効く */
+  | 'reveal'
   /** 遊ぶ範囲を決める（area＝頂点の並び、null で範囲なし）。試合中（時間が0になる前）は変えられない */
   /** 遊ぶ範囲・牢屋の場所を決める（layer で選ぶ。area＝頂点の並び、null でなし）。試合中（時間が0になる前）は変えられない */
   | 'area'
@@ -379,13 +454,23 @@ export type HostOp =
    * 成功のとき free=true なら牢屋の人も出す（n＝人数、省くと全員）。1枚の写真で出すのは最初の成功の1回だけ
    */
   | 'judge'
+  /** 捕まったときの全員への知らせの設定を変える（announce＝新しい設定。いつでも変えられる） */
+  | 'announce'
+  /** 全員のスマホで知らせを試す（帯と音）。試合中（時間が0になる前）はできない */
+  | 'announce-test'
   /** 名前を付け直させる（pid＝名簿の人）。付け直すまで名前は「名前を付け直し中」 */
   | 'name-redo'
   /** 名前を SHAME_NAME に切り替える（pid＝名簿の人）。本人は変えられない */
   | 'name-shame'
   /** 名前に使えない言葉を足す・消す（word） */
   | 'ban-add'
-  | 'ban-remove';
+  | 'ban-remove'
+  /** 司令塔の札を変える（lead＝変える札だけ。on で入れる・外す）。いつでも */
+  | 'lead'
+  /** 司令塔を指名する（pid＝今の配役で役がある人。その人の側の司令塔になる） */
+  | 'lead-pick'
+  /** 司令塔をくじで引き直す（role＝どちらの側か） */
+  | 'lead-draw';
 
 export type ClientMsg =
   /** 新しく名簿に入って、今夜に入る（名前が名簿にあれば taken が返る） */
@@ -401,6 +486,8 @@ export type ClientMsg =
   | { t: 'host'; token: string }
   | { t: 'ping'; id: number; a: number }
   | { t: 'ack'; assignId: number }
+  /** 役が画面に出た（ドラムロールが止まった。tap なら、本人がカードを止めた）。主催者画面の「役が出た」と記録に使う */
+  | { t: 'seen'; assignId: number }
   | { t: 'sync'; err: number }
   | {
       t: 'cmd';
@@ -410,6 +497,8 @@ export type ClientMsg =
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      /** 捕まったときの全員への知らせの設定 */
+      announce?: AnnounceSettings;
       wishMode?: WishMode;
       /** 配役をいじる：動かす人たち */
       pids?: string[];
@@ -418,6 +507,7 @@ export type ClientMsg =
       /** 印を付ける・外す（op: 'tag'。pids の人たちに） */
       tag?: string;
       on?: boolean;
+      reveal?: RevealMode;
       /** 遊ぶ範囲の頂点（[緯度, 経度] の並び）。null で範囲なし */
       area?: [number, number][] | null;
       /** 範囲の縮み方 */
@@ -435,6 +525,8 @@ export type ClientMsg =
       free?: boolean;
       /** ミッション成功で出す人数（省くと全員） */
       n?: number;
+      /** 司令塔の札（op: 'lead'。変える札だけ） */
+      lead?: Partial<LeadRules>;
       chatMode?: ChatMode;
       chatJail?: ChatJail;
       places?: string[];

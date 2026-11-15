@@ -1,9 +1,10 @@
+import type { LeadRules } from '../../shared/lead';
 import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
 import { CHAT_KEEP, type ChatCh, type ChatJail, type ChatMode, type ChatMsg } from '../../shared/chat';
 import type { MeetScope, MissionKind } from '../../shared/mission';
 import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
-import { SILENCE_LIMIT_MS, type RoleId, type WishMode } from '../../shared/rules';
+import { SILENCE_LIMIT_MS, type AnnounceSettings, type RevealMode, type RoleId, type WishMode } from '../../shared/rules';
 
 /**
  * しくみの層。接続・時計合わせ・状態だけを持ち、見た目は一切知らない。
@@ -428,6 +429,16 @@ export class GameClient {
     return true;
   }
 
+  /**
+   * 配役のドラムロール：役が画面に出た（止まった）ことを知らせる。主催者画面の「役が出た」と記録に使うだけ。
+   * 切れている間は送れない（false。つながったあとにもう一度呼ぶ）
+   */
+  seen(assignId: number): boolean {
+    if (!this.isOpen() || assignId <= 0) return false;
+    this.send({ t: 'seen', assignId });
+    return true;
+  }
+
   /** チャットを送る（参加者）。切れている間は送れない（false）。届いた分は、サーバーから戻ってきて画面に出る */
   chat(m: ChatSend): boolean {
     if (!this.isOpen()) return false;
@@ -481,7 +492,9 @@ export class GameClient {
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      announce?: AnnounceSettings;
       wishMode?: WishMode;
+      reveal?: RevealMode;
       pids?: string[];
       role?: RoleId | null;
       tag?: string;
@@ -498,6 +511,7 @@ export class GameClient {
       photo?: string;
       free?: boolean;
       n?: number;
+      lead?: Partial<LeadRules>;
       chatMode?: ChatMode;
       chatJail?: ChatJail;
       places?: string[];

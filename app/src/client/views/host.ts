@@ -1,9 +1,15 @@
 import type { LogLine } from '../../shared/logline';
+import type { LeadRules } from '../../shared/lead';
+import { SHOW_EXAMPLE, SOUND_NAME } from '../../shared/announce';
 import { CAPTURE_PHASE_INDEX, captureOpenAt, VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
 import { allocateCounts, castCounts } from '../../shared/allocate';
 import { CAST_SORTS, castStatText, DEFAULT_TAGS, sortCast, TAG_MAX_LEN, TAGS_MAX, type CastSort } from '../../shared/cast';
 import {
+  ANNOUNCE_DEFAULT,
+  type AnnounceSettings,
+  type AnnounceShow,
+  type AnnounceSound,
   DEFAULT_RATIO,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
@@ -15,9 +21,12 @@ import {
   MATES_STALE_MS,
   RUN_STALE_MS,
   START_LEAD_MS,
+  type RevealMode,
   type RoleId,
   type WishMode,
 } from '../../shared/rules';
+
+const REVEAL_LABEL: Record<RevealMode, string> = { sync: '全員同時にドン', tap: 'タップで自分の', now: 'すぐ出す' };
 import { formatClock, isDone, positionAt } from '../../shared/schedule';
 import {
   MISSION_DEFAULT_TITLES,
@@ -91,7 +100,9 @@ export interface HostActions {
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      announce?: AnnounceSettings;
       wishMode?: WishMode;
+      reveal?: RevealMode;
       pids?: string[];
       role?: RoleId | null;
       tag?: string;
@@ -107,6 +118,7 @@ export interface HostActions {
       photo?: string;
       free?: boolean;
       n?: number;
+      lead?: Partial<LeadRules>;
       chatMode?: ChatMode;
       chatJail?: ChatJail;
       places?: string[];
@@ -211,6 +223,22 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       </div>
       <p class="note" data-k="micNote"></p>
     </div>
+    <div class="mic-mode announce-set">
+      <span>捕まったら全員に知らせる</span>
+      <div class="seg" role="group" aria-label="帯に出すもの">
+        <button type="button" data-show="both" aria-pressed="false">鬼も</button>
+        <button type="button" data-show="runner" aria-pressed="false">捕まった人</button>
+        <button type="button" data-show="count" aria-pressed="false">人数だけ</button>
+        <button type="button" data-show="off" aria-pressed="false">なし</button>
+      </div>
+      <div class="seg" role="group" aria-label="音を鳴らすスマホ">
+        <button type="button" data-sound="all" aria-pressed="false">全員鳴らす</button>
+        <button type="button" data-sound="oni" aria-pressed="false">逃走者以外</button>
+        <button type="button" data-sound="none" aria-pressed="false">鳴らさない</button>
+      </div>
+      <p class="note" data-k="annNote"></p>
+      <button type="button" data-k="annTest">全員のスマホで試す（帯と音）</button>
+    </div>
     <div class="mic-mode wish-mode">
       <span>配役の決め方</span>
       <div class="seg" role="group" aria-label="配役の決め方">
@@ -218,6 +246,15 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         <button type="button" data-wishmode="lot" aria-pressed="false">くじだけ</button>
       </div>
       <p class="note" data-k="wishNote"></p>
+    </div>
+    <div class="mic-mode reveal-mode">
+      <span>配役の出し方</span>
+      <div class="seg" role="group" aria-label="配役の出し方">
+        <button type="button" data-reveal="sync" aria-pressed="false">全員同時</button>
+        <button type="button" data-reveal="tap" aria-pressed="false">タップ</button>
+        <button type="button" data-reveal="now" aria-pressed="false">すぐ出す</button>
+      </div>
+      <p class="note" data-k="revealNote"></p>
     </div>
     <section class="cap-host cast-host" data-k="cast" hidden>
       <div class="cap-host-head"><b>配役をいじる</b><span data-k="castNow"></span></div>
@@ -441,6 +478,18 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   });
 
   // 鬼のマイクの聞き方：いつでも切り替えられる（試合中でも、そのときから全員に効く）。どちらで記録したかは CSV に残る
+  // 捕まったときの全員への知らせ：押したらすぐ送る（いつでも変えられる）
+  let annNow: AnnounceSettings = { ...ANNOUNCE_DEFAULT };
+  const showBtns = [...el.querySelectorAll('[data-show]')] as HTMLButtonElement[];
+  const soundBtns = [...el.querySelectorAll('[data-sound]')] as HTMLButtonElement[];
+  showBtns.forEach((b) =>
+    b.addEventListener('click', () => actions.command('announce', { announce: { ...annNow, show: b.dataset.show as AnnounceShow } })),
+  );
+  soundBtns.forEach((b) =>
+    b.addEventListener('click', () => actions.command('announce', { announce: { ...annNow, sound: b.dataset.sound as AnnounceSound } })),
+  );
+  const annTest = el.querySelector('[data-k="annTest"]') as HTMLButtonElement;
+  annTest.addEventListener('click', () => actions.command('announce-test'));
   const micBtns = [...el.querySelectorAll('[data-mic]')] as HTMLButtonElement[];
   micBtns.forEach((b) =>
     b.addEventListener('click', () => {
@@ -492,6 +541,15 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     b.addEventListener('click', () => {
       if (b.getAttribute('aria-pressed') === 'true') return;
       actions.command('wish-mode', { wishMode: b.dataset.wishmode as WishMode });
+    }),
+  );
+
+  // 配役の出し方：全員同時にドン／タップで自分の／すぐ出す。次の配役から効く
+  const revealBtns = [...el.querySelectorAll('[data-reveal]')] as HTMLButtonElement[];
+  revealBtns.forEach((b) =>
+    b.addEventListener('click', () => {
+      if (b.getAttribute('aria-pressed') === 'true') return;
+      actions.command('reveal', { reveal: b.dataset.reveal as RevealMode });
     }),
   );
 
@@ -1165,7 +1223,9 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       const assigned = game.stage !== 'lobby';
       q('oni').textContent = assigned ? String(game.counts.oni) : '—';
       q('runner').textContent = assigned ? String(game.counts.runner) : '—';
-      q('received').textContent = assigned ? `${host.received}/${host.assigned}` : '—';
+      q('received').textContent = assigned
+        ? `${host.received}/${host.assigned}` + (host.seen !== undefined && game.reveal && game.reveal.mode !== 'now' ? `（役が出た ${host.seen}）` : '')
+        : '—';
       q('synced').textContent = `${host.synced}/${host.connected}`;
       const asks = host.reclaims ?? [];
       q('asks').textContent = asks.length ? `${asks.length}人` : 'なし';
@@ -1174,6 +1234,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         `　／　割合 鬼${(game.ratio ?? DEFAULT_RATIO).oni}：逃走者${(game.ratio ?? DEFAULT_RATIO).runner}` +
         `　／　鬼のマイク ${(game.micMode ?? 'always') === 'always' ? 'ずっと聞く' : '押している間だけ'}` +
         `　／　配役 ${(game.wishMode ?? 'lot') === 'wish' ? '希望を聞く' : 'くじだけ'}` +
+        (game.revealMode ? `　／　出し方 ${REVEAL_LABEL[game.revealMode]}` : '') +
         (host.waiting ? `　／　次の配役を待っている人 ${host.waiting}人` : '') +
         (host.registry !== undefined ? `　／　名簿 ${host.registry}人` : '');
       // 前の夜のまま集め始めないように：待合室で、夜を始めてから半日以上たっていたら知らせる
@@ -1255,6 +1316,22 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       });
       (form.querySelector('button') as HTMLButtonElement).disabled = !canEditDurations;
 
+      const ann = game.announce ?? ANNOUNCE_DEFAULT;
+      annNow = ann;
+      showBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.show === ann.show)));
+      soundBtns.forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.sound === ann.sound));
+        b.disabled = ann.show === 'off';
+      });
+      q('annNote').textContent =
+        ann.show === 'off'
+          ? SHOW_EXAMPLE.off
+          : `例：${SHOW_EXAMPLE[ann.show]}・逃走者 残り 6/7。音：${SOUND_NAME[ann.sound]}` +
+            (ann.sound === 'none' ? '' : '（全員のスマホで同じ瞬間に鳴る）') +
+            '。iPhone はウェブから震わせられないので、ポケットの iPhone に届くのは音だけ';
+      // 試合中は本物の確保と取り違えるので試さない
+      annTest.disabled = game.stage === 'timer' && !!game.timer && !isDone(game.timer, serverNow);
+
       const mic = game.micMode ?? 'always';
       micBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mic === mic)));
       q('micNote').textContent =
@@ -1269,6 +1346,20 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         b.disabled = !canEditDurations || game.wishMode === undefined;
       });
       q('wishNote').textContent = wishNote(game, host);
+
+      const reveal = game.revealMode ?? 'now';
+      revealBtns.forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.reveal === reveal));
+        // 古いサーバー（出し方を送ってこない）では切り替えられない。切り替えはいつでもできる（次の配役から効く）
+        b.disabled = game.revealMode === undefined;
+      });
+      const nowRv = game.stage === 'assigned' && game.reveal && game.reveal.mode !== reveal ? `（いまの配役は「${REVEAL_LABEL[game.reveal.mode]}」。次の配役から変わる）` : '';
+      q('revealNote').textContent =
+        (reveal === 'sync'
+          ? '配役を押すと、全員の画面でカードが流れ、5秒後に全員同時に役が出る'
+          : reveal === 'tap'
+            ? '流れているカードをタップした人から役が出る。押していない人は「開始」で出る'
+            : 'カードは流さず、配役と同時に役が出る（前の版と同じ）') + nowRv;
 
       // 配役をいじる
       const cast = host.cast;

@@ -117,6 +117,31 @@ export type MicMode = 'always' | 'hold';
 export const DEFAULT_MIC_MODE: MicMode = 'always';
 export const isMicMode = (m: unknown): m is MicMode => m === 'always' || m === 'hold';
 
+// ---------- 配役の出し方（ドラムロール） ----------
+//
+// 役が決まると、参加者の画面では逃走者と鬼のカードが交互に流れ、止まった所で自分の役が出る（ドン）。
+// 止め方は主催者が切り替える（次の配役から効く。どれがいいか本番で比べるため、記録にも残す）。
+//   sync：全員同時。配役を押した REVEAL_LEAD_MS ＋ REVEAL_COUNT_MS 後に、全員の画面が同じ瞬間に止まる（3・2・1 を数える）
+//   tap ：自分で。流れているカードをタップした人から止まる。押さない人は、主催者が「開始」を押したときに出る
+//   now ：ドラムロールなし。配役と同時に出る（前の版と同じ）
+// 役そのものは配役と同時にスマホへ届いている（そのあと切れても止まれるように）。止まるまで、画面は役で変わる所を全部隠す。
+
+export type RevealMode = 'sync' | 'tap' | 'now';
+export const DEFAULT_REVEAL_MODE: RevealMode = 'sync';
+export const isRevealMode = (m: unknown): m is RevealMode => m === 'sync' || m === 'tap' || m === 'now';
+
+/** sync：配役を押してから数え始めるまで（その間に全員へ届く。カードはもう流れている） */
+export const REVEAL_LEAD_MS = 2_000;
+
+/** sync：3・2・1 を数える長さ */
+export const REVEAL_COUNT_MS = 3_000;
+
+/** sync：止まる時刻がこれより先に見えるスマホ（時計が大きくずれている）は、流さずにすぐ出す */
+export const REVEAL_AHEAD_MAX_MS = REVEAL_LEAD_MS + REVEAL_COUNT_MS + 5_000;
+
+/** tap：カードが流れはじめてから、この間のタップは数えない（ほかのボタンを押していた指で止まらないように） */
+export const REVEAL_TAP_GUARD_MS = 600;
+
 /** 長押しの長さの上限。押しっぱなしのまま「離した」が届かない長押しも、ここで離したとみなす */
 export const HOLD_MAX_MS = 30_000;
 
@@ -158,6 +183,35 @@ export const SOUND_VOLUME = 50;
 
 /** 鳴らす合間（長押しの間、3桁を繰り返す） */
 export const SOUND_GAP_MS = 250;
+
+// ---------- 捕まったときの全員への知らせ ----------
+//
+// 捕獲が記録された瞬間、全員のスマホに「さむ → ゆいか 確保・逃走者 残り 6/7」の帯を出し、音を鳴らす。
+// 全員が同じ瞬間に出すよう、記録した時刻の ANNOUNCE_LEAD_MS 後をサーバー時刻で決めて配る。
+// 何を出すか・誰を鳴らすかは、主催者が試合ごとに切り替える。ANNOUNCE_DEFAULT は最初の値（11/6 本人が選んだ）。
+
+/** 帯に何を出すか。both＝捕まえた鬼も（さむ → ゆいか）、runner＝捕まった人（ゆいか）、count＝人数だけ（1人）、off＝知らせない */
+export type AnnounceShow = 'both' | 'runner' | 'count' | 'off';
+
+/** 誰のスマホを鳴らすか。all＝全員、oni＝逃げている逃走者のスマホは鳴らさない（隠れ場所がばれないように）、none＝鳴らさない */
+export type AnnounceSound = 'all' | 'oni' | 'none';
+
+export interface AnnounceSettings {
+  show: AnnounceShow;
+  sound: AnnounceSound;
+}
+
+export const ANNOUNCE_DEFAULT: AnnounceSettings = { show: 'both', sound: 'all' };
+
+/** 帯と音は、記録した瞬間のこれだけ後に出す（その間に全員へ届き、全員が同じ瞬間に鳴る） */
+export const ANNOUNCE_LEAD_MS = 1_000;
+
+/** 帯を出しておく長さ（触れると早く消せる）。消えたあとも、画面の下に「最新の確保」が残る */
+export const ANNOUNCE_SHOW_MS = 6_000;
+
+/** 出す瞬間をこれだけ過ぎてから届いた知らせは、帯だけ出して鳴らさない（遅れて鳴ると、いま捕まったと思われる） */
+export const ANNOUNCE_SOUND_LATE_MS = 3_000;
+
 
 // ---------- 走ると光る ----------
 //
