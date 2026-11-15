@@ -40,6 +40,8 @@ const KIND_NAME: Record<string, string> = {
   cast: '主催者の指名',
   recast: '主催者が役を動かした',
   area: '遊ぶ範囲',
+  dq: '範囲の外で失格',
+  'dq-ok': '失格のあと牢屋に出頭した',
   'jail-place': '牢屋の場所',
   remove: '外す',
   clear: '新しい夜を始める',
@@ -68,6 +70,10 @@ const KIND_NAME: Record<string, string> = {
   chat: 'チャット',
   'chat-mode': 'チャットの制約',
   'chat-places': 'チャットの場所の名前',
+  'meet-hold': '合流の長押し',
+  meet: 'ミッション：合流した',
+  'mission-zone': 'ミッション：範囲の判定',
+  'mission-free': 'ミッション成功で牢屋から出した',
 };
 
 /** 走ると光る：消えた理由 */

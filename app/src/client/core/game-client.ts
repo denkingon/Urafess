@@ -1,6 +1,7 @@
 import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
 import { CHAT_KEEP, type ChatCh, type ChatJail, type ChatMode, type ChatMsg } from '../../shared/chat';
+import type { MeetScope, MissionKind } from '../../shared/mission';
 import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
 import { SILENCE_LIMIT_MS, type RoleId, type WishMode } from '../../shared/rules';
 
@@ -151,6 +152,7 @@ export class GameClient {
   private holding: { at: number | undefined } | null = null;
   /** 押している「助けて」「助ける」（押し始めのサーバー時刻）。つなぎ直したら送り直す */
   private rescuing: { at: number | undefined } | null = null;
+  private meeting: { at: number | undefined } | null = null;
   /** 最近離した長押し。切れていて届いたか分からないので、つなぎ直したら送り直す（サーバーは同じ押し始めを2回数えない） */
   private recentHolds: { start: number; end: number; doneAt: number }[] = [];
   /** 送ったが、届いて効いたか分からない操作。つなぎ直して最初の状態を受け取ったとき、まだ効いていなければ送り直す */
@@ -328,6 +330,20 @@ export class GameClient {
     this.send({ t: 'rescue', on: false, at: this.toServer(localAt), start });
   }
 
+  /** ミッション（合流）の長押しを始めた（HOLD_MIN_MS 押し続けたら呼ぶ） */
+  meetStart(localAt: number): void {
+    const at = this.toServer(localAt);
+    this.meeting = { at };
+    this.send({ t: 'meet', on: true, at });
+  }
+
+  meetEnd(localAt: number): void {
+    if (!this.meeting) return;
+    const start = this.meeting.at;
+    this.meeting = null;
+    this.send({ t: 'meet', on: false, at: this.toServer(localAt), start });
+  }
+
   holdStart(localAt: number): void {
     const at = this.toServer(localAt);
     this.holding = { at };
@@ -390,6 +406,16 @@ export class GameClient {
     if (this.senseState?.motion === motion && this.senseState?.geo === geo) return;
     this.senseState = { motion, geo };
     this.send({ t: 'sense', motion, geo });
+  }
+
+  /** 範囲の外に20秒いて失格になったことを伝える（同じ配役のうちは何度送ってもサーバーが1回だけ数える） */
+  disqualified(): void {
+    this.send({ t: 'dq' });
+  }
+
+  /** 失格のあと牢屋に出頭したことを伝える（何度送ってもサーバーが1回だけ数える） */
+  reportedToJail(): void {
+    this.send({ t: 'dq-ok' });
   }
 
   /**
@@ -461,6 +487,7 @@ export class GameClient {
       tag?: string;
       on?: boolean;
       area?: [number, number][] | null;
+      plan?: import('../../shared/shrink').ShrinkPlan;
       layer?: 'area' | 'jail';
       pid?: string;
       by?: string;
@@ -474,6 +501,11 @@ export class GameClient {
       chatMode?: ChatMode;
       chatJail?: ChatJail;
       places?: string[];
+      kind?: MissionKind;
+      scope?: MeetScope;
+      zone?: [number, number][];
+      need?: number;
+      secs?: number | null;
     } = {},
   ): boolean {
     const game = this.state.game;
@@ -613,6 +645,7 @@ export class GameClient {
       else this.send({ t: 'hold', on: false, at: this.toServer(now), resume: true });
       // 「助けて」「助ける」も同じ：押していれば送り直し、押していなければ「離した」（切れている間に離した分を閉じる）
       if (this.rescuing) this.send({ t: 'rescue', on: true, at: this.rescuing.at });
+      if (this.meeting) this.send({ t: 'meet', on: true, at: this.meeting.at });
       else this.send({ t: 'rescue', on: false, at: this.toServer(now) });
       // 選んだ・取り下げたが効いたかは、最初に届く状態を見てから決めて送り直す
       this.resendAfterSnap = this.pending !== null;

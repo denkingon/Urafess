@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AREA_OUT_CONFIRM_MS, AreaWatch, checkArea, isFarOutside, isValidAreaPts } from '../src/shared/area';
+import { AREA_DQ_MS, AREA_OUT_CONFIRM_MS, AreaWatch, checkArea, isFarOutside, isValidAreaPts } from '../src/shared/area';
 import { CAMPUS_CENTER } from '../src/shared/rules';
 
 // キャンパスの真ん中を中心に、東西 400m × 南北 400m の四角
@@ -54,5 +54,93 @@ describe('遊ぶ範囲', () => {
     expect(w.feed(sq, at(0, 260), (t += 2500))).toBe(false);
     // 範囲が無くなれば中
     expect(w.feed(null, at(0, 500), (t += 5000))).toBe(false);
+  });
+  it('外が20秒続いたら失格（「戻れ」が出た時点から数える）', () => {
+    const w = new AreaWatch();
+    let t = 0;
+    w.feed(sq, at(0, 230), t);
+    expect(w.dqLeftMs(t)).toBeNull(); // まだ外と決まっていない
+    t += AREA_OUT_CONFIRM_MS;
+    expect(w.feed(sq, at(0, 230), t)).toBe(true);
+    expect(w.dqLeftMs(t)).toBe(AREA_DQ_MS); // 「戻れ」が出た瞬間から20秒
+    expect(w.feed(sq, at(0, 230), (t += 5000))).toBe(true);
+    expect(w.dqLeftMs(t)).toBe(AREA_DQ_MS - 5000);
+    expect(w.feed(sq, at(0, 230), (t += AREA_DQ_MS - 5000 - 1))).toBe(true);
+    expect(w.disqualified).toBe(false);
+    w.feed(sq, at(0, 230), (t += 1));
+    expect(w.disqualified).toBe(true);
+    expect(w.dqLeftMs(t)).toBe(0);
+  });
+
+  it('20秒の途中で中に戻れば数え直し。線の少し外（15m以内）に戻っても外のまま数え続ける', () => {
+    const w = new AreaWatch();
+    let t = 0;
+    w.feed(sq, at(0, 230), t);
+    w.feed(sq, at(0, 230), (t += AREA_OUT_CONFIRM_MS));
+    // 線の少し外に戻っても「外」は続く（内側 3m に入るまで）
+    w.feed(sq, at(0, 205), (t += 10_000));
+    expect(w.out).toBe(true);
+    expect(w.dqLeftMs(t)).toBe(AREA_DQ_MS - 10_000);
+    // 内側へ入れば数え直し
+    w.feed(sq, at(0, 190), (t += 5_000));
+    expect(w.out).toBe(false);
+    expect(w.dqLeftMs(t)).toBeNull();
+    // また外へ出ても、最初から（3秒＋20秒）
+    w.feed(sq, at(0, 230), (t += 1_000));
+    w.feed(sq, at(0, 230), (t += AREA_OUT_CONFIRM_MS));
+    expect(w.dqLeftMs(t)).toBe(AREA_DQ_MS);
+    w.feed(sq, at(0, 230), (t += AREA_DQ_MS - 1));
+    expect(w.disqualified).toBe(false);
+  });
+
+  it('失格は reset（一時停止・位置が取れない）では消えず、clearDq（新しいラウンド）で消える', () => {
+    const w = new AreaWatch();
+    let t = 0;
+    w.feed(sq, at(0, 230), t);
+    w.feed(sq, at(0, 230), (t += AREA_OUT_CONFIRM_MS));
+    w.feed(sq, at(0, 230), (t += AREA_DQ_MS));
+    expect(w.disqualified).toBe(true);
+    w.reset();
+    expect(w.out).toBe(false);
+    expect(w.disqualified).toBe(true);
+    // 中にいる位置が来ても失格は残る
+    w.feed(sq, at(0, 0), (t += 1000));
+    expect(w.disqualified).toBe(true);
+    w.clearDq();
+    expect(w.disqualified).toBe(false);
+  });
+
+  it('一時停止で見張りが止まったら、20秒は数え直し（止まっている間は数えない）', () => {
+    const w = new AreaWatch();
+    let t = 0;
+    w.feed(sq, at(0, 230), t);
+    w.feed(sq, at(0, 230), (t += AREA_OUT_CONFIRM_MS));
+    w.feed(sq, at(0, 230), (t += 15_000));
+    w.reset(); // 一時停止
+    w.feed(sq, at(0, 230), (t += 60_000));
+    expect(w.disqualified).toBe(false);
+    expect(w.dqLeftMs(t)).toBeNull();
+  });
+  it('牢屋に出頭したら失格が解け、そのラウンドはもう失格にならない（clearDq で戻る）', () => {
+    const w = new AreaWatch();
+    let t = 0;
+    w.feed(sq, at(0, 230), t);
+    w.feed(sq, at(0, 230), (t += AREA_OUT_CONFIRM_MS));
+    w.feed(sq, at(0, 230), (t += AREA_DQ_MS));
+    expect(w.disqualified).toBe(true);
+    w.forgive();
+    expect(w.disqualified).toBe(false);
+    // 外にいる間は「戻れ」は続くが、数えは無く、何秒いても失格にならない
+    w.feed(sq, at(0, 230), (t += 1000));
+    expect(w.out).toBe(true);
+    expect(w.dqLeftMs(t)).toBeNull();
+    w.feed(sq, at(0, 230), (t += AREA_DQ_MS * 3));
+    expect(w.disqualified).toBe(false);
+    // 新しいラウンドで元に戻る
+    w.clearDq();
+    w.reset();
+    w.feed(sq, at(0, 230), (t += 1000));
+    w.feed(sq, at(0, 230), (t += AREA_OUT_CONFIRM_MS));
+    expect(w.dqLeftMs(t)).toBe(AREA_DQ_MS);
   });
 });
