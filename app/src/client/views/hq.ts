@@ -7,6 +7,8 @@ import { glowPhase, hostStatus } from '../../shared/viewmodel';
 import { chatText } from '../../shared/chat';
 import type { Sensors } from '../sense';
 import { setFramePad } from './overview';
+import { createTerm } from './term';
+import './term.css';
 import { createHost, type HostActions, type HostInput, type HostScreen } from './host';
 
 /**
@@ -56,6 +58,19 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   // ---------- 足すもの ----------
   const head = make('header', 'hq-head',
     '<h1>本部<span class="u">HQ</span></h1><div class="hq-head-r"><span data-hq="round"></span><span class="hq-conn" data-hq="conn"></span></div>');
+  // ログ（端末のような窓）：記録を読める版のときだけ。窓は最後に根っこへ足す（「そのほか」に集められないように）
+  let termEl: HTMLElement | null = null;
+  if (actions.tailLog) {
+    const tailLog = actions.tailLog;
+    const term = createTerm((after, tail) => tailLog(after, tail));
+    const openBtn = make('button', 'hq-term-open', '&gt;_ ログ');
+    openBtn.type = 'button';
+    openBtn.setAttribute('aria-expanded', 'false');
+    openBtn.addEventListener('click', () => term.toggle());
+    term.onChange = (on) => openBtn.setAttribute('aria-expanded', String(on));
+    head.querySelector('.hq-head-r')!.append(openBtn);
+    termEl = term.el;
+  }
   const rail = make('ol', 'hq-rail');
   rail.setAttribute('aria-label', '段階');
   const steps = ['配役', ...PHASES.map(() => ''), '結果'].map((t) => {
@@ -166,6 +181,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
     panel.deck.append(misc);
   }
   el.append(head, rail, now, strip, reject, body, dock, tabs);
+  if (termEl) el.append(termEl);
 
   // ---------- 押したとき ----------
   /** ＋−：欄の値を変えて、前の画面の「変える」をそのまま押す（確かめ・送り方は前のしくみ） */
@@ -271,21 +287,34 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       const progress = phase ? 1 - phase.remainingMs / Math.max(1, game.durations[phase.index]) : 1;
       // 時間の段階の幅は、時間の長さの比そのまま（0:20 と 1:00 なら 1：3）。配役と結果は字の幅だけ
       // 幅が字より狭い段階は、字を左にそろえて、続くときは上の段と下の段に互い違いに置く（重ねない）
-      const railKey = `${game.durations.join(',')}|${rail.clientWidth}`;
+      // 字の形が読み終わる前に測ると幅が小さく出るので、読み終わったら測り直す
+    const railKey = `${game.durations.join(',')}|${rail.clientWidth}|${document.fonts?.status ?? ''}`;
       once('railShape', railKey, () => {
         const total = game.durations.reduce((a, b) => a + b, 0) || 1;
         const inner = Math.max(0, rail.clientWidth - steps[0].li.offsetWidth - steps[steps.length - 1].li.offsetWidth - 4 * (steps.length - 1));
-        let up = false;
-        let prevNarrow = false;
         steps.forEach((s, i) => {
           if (i < 1 || i > PHASES.length) return;
           const d = game.durations[i - 1];
           s.lbl.textContent = formatClock(d);
           s.li.style.flexGrow = String(d);
           const narrow = (inner * d) / total < s.lbl.offsetWidth + 4;
-          up = narrow && prevNarrow ? !up : false;
-          s.li.dataset.fit = narrow ? (up ? 'up' : 'left') : 'in';
-          prevNarrow = narrow;
+          s.li.dataset.fit = narrow ? 'left' : 'in';
+        });
+        // 実際に置いた位置で確かめる：左の字とぶつかる字は上の段へ（上の段どうしもぶつかれば下へ戻す）
+        let lowRight = steps[0].lbl.getBoundingClientRect().right;
+        let upRight = -Infinity;
+        steps.forEach((s, i) => {
+          if (i < 1 || i > PHASES.length) return;
+          const r = s.lbl.getBoundingClientRect();
+          if (r.left >= lowRight + 8) {
+            lowRight = r.right;
+            return;
+          }
+          const upLeft = s.li.getBoundingClientRect().left;
+          if (upLeft >= upRight + 8) {
+            s.li.dataset.fit = 'up';
+            upRight = upLeft + r.width;
+          } else lowRight = r.right;
         });
         rail.toggleAttribute('data-two', steps.some((s) => s.li.dataset.fit === 'up'));
       });

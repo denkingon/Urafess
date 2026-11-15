@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { eventsToCsv, jst, type EventRow } from '../src/server/log';
+import { eventToLine, eventsToCsv, jst, type EventRow } from '../src/server/log';
 import type { GameView, MeView } from '../src/shared/protocol';
 import { participantView } from '../src/shared/viewmodel';
 import { startTimer } from '../src/shared/schedule';
@@ -22,6 +22,19 @@ const row = (over: Partial<EventRow>): EventRow => ({
   via: 'sound',
   data: '{"gapMs":0}',
   ...over,
+});
+
+describe('本部のログの窓の1行', () => {
+  it('種類・段階・方式を日本語の名前にし、だれと相手を「#番号 名前」にする', () => {
+    expect(eventToLine(row({}))).toEqual({
+      id: 1, at: row({}).at, round: 1, phase: '残り時間', el: 95, kind: 'capture', label: '捕獲',
+      who: '#3 たけ', other: '#12 ゆう', via: '音', data: '{"gapMs":0}',
+    });
+  });
+  it('だれも段階も無い記録は空にする（タイマーの外）', () => {
+    const l = eventToLine(row({ kind: 'durations', phase: null, elapsed: null, num: null, name: null, other_num: null, other_name: null, via: null, data: null }));
+    expect([l.phase, l.el, l.who, l.other, l.via, l.data, l.label]).toEqual(['', null, '', '', '', '', '時間の設定']);
+  });
 });
 
 describe('記録の CSV', () => {

@@ -122,9 +122,12 @@ import { nameKey, normalizeName } from '../shared/names';
 import { castStatsAll, cleanTag, TAGS_MAX, type CastEvent, type CastStat } from '../shared/cast';
 import { distanceM } from '../shared/run';
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
-import { eventsToCsv, type EventRow } from './log';
+import { eventToLine, eventsToCsv, type EventRow } from './log';
 import type { ProbeHub } from './probe';
 import { checkNewHostKey, hostKeyCandidates, sameHostKey } from '../shared/hostkey';
+
+/** 本部の「ログ」の窓へ一度に返す行の上限 */
+const LOG_LINES_MAX = 400;
 
 export interface Env {
   GAME: DurableObjectNamespace<GameRoom>;
@@ -1023,6 +1026,15 @@ export class GameRoom extends DurableObject<Env> {
       // 主催者の合言葉があるときだけ、全部の記録を CSV（Excel で開ける）か JSON で返す
       if (!this.isHostRequest(request) && !this.isHostToken(url.searchParams.get('token'))) {
         return new Response('forbidden', { status: 403 });
+      }
+      // 本部の「ログ」の窓：after（この番号より後）か tail（最後の何行）だけを、1行ずつ読める形で返す
+      if (url.searchParams.get('format') === 'lines') {
+        const after = Number(url.searchParams.get('after'));
+        const tail = Math.min(LOG_LINES_MAX, Math.max(1, Number(url.searchParams.get('tail')) || LOG_LINES_MAX));
+        const rows = Number.isFinite(after) && after > 0
+          ? this.sql.exec<EventRow>(`SELECT * FROM events WHERE id > ? ORDER BY id LIMIT ?`, after, LOG_LINES_MAX).toArray()
+          : this.sql.exec<EventRow>(`SELECT * FROM (SELECT * FROM events ORDER BY id DESC LIMIT ?) ORDER BY id`, tail).toArray();
+        return Response.json(rows.map(eventToLine), { headers: { 'cache-control': 'no-store' } });
       }
       const rows = this.sql.exec<EventRow>(`SELECT * FROM events ORDER BY id`).toArray();
       if (url.searchParams.get('format') === 'json') return Response.json(rows);

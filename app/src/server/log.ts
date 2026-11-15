@@ -1,4 +1,5 @@
 import { VIA_NAME, type CaptureVia } from '../shared/capture';
+import type { LogLine } from '../shared/logline';
 import { PHASES } from '../shared/rules';
 
 /** events テーブルの1行（1イベント＝1行） */
@@ -126,6 +127,23 @@ export function eventsToCsv(rows: readonly EventRow[]): string {
     );
   }
   return `\uFEFF${lines.join('\r\n')}\r\n`;
+}
+
+export function eventToLine(r: EventRow): LogLine {
+  const who = (num: number | null, name: string | null) => (num === null && !name ? '' : `${num === null ? '' : `#${num} `}${name ?? ''}`.trim());
+  return {
+    id: r.id,
+    at: r.at,
+    round: r.round,
+    phase: phaseName(r.phase),
+    el: r.elapsed === null ? null : Math.round(r.elapsed / 1000),
+    kind: r.kind,
+    label: kindName(r),
+    who: who(r.num, r.name),
+    other: who(r.other_num, r.other_name),
+    via: r.via ? (VIA_NAME[r.via as CaptureVia] ?? r.via) : '',
+    data: r.data ?? '',
+  };
 }
 
 function kindName(r: EventRow): string {

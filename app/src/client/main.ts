@@ -1,3 +1,4 @@
+import type { LogLine } from '../shared/logline';
 import './styles.css';
 import { RunReporter } from '../shared/run';
 import { encodeHostKey } from '../shared/hostkey';
@@ -429,6 +430,15 @@ function startHost(token: string): void {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    },
+    tailLog: async (after, tail) => {
+      try {
+        const q = after > 0 ? `after=${after}` : `tail=${tail}`;
+        const res = await fetch(`/api/game/${gameId}/log?format=lines&${q}`, { headers: hostHeaders, cache: 'no-store' });
+        return res.ok ? ((await res.json()) as LogLine[]) : null;
+      } catch {
+        return null;
+      }
     },
     photo: (id) => photos.get(id),
     album: async () => {
