@@ -1,0 +1,67 @@
+/* 本部の「ログ」の窓（端末のように見せる）。道具なので無彩色に寄せ、色は出来事にだけ */
+.term {
+  position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column;
+  background: #050608; color: #d9d4ca; border: 1px solid var(--sen, #2b2e38);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "BIZ UDGothic", "BIZ UDPGothic", monospace;
+  font-size: 16px; line-height: 1.5;
+}
+.term[hidden] { display: none; }
+.term-bar {
+  flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 14px;
+  padding-top: calc(8px + env(safe-area-inset-top)); border-bottom: 1px solid var(--sen, #2b2e38); background: #0b0c10;
+  user-select: none; touch-action: none;
+}
+.term-title { flex: none; white-space: nowrap; display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 16px; font-weight: 700; color: var(--tsuki, #f1ede4); }
+.term-prompt { color: var(--chikko, #b8ff5a); }
+.term-live { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted, #a29d93); font-size: 16px; }
+.term-live { color: var(--chikko, #b8ff5a); }
+.term-live.is-bad { color: var(--shu, #ff6a3d); }
+.term-btn {
+  flex: none; min-height: 44px; min-width: 44px; padding: 0 12px; border: 1px solid var(--sen, #2b2e38); border-radius: 10px;
+  background: transparent; color: var(--tsuki, #f1ede4); font: inherit; font-size: 16px; cursor: pointer;
+}
+.term-btn[aria-pressed="true"] { border-color: var(--tsuki, #f1ede4); background: #181a21; }
+.term-screen {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px 12px 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom)); outline: none;
+}
+.term-line { padding-left: 2.5em; text-indent: -2.5em; overflow-wrap: anywhere; white-space: pre-wrap; }
+.term-line > span + span { margin-left: .6em; }
+.term-t { color: #6f6b64; }
+.term-w { color: var(--muted, #a29d93); }
+.term-k { font-weight: 700; color: var(--tsuki, #f1ede4); }
+.term-p, .term-o { color: #d9d4ca; }
+.term-v { color: var(--muted, #a29d93); }
+.term-d { color: #77736c; }
+.term-empty { color: var(--muted, #a29d93); }
+.term-line[data-tone="bad"] .term-k { color: var(--shu, #ff6a3d); }
+.term-line[data-tone="good"] .term-k { color: var(--chikko, #b8ff5a); }
+.term-line[data-tone="chat"] .term-k { color: var(--ayame, #c45cff); }
+.term-line[data-tone="chat"] .term-d { color: #d9d4ca; }
+.term-line[data-tone="op"] { background: #101217; }
+.term-line[data-tone="noise"] .term-k { font-weight: 400; color: var(--muted, #a29d93); }
+.term[data-noise="off"] .term-line[data-noise] { display: none; }
+.term-jump {
+  position: absolute; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  min-height: 44px; padding: 0 16px; border: 1px solid var(--tsuki, #f1ede4); border-radius: 22px;
+  background: var(--tsuki, #f1ede4); color: var(--yami, #0b0c10); font: inherit; font-size: 16px; font-weight: 700; cursor: pointer;
+}
+.term-jump[hidden] { display: none; }
+
+/* 本部の上の帯の入口 */
+.hq-term-open {
+  min-height: 44px; min-width: 44px; padding: 0 12px; border: 1px solid var(--sen, #2b2e38); border-radius: 10px;
+  background: transparent; color: var(--tsuki, #f1ede4); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 16px; font-weight: 700; cursor: pointer;
+}
+.hq-term-open[aria-expanded="true"] { border-color: var(--chikko, #b8ff5a); color: var(--chikko, #b8ff5a); }
+
+@media (min-width: 1024px) {
+  .term {
+    inset: auto 24px 24px auto; width: min(760px, calc(100vw - 48px)); height: min(460px, calc(100vh - 48px));
+    min-width: 360px; min-height: 200px; resize: both; overflow: hidden; border-radius: 12px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, .6);
+  }
+  .term-bar { cursor: grab; padding-top: 8px; }
+  .term-bar:active { cursor: grabbing; }
+  .term-screen { padding-bottom: 16px; }
+}

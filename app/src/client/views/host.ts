@@ -1,3 +1,4 @@
+import type { LogLine } from '../../shared/logline';
 import type { LeadRules } from '../../shared/lead';
 import { SHOW_EXAMPLE, SOUND_NAME } from '../../shared/announce';
 import { CAPTURE_PHASE_INDEX, captureOpenAt, VIA_NAME } from '../../shared/capture';
@@ -132,6 +133,8 @@ export interface HostActions {
   chat?(to: string, text: string): boolean;
   /** 1イベント＝1行の記録を CSV で保存する */
   downloadLog(): Promise<void>;
+  /** 本部の「ログ」の窓：after より後の記録（after が 0 なら最後の tail 行）。読めなければ null。古い呼び出し側には無い */
+  tailLog?(after: number, tail: number): Promise<LogLine[] | null>;
   /** ミッションの写真を取り出して、画面で使える URL にする */
   photo(id: string): Promise<string | null>;
   /** 全部の夜の写真の一覧 */
