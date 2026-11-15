@@ -9,6 +9,8 @@ import { distanceM, type LatLon } from '../../shared/run';
  * - 古い位置ほど薄く。名前は重ならない分だけ出す（16px）
  * - 遊ぶ範囲：範囲の外を暗く沈め、線を引く。範囲があれば枠は範囲に合わせる。範囲の外にいる人は朱の輪で囲む
  * - 描いている途中の範囲（主催者）：蓄光の点と線。onTap を渡すと、押した場所の緯度・経度が返る
+ * - 自分の向き（meHeading）：自分の印から、向いている方へ扇を出す（北が上の地図で、どっちを向いているかが分かる）
+ * - 寄る（focusM）：自分を真ん中に、左右 focusM メートルだけを映す。枠の外の仲間は、その方向のふちに寄せる
  */
 
 export type OvKind = 'oni' | 'runner' | 'unknown';
@@ -51,6 +53,12 @@ export interface OvInput {
   frameBase?: 'area' | 'campus';
   /** 自分が範囲の外にいる */
   meOut?: boolean;
+  /** 自分の向いている方角（真北から時計回りの度）。取れなければ null（扇を出さない） */
+  meHeading?: number | null;
+  /** 寄る：自分を真ん中に、左右にこのメートルだけ映す。null・自分の位置が無いときは全体 */
+  focusM?: number | null;
+  /** 地図の上の端に重ねている物（切りかえのボタンなど）の高さ（px）。枠はその下に収める */
+  insetTop?: number;
   /**
    * 範囲の縮小：今の縮んだ形（inner）・予告中の行き先（next）・縮む先の点（center）。
    * preview は主催者が描くときに見せる「最後はここまで縮む」形
@@ -212,9 +220,17 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     const f = editing
       ? frameOf([...jailPts, ...draftPts], areaPts.length >= 3 ? areaPts : null, 0.12 + framePad)
       : frameOf([...all, ...jailPts, ...mzonePts], areaPts.length >= 3 ? areaPts : null);
-    const S = Math.min(w / (f.x1 - f.x0), h / (f.y1 - f.y0)); // 画面の px ／ 世界の 1
-    const cx = (f.x0 + f.x1) / 2;
-    const cy = (f.y0 + f.y1) / 2;
+    // 寄る：自分を真ん中に、左右 focusM メートル。全体：枠が全部入る大きさ
+    const focus = !editing && input.me && input.focusM && input.focusM > 0 ? input.focusM : null;
+    const meW = focus && input.me ? toWorld(input.me) : null;
+    // 上の端に重ねている物があれば、枠はその下に収める（真ん中を、その半分だけ下げる）
+    // 地図がごく低いとき（140px 以下）は、重ねた物をしまうので下げない（player.css の決まりと同じ高さ）
+    const inset = editing || h <= 140 ? 0 : Math.max(0, Math.min(h / 3, input.insetTop ?? 0));
+    const S = meW
+      ? w / ((2 * focus!) / (EARTH_CIRC_M * Math.cos((input.me!.lat * Math.PI) / 180)))
+      : Math.min(w / (f.x1 - f.x0), (h - inset) / (f.y1 - f.y0)); // 画面の px ／ 世界の 1
+    const cx = meW ? meW.x : (f.x0 + f.x1) / 2;
+    const cy = (meW ? meW.y : (f.y0 + f.y1) / 2) - inset / 2 / S;
     const key = JSON.stringify([
       w,
       h,
@@ -223,6 +239,9 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       cx.toFixed(7),
       cy.toFixed(7),
       input.me && [input.me.lat, input.me.lon, Math.round(input.me.acc)],
+      input.meHeading == null ? null : Math.round(input.meHeading / 6),
+      focus,
+      inset,
       input.meKind,
       input.meLit,
       input.points.map((p) => [p.key, p.name, p.pos.lat, p.pos.lon, p.kind, Math.round(p.fresh * 5), p.lit, p.lead]),
@@ -249,7 +268,8 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     const pxIn = (p: LatLon) => {
       const q = px(p);
       const x = Math.max(EDGE, Math.min(w - EDGE, q.x));
-      const y = Math.max(EDGE, Math.min(h - EDGE, q.y));
+      // 上の端に重ねている物の下に寄せる（ボタンの裏に隠れないように）
+      const y = Math.max(EDGE + inset, Math.min(h - EDGE, q.y));
       return { x, y, edge: x !== q.x || y !== q.y };
     };
 
@@ -375,6 +395,13 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
 
     // 光っている人・新しい人ほど上に重ねる。名前は光っている人 → 新しい人の順に出す
     const pts = input.points.map((p) => ({ p, q: pxIn(p.pos) }));
+    // 名前は、ほかの人の印の上に置かない（自分の印も）。自分の名前は自分の印の横から始まるので、自分の印にはぶつからない
+    const DOT = 8;
+    for (const { q } of pts) labelBoxes.push({ x0: q.x - DOT, y0: q.y - DOT, x1: q.x + DOT, y1: q.y + DOT });
+    if (input.me) {
+      const q = pxIn(input.me);
+      labelBoxes.push({ x0: q.x - DOT, y0: q.y - DOT, x1: q.x + DOT, y1: q.y + DOT });
+    }
     pts.sort((a, b) => Number(!!a.p.lead) - Number(!!b.p.lead) || Number(a.p.lit) - Number(b.p.lit) || a.p.fresh - b.p.fresh);
     if (input.me) {
       const q = px(input.me);
@@ -402,6 +429,10 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       const g = svg('g', { class: `ov-me is-${input.meKind}${input.meLit ? ' is-lit' : ''}${q.edge ? ' is-edge' : ''}`, transform: `translate(${q.x.toFixed(1)} ${q.y.toFixed(1)})` });
       if (input.meLit) g.append(svg('circle', { r: 13, class: 'ov-halo' }));
       if (input.meOut) g.append(svg('circle', { r: 14, class: 'ov-out' }));
+      // 向いている方へ扇（北が上の地図なので、方角の分だけ回す）
+      if (input.meHeading != null && Number.isFinite(input.meHeading)) {
+        g.append(svg('path', { d: 'M0,0 L-17,-34 A38,38 0 0 1 17,-34 Z', class: 'ov-me-cone', transform: `rotate(${Math.round(input.meHeading)})` }));
+      }
       g.append(svg('circle', { r: 9, class: 'ov-me-ring' }), svg('circle', { r: 4, class: 'ov-me-dot' }));
       dotsG.append(g);
     }

@@ -40,8 +40,10 @@ export function createPhone(): PhoneScreen {
     <div class="p-bar" data-k="bar"></div>
     <div class="p-pic"><div class="p-box" data-k="pic"></div><div class="p-over u" data-k="over" hidden>×</div></div>
     <div class="stage" data-k="stage"></div>
-    <div class="p-time u" data-k="time" aria-live="polite"></div>
-    <div class="p-counts" data-k="counts"></div>
+    <div class="p-info">
+      <div class="p-time u" data-k="time" aria-live="polite"></div>
+      <div class="p-counts" data-k="counts"></div>
+    </div>
     <div class="p-word" data-k="word"></div>
     <div class="p-lit" data-k="lit" aria-live="polite"></div>
     <div class="p-note" data-k="note"></div>
@@ -87,6 +89,8 @@ export function createPhone(): PhoneScreen {
       // 走ると光る：ゲームの段階は、真ん中の絵の場所に光の地図を出す（絵は隠し、時間は小さめにする）
       el.classList.toggle('is-glow', view.glow === 'live');
       el.dataset.glow = view.glow;
+      // ゲームの段階は地図が主役：いつもの一言（隠れろ・探せ）はしまう。止まった・牢屋・捕まらない・見学のときだけ出す
+      el.classList.toggle('is-plain', view.glow === 'live' && view.role !== 'なし' && !view.paused && !view.caught && !((view.immuneMs ?? 0) > 0));
 
       // 夜の最後：SEE YOU AGAIN だけを真ん中に出す（段階バー・絵・人数は隠す）
       el.classList.toggle('is-ended', view.ended === true);
