@@ -3,7 +3,8 @@
  *
  * 開始の時刻（例 21:20）から、ブロック（話・プレ・本番・ハーフタイムショー・休み・終わり）を順に並べる。
  * 横軸は時計の時刻で、ブロックの幅は長さ（分）の比どおり。いちばん右に終わりの時刻が出る。
- * 本番・プレのブロックには、デッキの時間（配役から結果まで）が実際の比で入る。
+ * 本番・プレのブロックは、中身を1つずつ決める：配役／逃走開始まで／追跡開始まで／ゲーム／広場に戻るまで／結果発表（秒）。
+ * ブロックの長さは中身の合計で決まる。中身はデッキの時間（試合のタイマー）へそのまま入れられる。
  *
  * 予定はサーバーに置く（どの本部の画面でも同じものが見える）。サーバーは中身を確かめて、そのまま覚えるだけ。
  */
@@ -13,20 +14,55 @@ export type NightKind = 'talk' | 'pre' | 'game' | 'show' | 'break' | 'end';
 /** 種類の名前と、新しく足したときの長さ（分） */
 export const NIGHT_KINDS: { kind: NightKind; name: string; mins: number; round: boolean }[] = [
   { kind: 'talk', name: '話', mins: 10, round: false },
-  { kind: 'pre', name: 'プレ', mins: 10, round: true },
-  { kind: 'game', name: '本番', mins: 15, round: true },
+  { kind: 'pre', name: 'プレ', mins: 8, round: true },
+  { kind: 'game', name: '本番', mins: 13, round: true },
   { kind: 'show', name: 'ショー', mins: 10, round: false },
   { kind: 'break', name: '休み', mins: 5, round: false },
   { kind: 'end', name: '終わり', mins: 10, round: false },
 ];
+
+/** プレ・本番の中身（秒）。phases はデッキの時間と同じ並び（逃走開始まで・追跡開始まで・ゲーム・広場に戻るまで） */
+export interface NightRound {
+  /** 配役（役が出て、みんなが動き出すまで） */
+  cast: number;
+  phases: number[];
+  /** 結果発表 */
+  result: number;
+}
 
 export interface NightBlock {
   id: string;
   kind: NightKind;
   /** 見出し（空なら種類の名前） */
   title: string;
-  /** 長さ（分） */
+  /** 長さ（分）。プレ・本番では使わない（中身の合計が長さ） */
   mins: number;
+  /** プレ・本番の中身。ほかの種類には無い */
+  round?: NightRound;
+}
+
+/** 中身の段の名前（配役・デッキの4段・結果発表） */
+export const ROUND_PARTS = ['配役', '逃走開始まで', '追跡開始まで', 'ゲーム', '広場に戻るまで', '結果発表'] as const;
+/** 中身の ＋− の刻み（秒）。ROUND_PARTS と同じ並び */
+export const ROUND_STEP = [15, 5, 10, 30, 30, 30];
+export const ROUND_PART_MIN = 0;
+export const ROUND_PART_MAX = 60 * 60;
+
+export function defaultRound(kind: NightKind): NightRound {
+  return kind === 'pre'
+    ? { cast: 60, phases: [20, 40, 180, 60], result: 120 }
+    : { cast: 60, phases: [20, 60, 300, 120], result: 180 };
+}
+
+/** ブロックの長さ（秒） */
+export function blockSecs(b: NightBlock): number {
+  if (b.round) return b.round.cast + b.round.phases.reduce((a, x) => a + x, 0) + b.round.result;
+  return b.mins * 60;
+}
+
+/** 中身を1列に（配役・4段・結果発表） */
+export function roundParts(r: NightRound): number[] {
+  return [r.cast, ...r.phases, r.result];
 }
 
 export interface NightPlan {
@@ -50,10 +86,10 @@ export function defaultNightPlan(): NightPlan {
     endBy: 22 * 60 + 30,
     blocks: [
       { id: 'b1', kind: 'talk', title: '集合・ルール説明', mins: 10 },
-      { id: 'b2', kind: 'pre', title: 'プレ', mins: 10 },
-      { id: 'b3', kind: 'game', title: '本番', mins: 15 },
+      { id: 'b2', kind: 'pre', title: 'プレ', mins: 8, round: defaultRound('pre') },
+      { id: 'b3', kind: 'game', title: '本番', mins: 13, round: defaultRound('game') },
       { id: 'b4', kind: 'show', title: 'ハーフタイムショー', mins: 10 },
-      { id: 'b5', kind: 'game', title: '本番2', mins: 15 },
+      { id: 'b5', kind: 'game', title: '本番2', mins: 13, round: defaultRound('game') },
       { id: 'b6', kind: 'end', title: '終わり・結果発表', mins: 10 },
     ],
   };
@@ -83,13 +119,34 @@ export function cleanNightPlan(v: unknown): NightPlan | null {
     if (typeof x.title !== 'string') return null;
     if (!Number.isInteger(x.mins) || (x.mins as number) < NIGHT_MINS_MIN || (x.mins as number) > NIGHT_MINS_MAX) return null;
     ids.add(x.id);
-    blocks.push({ id: x.id, kind: x.kind, title: x.title.trim().slice(0, NIGHT_TITLE_MAX), mins: x.mins as number });
+    const blk: NightBlock = { id: x.id, kind: x.kind, title: x.title.trim().slice(0, NIGHT_TITLE_MAX), mins: x.mins as number };
+    if (kindInfo(x.kind).round) {
+      // 中身が無い（前の版で作った）ブロックには、最初の中身を入れる
+      if (x.round === undefined) blk.round = defaultRound(x.kind);
+      else {
+        const r = cleanRound(x.round);
+        if (!r) return null;
+        blk.round = r;
+      }
+    }
+    blocks.push(blk);
   }
   return { start: o.start as number, endBy: o.endBy as number | null, blocks };
 }
 
+const isPart = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= ROUND_PART_MIN && (v as number) <= ROUND_PART_MAX;
+
+function cleanRound(v: unknown): NightRound | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  if (!isPart(o.cast) || !isPart(o.result) || !Array.isArray(o.phases) || o.phases.length !== 4) return null;
+  // デッキの時間は1秒より短くできない
+  if (!o.phases.every((x) => isPart(x) && (x as number) >= 1)) return null;
+  return { cast: o.cast, phases: [...(o.phases as number[])], result: o.result };
+}
+
 export interface PlacedBlock extends NightBlock {
-  /** 開始・終わり（開始の時刻からの分。日をまたいでも増え続ける） */
+  /** 始まり・終わり（0時からの分。秒の分は小数。日をまたいでも増え続ける） */
   from: number;
   to: number;
 }
@@ -98,7 +155,7 @@ export interface PlacedBlock extends NightBlock {
 export function placeNight(plan: NightPlan): { blocks: PlacedBlock[]; end: number } {
   let t = plan.start;
   const blocks = plan.blocks.map((b) => {
-    const p = { ...b, from: t, to: t + b.mins };
+    const p = { ...b, from: t, to: t + blockSecs(b) / 60 };
     t = p.to;
     return p;
   });
@@ -107,7 +164,7 @@ export function placeNight(plan: NightPlan): { blocks: PlacedBlock[]; end: numbe
 
 /** 0時からの分 → 「21:20」（日をまたいだら 24:10 ではなく 0:10） */
 export function hhmm(min: number): string {
-  const m = ((Math.round(min) % DAY) + DAY) % DAY;
+  const m = ((Math.floor(min + 1e-9) % DAY) + DAY) % DAY;
   return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
 }
 
@@ -119,10 +176,11 @@ export function parseHhmm(s: string): number | null {
   return Number(m[2]) < 60 && v < DAY ? v : null;
 }
 
-/** 分 → 「1時間10分」「45分」 */
+/** 分 → 「1時間10分」「45分」（秒の分は切り上げ） */
 export function spanText(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
+  const all = Math.ceil(mins - 1e-9);
+  const h = Math.floor(all / 60);
+  const m = all % 60;
   return h ? (m ? `${h}時間${m}分` : `${h}時間`) : `${m}分`;
 }
 
@@ -133,25 +191,22 @@ export interface NightIssue {
 }
 
 /**
- * 不備を見つける。roundMs＝デッキの時間の合計（配役から結果発表まで。ラウンドの中身）
+ * 不備を見つける
  * - 終わっていたい時刻を過ぎる
- * - プレ・本番のブロックに、デッキの時間が収まらない
+ * - プレ・本番の配役と結果発表が0（集まる・話す時間が無い）
  * - 本番が1つもない／「終わり」が最後でない
  */
-export function nightIssues(plan: NightPlan, roundMs: number): NightIssue[] {
+export function nightIssues(plan: NightPlan): NightIssue[] {
   const out: NightIssue[] = [];
   const { blocks, end } = placeNight(plan);
   if (!blocks.length) return [{ id: null, text: 'ブロックが無い' }];
   if (plan.endBy !== null) {
     // 終わっていたい時刻は、開始より前なら次の日とみなす
     const endBy = plan.endBy <= plan.start ? plan.endBy + DAY : plan.endBy;
-    if (end > endBy) out.push({ id: null, text: `終わりが ${hhmm(plan.endBy)} を ${spanText(end - endBy)} 過ぎる（${hhmm(end)}）` });
+    if (end > endBy + 1e-9) out.push({ id: null, text: `終わりが ${hhmm(plan.endBy)} を ${spanText(end - endBy)} 過ぎる（${hhmm(end)}）` });
   }
-  const roundMin = roundMs / 60_000;
   for (const b of blocks) {
-    if (kindInfo(b.kind).round && b.mins < roundMin) {
-      out.push({ id: b.id, text: `「${b.title || kindInfo(b.kind).name}」${b.mins}分にデッキの時間（${clockText(roundMs)}）が収まらない` });
-    }
+    if (b.round && b.round.cast + b.round.result === 0) out.push({ id: b.id, text: `「${b.title || kindInfo(b.kind).name}」配役と結果発表の時間が0` });
   }
   if (!blocks.some((b) => b.kind === 'game')) out.push({ id: null, text: '本番のブロックが無い' });
   const endIdx = blocks.findIndex((b) => b.kind === 'end');
@@ -159,9 +214,15 @@ export function nightIssues(plan: NightPlan, roundMs: number): NightIssue[] {
   return out;
 }
 
-function clockText(ms: number): string {
-  const s = Math.round(ms / 1000);
+/** 秒 → 「8:20」 */
+export function clockText(sec: number): string {
+  const s = Math.round(sec);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** プレ・本番の中身が、いまのデッキの時間（ms）と同じか */
+export function sameAsDeck(r: NightRound | undefined, durationsMs: readonly number[]): boolean {
+  return !!r && r.phases.length === durationsMs.length && r.phases.every((x, i) => x * 1000 === durationsMs[i]);
 }
 
 /** 新しいブロックの印（いまある印と重ならない） */

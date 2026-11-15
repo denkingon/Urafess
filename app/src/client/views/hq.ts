@@ -215,7 +215,11 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   }
   el.append(head, rail, now, strip, reject, body, dock, tabs);
   // 夜の予定：スマホはデッキのいちばん上、幅の広い画面は全幅の帯（3列の上）
-  const nightPal = createNightPalette((plan) => actions.command('night-plan', { night: plan }));
+  const nightPal = createNightPalette(
+    (plan) => actions.command('night-plan', { night: plan }),
+    // プレ・本番の中身（4段）をデッキの時間へ（前の画面の「時間を変える」と同じ送り方）
+    (secs) => actions.command('durations', { durations: secs.map((x) => x * 1000) }),
+  );
   const wide = matchMedia('(min-width: 1024px)');
   const placeNight = () => {
     if (wide.matches) el.insertBefore(nightPal.el, body);

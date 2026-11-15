@@ -100,3 +100,18 @@
   .np .np-pick { grid-template-columns: 3.4em minmax(0, 1fr); }
   .np-kind { display: none; }
 }
+
+/* プレ・本番の中身：1段ずつ（段の名前／頭からの経過／−／長さ／＋） */
+.np-round { display: flex; flex-direction: column; gap: 2px; padding: 8px; border: 1px solid var(--sen); border-radius: 6px; background: var(--yami); }
+.np-part { display: grid; grid-template-columns: minmax(0, 1fr) 3.6em 44px 3.4em 44px; align-items: center; gap: 4px; }
+.np-part-l { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-part[data-i="3"] .np-part-l { font-weight: 700; }
+.np-part-at { color: var(--muted); font-size: 16px; text-align: right; }
+.np-part output { text-align: center; font-size: 18px; }
+.np-part-total { grid-template-columns: minmax(0, 1fr) auto; padding: 6px 0 4px; border-top: 1px solid var(--sen); margin-top: 4px; }
+.np-part-total output { font-size: 20px; }
+.np-round .np-ops { margin-top: 6px; }
+.np-hint { margin: 0; color: var(--muted); }
+.np-deck { padding: 0 6px; border: 1px solid var(--muted); border-radius: 4px; color: var(--muted); line-height: 24px; }
+.np-len { min-width: 3.2em; text-align: right; font-size: 18px; padding-right: 4px; }
+@media (max-width: 600px) { .np-part-at { display: none; } .np-part { grid-template-columns: minmax(0, 1fr) 44px 3.4em 44px; } }
