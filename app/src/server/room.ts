@@ -137,6 +137,7 @@ import { cryptoRandomInt } from '../shared/allocate';
 import { DEFAULT_LEAD_RULES, isLeadRules, leadDown, leadSight, patchLeadRules, type LeadRules } from '../shared/lead';
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventToLine, eventsToCsv, type EventRow } from './log';
+import { cleanNightPlan, type NightPlan } from '../shared/night';
 import type { ProbeHub } from './probe';
 import { checkNewHostKey, hostKeyCandidates, sameHostKey } from '../shared/hostkey';
 
@@ -204,6 +205,8 @@ interface GameState {
   newsSeq?: number;
   /** 配役の決め方（主催者が切り替える）。古い保存データには無いので load で補う */
   wishMode: WishMode;
+  /** 夜の予定（本部で組む。新しい夜を始めても残す）。古い保存データには無い */
+  nightPlan?: NightPlan | null;
   /** いまの配役を決めたときの希望の数（くじだけで決めた配役・配役前は null） */
   wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
   /** 配役の出し方の設定（主催者が切り替える。次の配役から効く）。古い保存データには無いので load で補う */
@@ -3131,6 +3134,17 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    // 夜の予定：ほかの操作とぶつからないので版番号を見ない（全部を置きかえる。あとから押したほうが残る）
+    if (op === 'night-plan') {
+      const plan = cleanNightPlan(msg.night);
+      if (!plan) return this.reject(ws, att, op, 'bad-input');
+      if (JSON.stringify(plan) === JSON.stringify(this.game.nightPlan ?? null)) return;
+      this.game = { ...this.game, nightPlan: plan };
+      this.saveGame();
+      this.broadcastNow();
+      return;
+    }
+
     // ミッション：出す・締め切る・写真を決める。ほかの操作とぶつからないので版番号を見ない
     if (op === 'mission' || op === 'mission-close' || op === 'judge') {
       this.onMissionCmd(ws, att, msg, now);
@@ -4626,6 +4640,7 @@ export class GameRoom extends DurableObject<Env> {
           : undefined,
       zoneIn: g.mission?.open && g.mission.kind === 'zone' && g.mission.zone ? this.zoneInside(g.mission.zone.pts, Date.now()).map((q) => q.name) : undefined,
       wishStat: g.stage === 'lobby' ? null : (g.wishStat ?? null),
+      nightPlan: g.nightPlan ?? null,
       wishPrio: active.filter((p) => p.wish !== null && p.wishMiss > 0).length,
       cast: [...active]
         .sort((a, b) => a.num - b.num)

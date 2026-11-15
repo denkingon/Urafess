@@ -10,6 +10,7 @@ import type { MeetScope, MissionKind, PhotoStatus } from './mission';
 export type RescueVia = 'sound' | 'together' | 'mission' | 'host';
 import type { AnnounceSettings, AnnounceSound, RevealMode, RoleId, WishMode } from './rules';
 import type { Timer } from './schedule';
+import type { NightPlan } from './night';
 
 /**
  * 全員に配る「確保」の知らせ（最後の1件）。主催者の設定（AnnounceSettings）で出してよいものだけを入れる。
@@ -308,6 +309,8 @@ export interface HostSummary {
    * 古いサーバーは送らない
    */
   wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
+  /** 夜の予定（本部で組む。まだ組んでいなければ null）。古いサーバーは送らない */
+  nightPlan?: NightPlan | null;
   /** 配役の希望：次の配役で先に通る人（前に外れた人）の数 */
   wishPrio?: number;
   /** 配役の出し方：今の配役で、役が画面に出た人（tap なら、カードを止めた人）。古いサーバーは送らない */
@@ -467,6 +470,8 @@ export type HostOp =
   | 'ban-remove'
   /** 司令塔の札を変える（lead＝変える札だけ。on で入れる・外す）。いつでも */
   | 'lead'
+  /** 夜の予定を置きかえる（night＝予定の全部）。いつでも。ほかの操作とぶつからないので版番号を見ない */
+  | 'night-plan'
   /** 司令塔を指名する（pid＝今の配役で役がある人。その人の側の司令塔になる） */
   | 'lead-pick'
   /** 司令塔をくじで引き直す（role＝どちらの側か） */
@@ -527,6 +532,8 @@ export type ClientMsg =
       n?: number;
       /** 司令塔の札（op: 'lead'。変える札だけ） */
       lead?: Partial<LeadRules>;
+      /** 夜の予定（op: 'night-plan'。全部） */
+      night?: NightPlan;
       chatMode?: ChatMode;
       chatJail?: ChatJail;
       places?: string[];

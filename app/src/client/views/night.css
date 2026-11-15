@@ -1,0 +1,102 @@
+/* 夜の予定のパレット（本部）。道具なので無彩色。色が付くのは不備（朱）だけ。字は16px以上、押すものは44px以上 */
+.np { display: flex; flex-direction: column; gap: 12px; padding: 12px; border: 1px solid var(--muted); border-radius: 6px; background: var(--raised); color: var(--tsuki); }
+.np h2, .np h3 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 700; }
+.np-head { display: flex; align-items: center; gap: 10px; }
+.np-head h2 { flex: none; white-space: nowrap; }
+.np-sum { flex: 1 1 auto; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np button { min-height: 44px; min-width: 44px; padding: 0 10px; white-space: nowrap; border: 1px solid var(--sen); border-radius: 6px; background: transparent; color: var(--tsuki); font-size: 16px; cursor: pointer; }
+.np button:disabled { color: var(--sen); cursor: default; }
+.np button[aria-pressed="true"] { border: 2px solid var(--tsuki); background: var(--sen); }
+.np .np-toggle { flex: none; border-color: var(--muted); }
+
+/* 地図：横軸＝時刻 */
+.np-chart { position: relative; display: grid; grid-template-rows: 24px 22px 56px 14px; padding: 0 2px; }
+.np-ends { display: flex; justify-content: space-between; font-size: 16px; line-height: 24px; }
+.np-ends-r { color: var(--tsuki); }
+.np-ticks { position: relative; border-bottom: 1px solid var(--sen); }
+.np-ticks i { position: absolute; bottom: 0; width: 1px; height: 6px; background: var(--sen); }
+.np-ticks i[data-major] { height: 10px; background: var(--muted); }
+.np-tick-l { font-style: normal; position: absolute; bottom: 10px; left: 0; transform: translateX(-50%); font-size: 16px; line-height: 12px; color: var(--muted); white-space: nowrap; }
+.np-lane { position: relative; }
+.np .np-blk { position: absolute; top: 4px; bottom: 4px; min-width: 0; min-height: 0; padding: 0 4px; border: 1px solid var(--muted); border-radius: 4px;
+  background: transparent; color: var(--tsuki); overflow: hidden; display: flex; align-items: center; justify-content: flex-start; }
+.np .np-blk + .np-blk { border-left-width: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.np .np-blk[data-kind="pre"], .np .np-blk[data-kind="game"] { background: #2f323c; }
+.np .np-blk[data-kind="game"] { background: #474a54; }
+.np .np-blk[data-kind="show"] { background: repeating-linear-gradient(135deg, transparent 0 6px, #2b2e38 6px 9px); }
+.np .np-blk[data-kind="break"] { border-style: dashed; color: var(--muted); }
+.np .np-blk[aria-pressed="true"] { border: 2px solid var(--tsuki); background-color: #5c5f69; }
+.np .np-blk[data-bad] { box-shadow: inset 0 -4px 0 var(--shu); }
+.np-blk-l { font-size: 16px; line-height: 20px; white-space: nowrap; font-weight: 700; }
+.np-blk-l[hidden] { display: none; }
+.np-inner .np-seg { position: absolute; top: 3px; height: 8px; background: var(--muted); }
+.np-inner .np-seg[data-i="0"] { background: #6f6b64; }
+.np-inner .np-seg[data-i="1"] { background: #8c8880; }
+.np-inner .np-seg[data-i="2"] { background: var(--tsuki); }
+.np-inner .np-seg[data-i="3"] { background: #8c8880; }
+.np-inner .np-seg[data-over] { background: var(--shu); }
+.np-marks { position: absolute; inset: 46px 2px 0; pointer-events: none; }
+.np-marks i { position: absolute; top: 0; bottom: 0; width: 0; }
+.np-end { border-left: 2px solid var(--tsuki); }
+.np-limit { border-left: 2px dashed var(--muted); }
+.np-limit[data-bad] { border-left-color: var(--shu); }
+.np-now { border-left: 2px solid var(--chikko); }
+
+.np-issues { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.np-issues[hidden] { display: none; }
+.np-issues li { color: var(--shu); padding-left: 1.2em; text-indent: -1.2em; }
+.np-issues li::before { content: "！"; display: inline-block; width: 1.2em; text-indent: 0; font-weight: 700; }
+
+.np[data-open="off"] .np-body { display: none; }
+.np-body { display: flex; flex-direction: column; gap: 16px; }
+
+/* 開始・終わっていたい・終わり */
+.np-times { display: flex; flex-direction: column; gap: 8px; }
+.np-time { display: grid; grid-template-columns: 52px 5.2em 52px auto; justify-content: start; align-items: center; gap: 6px; }
+.np-time-l { grid-column: 1 / -1; color: var(--muted); }
+.np-time .np-clock { width: 100%; min-height: 44px; padding: 0; text-align: center; border: 1px solid var(--sen); border-radius: 6px; background: var(--yami); color: var(--tsuki); font-size: 24px; }
+.np-time-out { grid-template-columns: auto auto; justify-content: start; gap: 12px; }
+.np-time-out .np-time-l { grid-column: auto; }
+.np-time output { font-size: 24px; line-height: 44px; }
+
+/* 時刻表 */
+.np-table { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; border-top: 1px solid var(--sen); }
+.np-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; padding: 4px 0; border-bottom: 1px solid var(--sen); }
+.np-row[data-now] { box-shadow: inset 3px 0 0 var(--chikko); }
+.np .np-pick { display: grid; grid-template-columns: 3.4em minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 0 4px; border: 0; text-align: left; }
+.np .np-pick[aria-expanded="true"] { background: var(--sen); }
+.np-at { font-size: 18px; font-variant-numeric: tabular-nums; }
+.np-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.np-kind { color: var(--muted); white-space: nowrap; }
+.np-row[data-bad] .np-title { color: var(--shu); }
+.np-mins { display: flex; align-items: center; gap: 4px; }
+.np-mins output { min-width: 3.2em; text-align: center; font-size: 18px; }
+.np-row-end { grid-template-columns: 3.4em 1fr; padding: 10px 4px; }
+.np-row-end .np-title { color: var(--muted); font-weight: 400; }
+.np-editor { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; padding: 8px 4px 6px; }
+.np-name { min-height: 44px; padding: 0 10px; border: 1px solid var(--muted); border-radius: 6px; background: var(--yami); color: var(--tsuki); font-size: 16px; }
+.np-seg-btns, .np-ops { display: flex; flex-wrap: wrap; gap: 6px; }
+.np .np-del { margin-left: auto; border-style: dashed; }
+
+.np-kinds, .np-add { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.np-kinds h3, .np-add h3 { flex: 0 0 100%; color: var(--muted); font-weight: 400; }
+.np-kind-row { display: flex; align-items: center; gap: 4px; padding: 0 0 0 10px; border: 1px solid var(--sen); border-radius: 6px; }
+.np-kind-row > span { margin-right: 4px; }
+.np-kind-row button { border: 0; }
+.np-note { margin: 0; color: var(--muted); }
+
+/* 幅の広い画面：全幅の帯。地図は大きく、時刻表と道具は横に並べる */
+@media (min-width: 1024px) {
+  .hq .np { grid-area: night; margin-top: 16px; }
+  .np-chart { grid-template-rows: 24px 24px 72px 16px; }
+  .np-body { display: grid; grid-template-columns: 300px minmax(0, 1fr) 320px; gap: 16px 32px; align-items: start; }
+  .np-times { grid-column: 1; grid-row: 1 / span 2; }
+  .np-table { grid-column: 2; grid-row: 1 / span 3; }
+  .np-kinds { grid-column: 3; grid-row: 1; }
+  .np-add { grid-column: 3; grid-row: 2; }
+  .np-note { grid-column: 1; grid-row: 3; }
+}
+@media (max-width: 600px) {
+  .np .np-pick { grid-template-columns: 3.4em minmax(0, 1fr); }
+  .np-kind { display: none; }
+}

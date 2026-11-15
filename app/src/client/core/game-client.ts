@@ -520,6 +520,7 @@ export class GameClient {
       zone?: [number, number][];
       need?: number;
       secs?: number | null;
+      night?: import('../../shared/night').NightPlan;
     } = {},
   ): boolean {
     const game = this.state.game;
