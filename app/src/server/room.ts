@@ -137,6 +137,8 @@ import { cryptoRandomInt } from '../shared/allocate';
 import { DEFAULT_LEAD_RULES, isLeadRules, leadDown, leadSight, patchLeadRules, type LeadRules } from '../shared/lead';
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventToLine, eventsToCsv, type EventRow } from './log';
+import { cleanNightPlan, type NightPlan } from '../shared/night';
+import { cleanPresets, defaultPresets, presetDurations, type Preset } from '../shared/preset';
 import type { ProbeHub } from './probe';
 import { checkNewHostKey, hostKeyCandidates, sameHostKey } from '../shared/hostkey';
 
@@ -204,6 +206,10 @@ interface GameState {
   newsSeq?: number;
   /** 配役の決め方（主催者が切り替える）。古い保存データには無いので load で補う */
   wishMode: WishMode;
+  /** 夜の予定（本部で組む。新しい夜を始めても残す）。古い保存データには無い */
+  nightPlan?: NightPlan | null;
+  /** ルールのプリセット（本部で先に作る。新しい夜を始めても残す）。古い保存データには無い（最初のものを入れる） */
+  presets?: Preset[];
   /** いまの配役を決めたときの希望の数（くじだけで決めた配役・配役前は null） */
   wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
   /** 配役の出し方の設定（主催者が切り替える。次の配役から効く）。古い保存データには無いので load で補う */
@@ -456,7 +462,7 @@ type ParticipantRow = {
  * /api/game/<ゲームID>/(ws|debug|log|photo|photos)。photo は後ろに写真の印が付くこともある（取り出す）。
  * worker.ts も同じ形で部屋へ渡す
  */
-export const GAME_PATH = /^\/api\/game\/([A-Za-z0-9_-]{1,40})\/(ws|debug|log|photo|photos|key|me)(?:\/([A-Za-z0-9_-]{1,40}))?$/;
+export const GAME_PATH = /^\/api\/game\/([A-Za-z0-9_-]{1,40})\/(ws|debug|log|photo|photos|key|me|presets|night)(?:\/([A-Za-z0-9_-]{1,40}))?$/;
 /** 「助けて」「助ける」の長押し（保存しない。押している間の数秒だけのもの） */
 interface RescueHold {
   start: number;
@@ -1064,6 +1070,32 @@ export class GameRoom extends DurableObject<Env> {
     if (m[2] === 'photos') return this.onAlbumRequest(request);
     if (m[2] === 'me' && !m[3]) return this.onMeRequest(request);
     if (m[3]) return new Response('not found', { status: 404 });
+
+    // 夜の予定・プリセット：合言葉つきで読み書きする（本部の画面の外、たとえば Claude と一緒に作るときの口）。
+    // GET＝いまの中身、PUT＝全部を置きかえる（中身は本部の画面と同じ確かめ方）
+    if (m[2] === 'presets' || m[2] === 'night') {
+      if (m[3]) return new Response('not found', { status: 404 });
+      if (!this.isHostRequest(request)) return new Response('forbidden', { status: 403 });
+      const isPresets = m[2] === 'presets';
+      if (request.method === 'GET') {
+        return Response.json(isPresets ? (this.game.presets ?? defaultPresets()) : (this.game.nightPlan ?? null), { headers: { 'cache-control': 'no-store' } });
+      }
+      if (request.method !== 'PUT') return new Response('method not allowed', { status: 405 });
+      const body = await request.json().catch(() => undefined);
+      if (isPresets) {
+        const list = cleanPresets(body);
+        if (!list) return Response.json({ error: 'bad-input' }, { status: 400 });
+        this.game = { ...this.game, presets: list };
+      } else {
+        const plan = cleanNightPlan(body);
+        if (!plan) return Response.json({ error: 'bad-input' }, { status: 400 });
+        this.game = { ...this.game, nightPlan: plan };
+      }
+      this.saveGame();
+      this.log(isPresets ? 'presets' : 'night-plan', { data: { via: 'api' } });
+      this.broadcastNow();
+      return Response.json(isPresets ? this.game.presets : this.game.nightPlan);
+    }
 
     if (m[2] === 'key') {
       // POST：主催者画面で合言葉を変える
@@ -3131,6 +3163,27 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    // 夜の予定：ほかの操作とぶつからないので版番号を見ない（全部を置きかえる。あとから押したほうが残る）
+    if (op === 'presets') {
+      const list = cleanPresets(msg.presets);
+      if (!list) return this.reject(ws, att, op, 'bad-input');
+      if (JSON.stringify(list) === JSON.stringify(this.game.presets ?? defaultPresets())) return;
+      this.game = { ...this.game, presets: list };
+      this.saveGame();
+      this.broadcastNow();
+      return;
+    }
+
+    if (op === 'night-plan') {
+      const plan = cleanNightPlan(msg.night);
+      if (!plan) return this.reject(ws, att, op, 'bad-input');
+      if (JSON.stringify(plan) === JSON.stringify(this.game.nightPlan ?? null)) return;
+      this.game = { ...this.game, nightPlan: plan };
+      this.saveGame();
+      this.broadcastNow();
+      return;
+    }
+
     // ミッション：出す・締め切る・写真を決める。ほかの操作とぶつからないので版番号を見ない
     if (op === 'mission' || op === 'mission-close' || op === 'judge') {
       this.onMissionCmd(ws, att, msg, now);
@@ -3384,6 +3437,42 @@ export class GameRoom extends DurableObject<Env> {
         this.announceNews('test', null, null, now);
         this.log('announce-test', { at: now, data: { ...(g.announce ?? ANNOUNCE_DEFAULT) } });
         this.broadcastNow();
+        break;
+      }
+      case 'preset-apply': {
+        // プリセットをデッキ全部に入れる（時間・割合・マイク・配役の決め方・出し方・司令塔・チャット・縮み方を一度に）。
+        // 時間と割合を変えるので、変えられるのは時間・割合と同じく待合室・配役のあと・結果発表の間だけ
+        if (!(g.stage === 'lobby' || g.stage === 'assigned' || g.stage === 'result')) {
+          return this.reject(ws, att, op, 'not-allowed');
+        }
+        const preset = (g.presets ?? defaultPresets()).find((p) => p.id === msg.preset);
+        if (!preset) return this.reject(ws, att, op, 'bad-input');
+        // 夜の予定のブロックで「このブロックだけ」時間を変えていれば、その時間で入れる
+        let phases = preset.round.phases;
+        if (msg.durations !== undefined) {
+          const d = msg.durations;
+          const ok = Array.isArray(d) && d.length === PHASES.length && d.every((x) => Number.isInteger(x) && x >= DURATION_MIN_MS && x <= DURATION_MAX_MS);
+          if (!ok) return this.reject(ws, att, op, 'bad-input');
+          phases = d.map((x) => x / 1000);
+        }
+        const durations = msg.durations ? [...msg.durations] : presetDurations({ ...preset, round: { ...preset.round, phases } });
+        const leadBefore = this.lead().rules;
+        this.commit({
+          durations,
+          ratio: { ...preset.ratio },
+          micMode: preset.mic,
+          wishMode: preset.wish,
+          revealMode: preset.reveal,
+          lead: { ...this.lead(), rules: { ...preset.lead } },
+          chatMode: preset.chat.mode,
+          chatJail: preset.chat.jail,
+          shrinkPlan: { ...preset.shrink },
+        });
+        this.log('preset', { at: now, data: { id: preset.id, name: preset.name, mode: preset.mode, durations } });
+        if (JSON.stringify(leadBefore) !== JSON.stringify(preset.lead)) {
+          this.syncLeads(now);
+          this.leadChanged();
+        }
         break;
       }
       case 'wish-mode': {
@@ -4626,6 +4715,8 @@ export class GameRoom extends DurableObject<Env> {
           : undefined,
       zoneIn: g.mission?.open && g.mission.kind === 'zone' && g.mission.zone ? this.zoneInside(g.mission.zone.pts, Date.now()).map((q) => q.name) : undefined,
       wishStat: g.stage === 'lobby' ? null : (g.wishStat ?? null),
+      nightPlan: g.nightPlan ?? null,
+      presets: g.presets ?? defaultPresets(),
       wishPrio: active.filter((p) => p.wish !== null && p.wishMiss > 0).length,
       cast: [...active]
         .sort((a, b) => a.num - b.num)
