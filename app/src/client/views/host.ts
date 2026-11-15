@@ -1,3 +1,4 @@
+import type { LeadRules } from '../../shared/lead';
 import { SHOW_EXAMPLE, SOUND_NAME } from '../../shared/announce';
 import { CAPTURE_PHASE_INDEX, captureOpenAt, VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
@@ -116,6 +117,7 @@ export interface HostActions {
       photo?: string;
       free?: boolean;
       n?: number;
+      lead?: Partial<LeadRules>;
       chatMode?: ChatMode;
       chatJail?: ChatJail;
       places?: string[];
