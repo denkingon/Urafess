@@ -8,6 +8,9 @@ import { chatText } from '../../shared/chat';
 import type { Sensors } from '../sense';
 import { setFramePad } from './overview';
 import { createTerm } from './term';
+import { createNightPalette } from './night';
+import { createPresetPalette } from './preset';
+import './night.css';
 import './term.css';
 import { createHost, type HostActions, type HostInput, type HostScreen } from './host';
 
@@ -212,6 +215,24 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
     panel.deck.append(misc);
   }
   el.append(head, rail, now, strip, reject, body, dock, tabs);
+  // 夜の予定：スマホはデッキのいちばん上、幅の広い画面は全幅の帯（3列の上）
+  const nightPal = createNightPalette((plan) => actions.command('night-plan', { night: plan }), {
+    apply: (preset, durations) => actions.command('preset-apply', { preset, ...(durations ? { durations } : {}) }),
+    durations: (durations) => actions.command('durations', { durations }),
+  });
+  // プリセット：夜の予定のすぐ下
+  const presetPal = createPresetPalette(
+    (presets) => actions.command('presets', { presets }),
+    (preset) => actions.command('preset-apply', { preset }),
+  );
+  const wide = matchMedia('(min-width: 1024px)');
+  const placeNight = () => {
+    if (wide.matches) el.insertBefore(nightPal.el, body);
+    else panel.deck.prepend(nightPal.el);
+    nightPal.el.after(presetPal.el);
+  };
+  placeNight();
+  wide.addEventListener('change', placeNight);
   if (termEl) el.append(termEl);
 
   // ---------- 押したとき ----------
@@ -295,6 +316,9 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       inner.update(input);
       const { game, host, serverNow } = input;
       if (!game || !host) return;
+      const presets = host.presets ?? [];
+      nightPal.update(host.nightPlan, game.durations, game.stage, presets);
+      presetPal.update(host.presets, game);
       const timer = game.timer;
       const done = game.stage === 'timer' && timer !== null && isDone(timer, serverNow);
       const running = game.stage === 'timer' && timer?.status === 'running' && !done;
