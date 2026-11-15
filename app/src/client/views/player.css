@@ -516,3 +516,66 @@
 .player .lead-strip[data-tone="down"] span { color: var(--shu); }
 .player .lead-strip[data-tone="up"] { border-color: var(--chikko); color: var(--chikko); background: var(--raised); }
 .player .lead-strip[data-tone="up"] span { color: var(--tsuki); }
+
+/*
+ * ---------- ゲームの段階：地図を主役に ----------
+ * 画面の半分より大きく地図に使う。段階の名前・いつもの一言はしまい、時間と人数の印は地図の下に1行で並べる。
+ * 切りかえ（全体／近く）と「寄る」は地図の上に重ねる。下地は夜の屋外で道と建物が読める明るさにする
+ */
+.player .p-info { display: contents; }
+.phone.player.is-glow .p-bar .lbl { display: none; }
+.phone.player.is-glow .glow { margin-top: 8px; }
+.phone.player.is-glow .p-info { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; min-width: 0; }
+.phone.player.is-glow .p-time { margin: 0; flex: none; text-align: left; font-size: max(calc(var(--min) * 1.2), 40px); }
+.phone.player.is-glow .p-counts { margin: 0; min-width: 0; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.phone.player.is-glow .p-counts .grp { gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.phone.player.is-glow .p-counts .grp.oni .gl { width: 18px; height: 18px; }
+.phone.player.is-glow .p-counts .dot { width: 12px; height: 12px; }
+.phone.player.is-glow.is-plain .p-word { display: none; }
+.phone.player.is-glow .p-word { margin-top: 6px; font-size: max(var(--min), 20px); line-height: 1.25; }
+.phone.player.is-glow .p-word .ja, .phone.player.is-glow .p-word .en { display: inline; }
+.phone.player.is-glow .p-word .en { margin-left: .4em; }
+.phone.player.is-glow .p-lit { margin-top: 6px; font-size: max(var(--min), 22px); }
+.phone.player.is-glow .p-lit .ja, .phone.player.is-glow .p-lit .en { display: inline; }
+.phone.player.is-glow .p-lit .en { margin-left: .4em; }
+.phone.player.is-glow .p-note { font-size: max(var(--min), 16px); line-height: 1.4; }
+
+/* 地図の上に重ねる：切りかえは左上、「寄る」は右上。押す場所は 44px 以上 */
+.player .glow-board.is-overlay { gap: 6px; }
+.player .glow-board.is-overlay .glow-tabs { position: absolute; left: 8px; top: 8px; z-index: 3; gap: 6px; }
+.player .glow-board.is-overlay .glow-tabs[hidden] { display: none; }
+.player .glow-board.is-overlay .glow-tabs button { flex: none; min-height: 44px; padding: 0 12px; background: rgba(11, 12, 16, .82); border-color: var(--tsuki-muted); color: var(--tsuki-muted); }
+.player .glow-board.is-overlay .glow-tabs button[aria-selected="true"] { background: var(--tsuki); border-color: var(--tsuki); color: var(--yami); }
+.player .glow-zoom {
+  position: absolute; right: 8px; top: 8px; z-index: 3; min-height: 44px; padding: 0 12px 0 8px; display: flex; align-items: center; gap: 6px;
+  border-radius: 999px; border: 1.5px solid var(--tsuki-muted); background: rgba(11, 12, 16, .82); color: var(--tsuki);
+  font-size: max(var(--min), 17px); font-weight: 900;
+}
+.player .glow-zoom[hidden] { display: none; }
+.player .glow-zoom[aria-pressed="true"] { background: var(--tsuki); border-color: var(--tsuki); color: var(--yami); }
+.player .glow-zoom svg { width: 24px; height: 24px; flex: none; }
+.player .glow-zoom svg circle { fill: none; stroke: currentColor; stroke-width: 2.2; }
+.player .glow-zoom svg path { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+/* 幅の狭いスマホ（iPhone SE など）：「寄る」は印だけにして、切りかえと並べる */
+@media (max-width: 380px) {
+  .player .glow-board.is-overlay .glow-tabs { gap: 4px; }
+  .player .glow-board.is-overlay .glow-tabs button { padding: 0 9px; }
+  .player .glow-zoom { padding: 0 9px; }
+  .player .glow-zoom b { display: none; }
+}
+/* 地図がごく低いとき（背の低いスマホの牢屋の画面など）は、重ねた物をしまって地図を見せる */
+@container (max-height: 140px) {
+  .player .glow-board.is-overlay .glow-tabs, .player .glow-zoom { display: none; }
+}
+/* 範囲が縮む知らせは、切りかえと「寄る」の下に */
+.player .glow-board.is-overlay .zone-chip { top: 60px; }
+.player .glow-board.is-overlay .radar { max-height: none; }
+
+/* 下地：夜の屋外で読める明るさ（地は暗い灰、建物と道が見分けられる） */
+.player .ov { background: #20232b; border-color: var(--tsuki-muted); }
+.player .ov-tiles img { filter: invert(1) hue-rotate(180deg) grayscale(0.55) brightness(1.25) contrast(1.05); }
+/* 自分：向いている方へ扇。印は大きめ */
+.player .ov-me .ov-me-cone { fill: var(--rc); fill-opacity: .45; stroke: none; }
+.player .ov-me.is-lit .ov-me-cone { fill: var(--chikko); }
+.player .ov-me .ov-me-ring { stroke-width: 3.5; }
+.player .ov-name { stroke: #0b0c10; stroke-width: 4.5px; }

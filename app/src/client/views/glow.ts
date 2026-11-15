@@ -26,6 +26,10 @@ const DRAW_EVERY_MS = 100;
 /** 光が消えるまでの長さ。走っていない司令塔の位置は5秒ごとにしか届かないので、全体の地図と同じ長さで見る */
 const staleOf = (r: GlowEntry): number => (r.lead ? MATES_STALE_MS : RUN_STALE_MS);
 const LEAD_WORD: Pair = ['司令塔', 'COMMANDER'];
+/** 寄る：自分を真ん中に、左右にこのメートルだけ映す（390px の画面で 1m が約2.5px） */
+const FOCUS_M = 70;
+/** 地図の上の端に重ねている切りかえ・「寄る」の高さ（8＋44＋余白） */
+const OVERLAY_TOP_PX = 58;
 
 export interface BoardInput {
   glow: ClientState['glow'];
@@ -65,6 +69,11 @@ export interface BoardOptions {
   labelMax?: number;
   /** 参加者の画面：英語も出す（ui.ts の言語に従う）。主催者の画面は日本語だけ */
   bilingual?: boolean;
+  /**
+   * 参加者の画面：地図を大きく使う。切りかえ（全体／近く）を地図の上に重ね、「寄る」（自分のまわりだけ映す）を出し、
+   * 自分の印に向きの扇を出す。主催者の画面（既定）は今までどおり
+   */
+  overlay?: boolean;
 }
 
 export interface LightsBoard {
@@ -96,7 +105,10 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
   const listMax = opts.listMax ?? 1;
   const labelMax = opts.labelMax ?? 8;
   const bilingual = opts.bilingual ?? false;
+  const overlay = opts.overlay ?? false;
   const lang = bilingual ? UI.lang : 'ja';
+  /** 寄る（自分のまわりだけ映す）。全体の地図のときだけ効く */
+  let zoomed = false;
   let mode: 'all' | 'near' = opts.start ?? 'all';
   const el = document.createElement('div');
   el.className = 'glow-board';
@@ -131,11 +143,32 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
   const list = document.createElement('ul');
   list.className = 'glow-list';
   list.setAttribute('aria-live', 'polite');
-  el.append(tabs, wrap, list);
+  // 寄る：全体の地図で、自分のまわりだけを大きく映す。もう一度押すと全体に戻る
+  const zoom = document.createElement('button');
+  zoom.type = 'button';
+  zoom.className = 'glow-zoom';
+  zoom.hidden = true;
+  zoom.addEventListener('click', () => {
+    zoomed = !zoomed;
+    lastDraw = 0;
+    applyMode();
+  });
+  if (overlay) {
+    // 切りかえと「寄る」は地図の上に重ねる（地図の高さを取らない）
+    el.classList.add('is-overlay');
+    wrap.append(tabs, zoom);
+    el.append(wrap, list);
+  } else el.append(tabs, wrap, list);
   const applyMode = () => {
     el.dataset.mode = mode;
+    el.dataset.zoom = zoomed ? 'in' : 'out';
     tabAll.setAttribute('aria-selected', String(mode === 'all'));
     tabNear.setAttribute('aria-selected', String(mode === 'near'));
+    zoom.setAttribute('aria-pressed', String(zoomed));
+    zoom.setAttribute('aria-label', zoomed ? '引く（全体に戻す）' : '自分のまわりに寄る');
+    zoom.innerHTML = zoomed
+      ? `<svg viewBox="-12 -12 24 24" aria-hidden="true"><circle r="8"/><path d="M-4,0H4"/></svg><b>${lang === 'en' ? 'OUT' : '引く'}</b>`
+      : `<svg viewBox="-12 -12 24 24" aria-hidden="true"><circle r="8"/><path d="M-4,0H4M0,-4V4"/></svg><b>${lang === 'en' ? 'IN' : '寄る'}</b>`;
   };
   applyMode();
 
@@ -193,6 +226,9 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
       }
 
       const fresh = others.map((r) => r.num);
+      // 寄る：全体の地図で、自分の位置が分かっているときだけ出す
+      const canZoom = overlay && mode === 'all' && !!me;
+      if (zoom.hidden !== !canZoom) zoom.hidden = !canZoom;
       if (performance.now() - lastDraw < DRAW_EVERY_MS) return { others: others.length, meListed, fresh };
       lastDraw = performance.now();
       // 全体の地図は、自分の位置が無くても仲間は出るので「待っている」は出さない
@@ -256,6 +292,9 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
           area: Array.isArray(area) ? area : (z?.pts ?? null),
           jail: jail ?? null,
           meOut,
+          meHeading: overlay ? heading : null,
+          focusM: overlay && zoomed ? FOCUS_M : null,
+          insetTop: overlay ? OVERLAY_TOP_PX : 0,
           zone: z ? { inner: z.inner, next: z.next, center: z.center } : null,
           mzone: mzone ?? null,
         });
@@ -477,7 +516,7 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
   const ask = el.querySelector('.glow-ask') as HTMLButtonElement;
   const note = q('note');
   const litChip = root?.querySelector('[data-k="lit"]') as HTMLElement | null;
-  const board = createLightsBoard({ listMax: 1, start: 'all', labelMax: 8, bilingual: true });
+  const board = createLightsBoard({ listMax: 1, start: 'all', labelMax: 10, bilingual: true, overlay: true });
   el.append(board.el);
   // 範囲が縮む知らせは地図の上に重ねる（「戻れ」の帯と並んでも、地図の高さを取らない）
   board.el.querySelector('.ov')?.append(q('zone'));

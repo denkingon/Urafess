@@ -576,6 +576,7 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 }
 .ov-me .ov-me-ring { fill: none; stroke: var(--chikko); stroke-width: 3; }
 .ov-me .ov-me-dot { fill: var(--chikko); }
+.ov-me .ov-me-cone { fill: var(--chikko); fill-opacity: 0.3; }
 .ov-name {
   font-size: 16px; font-weight: 900; font-family: inherit; fill: var(--ink);
   paint-order: stroke; stroke: #0e0e0e; stroke-width: 4px; stroke-linejoin: round;
