@@ -37,8 +37,20 @@ export interface NightBlock {
   title: string;
   /** 長さ（分）。プレ・本番では使わない（中身の合計が長さ） */
   mins: number;
-  /** プレ・本番の中身。ほかの種類には無い */
+  /** プレ・本番：使うプリセットの印（無ければ、プリセットなし） */
+  preset?: string | null;
+  /**
+   * プレ・本番の中身（時間）。プリセットがあれば「このブロックだけ」の上書き。
+   * プリセットも中身も無いブロックは「詳細なし」で、長さは mins
+   */
   round?: NightRound;
+}
+
+/** プリセットのうち、夜の予定が知っていればいいもの（時間と名前） */
+export interface PresetRef {
+  id: string;
+  name: string;
+  round: NightRound;
 }
 
 /** 中身の段の名前（配役・デッキの4段・結果発表） */
@@ -54,9 +66,18 @@ export function defaultRound(kind: NightKind): NightRound {
     : { cast: 60, phases: [20, 60, 300, 120], result: 180 };
 }
 
+/** ブロックで使う中身：上書き → プリセット → なし（詳細なし） */
+export function blockRound(b: NightBlock, presets: readonly PresetRef[] = []): NightRound | null {
+  if (!kindInfo(b.kind).round) return null;
+  if (b.round) return b.round;
+  if (b.preset) return presets.find((p) => p.id === b.preset)?.round ?? null;
+  return null;
+}
+
 /** ブロックの長さ（秒） */
-export function blockSecs(b: NightBlock): number {
-  if (b.round) return b.round.cast + b.round.phases.reduce((a, x) => a + x, 0) + b.round.result;
+export function blockSecs(b: NightBlock, presets: readonly PresetRef[] = []): number {
+  const r = blockRound(b, presets);
+  if (r) return r.cast + r.phases.reduce((a, x) => a + x, 0) + r.result;
   return b.mins * 60;
 }
 
@@ -86,10 +107,10 @@ export function defaultNightPlan(): NightPlan {
     endBy: 22 * 60 + 30,
     blocks: [
       { id: 'b1', kind: 'talk', title: '集合・ルール説明', mins: 10 },
-      { id: 'b2', kind: 'pre', title: 'プレ', mins: 8, round: defaultRound('pre') },
-      { id: 'b3', kind: 'game', title: '本番', mins: 13, round: defaultRound('game') },
+      { id: 'b2', kind: 'pre', title: 'プレ', mins: 8, preset: 'p1' },
+      { id: 'b3', kind: 'game', title: '本番', mins: 13, preset: 'p2' },
       { id: 'b4', kind: 'show', title: 'ハーフタイムショー', mins: 10 },
-      { id: 'b5', kind: 'game', title: '本番2', mins: 13, round: defaultRound('game') },
+      { id: 'b5', kind: 'game', title: '本番2', mins: 13, preset: 'p2' },
       { id: 'b6', kind: 'end', title: '終わり・結果発表', mins: 10 },
     ],
   };
@@ -121,9 +142,11 @@ export function cleanNightPlan(v: unknown): NightPlan | null {
     ids.add(x.id);
     const blk: NightBlock = { id: x.id, kind: x.kind, title: x.title.trim().slice(0, NIGHT_TITLE_MAX), mins: x.mins as number };
     if (kindInfo(x.kind).round) {
-      // 中身が無い（前の版で作った）ブロックには、最初の中身を入れる
-      if (x.round === undefined) blk.round = defaultRound(x.kind);
-      else {
+      if (x.preset !== undefined && x.preset !== null) {
+        if (typeof x.preset !== 'string' || !/^[A-Za-z0-9_-]{1,16}$/.test(x.preset)) return null;
+        blk.preset = x.preset;
+      }
+      if (x.round !== undefined && x.round !== null) {
         const r = cleanRound(x.round);
         if (!r) return null;
         blk.round = r;
@@ -152,10 +175,10 @@ export interface PlacedBlock extends NightBlock {
 }
 
 /** 並べる：それぞれのブロックの始まりと終わり（0時からの分。日をまたぐと 1440 を超える） */
-export function placeNight(plan: NightPlan): { blocks: PlacedBlock[]; end: number } {
+export function placeNight(plan: NightPlan, presets: readonly PresetRef[] = []): { blocks: PlacedBlock[]; end: number } {
   let t = plan.start;
   const blocks = plan.blocks.map((b) => {
-    const p = { ...b, from: t, to: t + blockSecs(b) / 60 };
+    const p = { ...b, from: t, to: t + blockSecs(b, presets) / 60 };
     t = p.to;
     return p;
   });
@@ -193,12 +216,12 @@ export interface NightIssue {
 /**
  * 不備を見つける
  * - 終わっていたい時刻を過ぎる
- * - プレ・本番の配役と結果発表が0（集まる・話す時間が無い）
+ * - プレ・本番の配役と結果発表が0（集まる・話す時間が無い）／選んだプリセットが消えている
  * - 本番が1つもない／「終わり」が最後でない
  */
-export function nightIssues(plan: NightPlan): NightIssue[] {
+export function nightIssues(plan: NightPlan, presets: readonly PresetRef[] = []): NightIssue[] {
   const out: NightIssue[] = [];
-  const { blocks, end } = placeNight(plan);
+  const { blocks, end } = placeNight(plan, presets);
   if (!blocks.length) return [{ id: null, text: 'ブロックが無い' }];
   if (plan.endBy !== null) {
     // 終わっていたい時刻は、開始より前なら次の日とみなす
@@ -206,7 +229,10 @@ export function nightIssues(plan: NightPlan): NightIssue[] {
     if (end > endBy + 1e-9) out.push({ id: null, text: `終わりが ${hhmm(plan.endBy)} を ${spanText(end - endBy)} 過ぎる（${hhmm(end)}）` });
   }
   for (const b of blocks) {
-    if (b.round && b.round.cast + b.round.result === 0) out.push({ id: b.id, text: `「${b.title || kindInfo(b.kind).name}」配役と結果発表の時間が0` });
+    const name = b.title || kindInfo(b.kind).name;
+    if (b.preset && !presets.some((p) => p.id === b.preset)) out.push({ id: b.id, text: `「${name}」のプリセットが消えている` });
+    const r = blockRound(b, presets);
+    if (r && r.cast + r.result === 0) out.push({ id: b.id, text: `「${name}」配役と結果発表の時間が0` });
   }
   if (!blocks.some((b) => b.kind === 'game')) out.push({ id: null, text: '本番のブロックが無い' });
   const endIdx = blocks.findIndex((b) => b.kind === 'end');

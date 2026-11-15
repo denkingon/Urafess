@@ -81,6 +81,9 @@ const KIND_NAME: Record<string, string> = {
   meet: 'ミッション：合流した',
   'mission-zone': 'ミッション：範囲の判定',
   'mission-free': 'ミッション成功で牢屋から出した',
+  preset: 'プリセットを入れた',
+  presets: 'プリセットを変えた',
+  'night-plan': '夜の予定を変えた',
 };
 
 /** 走ると光る：消えた理由 */

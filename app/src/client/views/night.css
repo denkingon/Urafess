@@ -87,7 +87,8 @@
 
 /* 幅の広い画面：全幅の帯。地図は大きく、時刻表と道具は横に並べる */
 @media (min-width: 1024px) {
-  .hq .np { grid-area: night; margin-top: 16px; }
+  .hq .np:not(.pp) { grid-area: night; margin-top: 16px; }
+  .hq .pp { grid-area: presets; margin-top: 12px; }
   .np-chart { grid-template-rows: 24px 24px 72px 16px; }
   .np-body { display: grid; grid-template-columns: 300px minmax(0, 1fr) 320px; gap: 16px 32px; align-items: start; }
   .np-times { grid-column: 1; grid-row: 1 / span 2; }
@@ -115,3 +116,41 @@
 .np-deck { padding: 0 6px; border: 1px solid var(--muted); border-radius: 4px; color: var(--muted); line-height: 24px; }
 .np-len { min-width: 3.2em; text-align: right; font-size: 18px; padding-right: 4px; }
 @media (max-width: 600px) { .np-part-at { display: none; } .np-part { grid-template-columns: minmax(0, 1fr) 44px 3.4em 44px; } }
+
+/* プレ・本番のブロック：プリセットを選ぶ */
+.np-seg-btns .np-seg-l { flex: 0 0 100%; color: var(--muted); }
+.np-presets button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.np-parts { display: flex; flex-direction: column; gap: 2px; }
+.np-part[data-ro] { grid-template-columns: minmax(0, 1fr) 3.6em 3.4em; color: var(--muted); }
+.np-kind-presets { flex-wrap: wrap; padding: 4px 4px 4px 10px; }
+.np-kind-presets button { border: 1px solid var(--sen); }
+
+/* プリセット */
+.pp-pick { grid-template-columns: minmax(0, 1fr) !important; gap: 0 !important; padding: 6px 4px !important; }
+.np .pp-pick { min-height: 56px; }
+.pp-sum { color: var(--muted); font-size: 16px; line-height: 22px; overflow-wrap: anywhere; }
+.pp-row { grid-template-columns: minmax(0, 1fr); }
+.pp-sec { display: flex; flex-direction: column; gap: 6px; padding: 10px 0 4px; border-top: 1px solid var(--sen); }
+.pp-sec-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pp-sec-h h3 { color: var(--tsuki); }
+.pp-sec-h button { min-height: 44px; color: var(--muted); }
+.pp-sec .np-part[data-step] { grid-template-columns: minmax(0, 1fr) 44px 3.6em 44px; }
+.pp-switches { display: flex; flex-direction: column; gap: 6px; }
+.np .pp-switches .hq-switch { min-height: 52px; padding: 6px 12px; }
+.pp-foot { flex-wrap: wrap; }
+.pp-io { display: flex; flex-direction: column; gap: 8px; }
+.pp-io[hidden] { display: none; }
+.pp-text { width: 100%; min-height: 160px; padding: 8px; border: 1px solid var(--muted); border-radius: 6px; background: var(--yami); color: var(--tsuki);
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 16px; line-height: 1.4; resize: vertical; }
+.pp-msg { color: var(--tsuki); }
+.pp[data-open="off"] .pp-list .pp-sum { display: none; }
+.pp[data-open="off"] .pp-foot, .pp[data-open="off"] .pp-io { display: none; }
+@media (min-width: 1024px) {
+  .pp-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 0 24px; }
+  .pp-row:has(.pp-editor) { grid-column: 1 / -1; }
+  .pp-editor { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 24px !important; align-items: start; }
+  .pp-editor > .np-name, .pp-editor > .np-ops, .pp-editor > .np-hint { grid-column: 1 / -1; }
+}
+.np .np-ops button { white-space: normal; text-align: left; line-height: 20px; padding: 6px 10px; }
+.np .pp-pick { white-space: normal; text-align: left; }
+.pp-pick > * { min-width: 0; }

@@ -1,5 +1,6 @@
 import type { LogLine } from '../../shared/logline';
 import type { NightPlan } from '../../shared/night';
+import type { Preset } from '../../shared/preset';
 import type { LeadRules } from '../../shared/lead';
 import { SHOW_EXAMPLE, SOUND_NAME } from '../../shared/announce';
 import { CAPTURE_PHASE_INDEX, captureOpenAt, VIA_NAME } from '../../shared/capture';
@@ -129,6 +130,8 @@ export interface HostActions {
       need?: number;
       secs?: number | null;
       night?: NightPlan;
+      presets?: Preset[];
+      preset?: string;
     },
   ): void;
   /** チャット：本部から送る（to＝all・oni・runner・pid:<その人>）。古い呼び出し側には無い */

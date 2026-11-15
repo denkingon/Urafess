@@ -11,6 +11,7 @@ export type RescueVia = 'sound' | 'together' | 'mission' | 'host';
 import type { AnnounceSettings, AnnounceSound, RevealMode, RoleId, WishMode } from './rules';
 import type { Timer } from './schedule';
 import type { NightPlan } from './night';
+import type { Preset } from './preset';
 
 /**
  * 全員に配る「確保」の知らせ（最後の1件）。主催者の設定（AnnounceSettings）で出してよいものだけを入れる。
@@ -311,6 +312,8 @@ export interface HostSummary {
   wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
   /** 夜の予定（本部で組む。まだ組んでいなければ null）。古いサーバーは送らない */
   nightPlan?: NightPlan | null;
+  /** ルールのプリセット。古いサーバーは送らない */
+  presets?: Preset[];
   /** 配役の希望：次の配役で先に通る人（前に外れた人）の数 */
   wishPrio?: number;
   /** 配役の出し方：今の配役で、役が画面に出た人（tap なら、カードを止めた人）。古いサーバーは送らない */
@@ -472,6 +475,13 @@ export type HostOp =
   | 'lead'
   /** 夜の予定を置きかえる（night＝予定の全部）。いつでも。ほかの操作とぶつからないので版番号を見ない */
   | 'night-plan'
+  /** プリセットの並びを置きかえる（presets＝全部）。いつでも。版番号を見ない */
+  | 'presets'
+  /**
+   * プリセットをデッキ全部に入れる（preset＝プリセットの印）。durations があればその時間で（夜の予定の「このブロックだけ」）。
+   * 待合室・配役のあと・結果発表の間だけ
+   */
+  | 'preset-apply'
   /** 司令塔を指名する（pid＝今の配役で役がある人。その人の側の司令塔になる） */
   | 'lead-pick'
   /** 司令塔をくじで引き直す（role＝どちらの側か） */
@@ -534,6 +544,10 @@ export type ClientMsg =
       lead?: Partial<LeadRules>;
       /** 夜の予定（op: 'night-plan'。全部） */
       night?: NightPlan;
+      /** プリセットの並び（op: 'presets'。全部） */
+      presets?: Preset[];
+      /** 入れるプリセットの印（op: 'preset-apply'） */
+      preset?: string;
       chatMode?: ChatMode;
       chatJail?: ChatJail;
       places?: string[];
