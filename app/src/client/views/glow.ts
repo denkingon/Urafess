@@ -47,6 +47,8 @@ export interface BoardInput {
   jail?: [number, number][] | null;
   /** 自分が範囲の外にいる（見張りが決めた） */
   meOut?: boolean;
+  /** ミッションの範囲（全体の地図に蓄光の面で出す）。遊ぶ範囲の縮小（zone）とは別のもの */
+  mzone?: [number, number][] | null;
 }
 
 export interface BoardOptions {
@@ -141,7 +143,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
 
   return {
     el,
-    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, jail, meOut }) {
+    update({ glow, serverNow, me, heading, myNum, meLit, message, mates, meAcc, myKind, area, jail, meOut, mzone }) {
       const now = serverNow ?? Date.now();
       const all: GlowEntry[] = (glow?.runs ?? []).filter((r) => now - r.at <= RUN_STALE_MS);
       const meListed = myNum !== null && all.some((r) => r.num === myNum);
@@ -237,6 +239,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
           jail: jail ?? null,
           meOut,
           zone: z ? { inner: z.inner, next: z.next, center: z.center } : null,
+          mzone: mzone ?? null,
         });
       }
 
@@ -618,6 +621,7 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
         area,
         jail,
         meOut: out,
+        mzone: openZone(state.game),
       });
       // 光っている間は、ひとことの場所に「光っている」（全員の一覧に自分が入ったら「…」が取れる）
       const shown = view.glow === 'live' && lit;
@@ -629,4 +633,10 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
       }
     },
   };
+}
+
+/** いま開いている範囲のミッションの頂点（無ければ null） */
+export function openZone(game: ClientState['game'] | null | undefined): [number, number][] | null {
+  const m = game?.mission;
+  return m?.open && m.kind === 'zone' && m.zone ? m.zone.pts : null;
 }

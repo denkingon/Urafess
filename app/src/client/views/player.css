@@ -418,6 +418,12 @@
 .phone.player.is-glow .slot > .mission-card .mission-shoot { width: auto; min-height: 44px; padding: 0 16px; font-size: max(var(--min), 16px); align-self: center; }
 .phone.player.is-glow .slot > .mission-card .mission-mine, .phone.player.is-glow .slot > .mission-card .mission-ok { grid-column: 1 / -1; font-size: max(var(--min), 16px); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .phone.player.is-glow .slot > .mission-card .mission-mine:not(:empty) ~ .mission-ok { display: none; }
+/* 合流・範囲：畳んだ札の右に、合流の長押し（親指で押せる大きさ）か残り時間 */
+.phone.player .slot > .mission-card .mission-meet { align-self: stretch; width: 100%; }
+.phone.player.is-glow .slot > .mission-card .mission-meet { width: auto; min-width: 104px; min-height: 52px; padding: 0 14px; align-self: center; }
+.phone.player.is-glow .slot > .mission-card .mission-meet b { font-size: max(var(--min), 20px); }
+.phone.player.is-glow .slot > .mission-card .mission-clock { font-size: 30px; align-self: center; }
+.phone.player.is-glow .slot > .mission-card[data-kind="meet"] .mission-title, .phone.player.is-glow .slot > .mission-card[data-kind="zone"] .mission-title { font-weight: 900; }
 
 /* ---------- 配役の希望（逃走者／鬼の板） ----------
  * 次の配役の前（待合室・結果発表）に、いちばん下に2枚並べる。左＝逃走者（月白）、右＝鬼（朱と角）。
