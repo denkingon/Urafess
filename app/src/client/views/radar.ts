@@ -16,6 +16,8 @@ export interface RadarLight {
   trail: LatLon[];
   /** 光ったばかり（輪が広がる） */
   isNew: boolean;
+  /** 司令塔（どちらの側か）。役の色の四角い枠で囲み、名前はいつも出す */
+  lead?: 'oni' | 'runner';
 }
 
 export interface RadarInput {
@@ -101,6 +103,7 @@ export function createRadar({ north: northLabel = '北' }: RadarOptions = {}): R
     g: SVGGElement;
     dot: SVGCircleElement;
     ping: SVGCircleElement | null;
+    mark: SVGRectElement | null;
     label: SVGTextElement;
     trail: SVGPolylineElement;
   }
@@ -116,7 +119,7 @@ export function createRadar({ north: northLabel = '北' }: RadarOptions = {}): R
     const trail = svg('polyline', { class: 'radar-trail' });
     trails.append(trail);
     lights.append(g);
-    n = { g, dot, ping: null, label, trail };
+    n = { g, dot, ping: null, mark: null, label, trail };
     nodes.set(num, n);
     return n;
   };
@@ -148,7 +151,7 @@ export function createRadar({ north: northLabel = '北' }: RadarOptions = {}): R
       const key = JSON.stringify([
         me && [me.lat.toFixed(6), me.lon.toFixed(6)],
         heading === null ? null : Math.round(heading),
-        ls.map((l) => [l.num, l.name, l.pos && [l.pos.lat, l.pos.lon], Math.round(l.fresh * 10), l.isNew, l.trail.length, l.trail[0]?.lat]),
+        ls.map((l) => [l.num, l.name, l.lead ?? '', l.pos && [l.pos.lat, l.pos.lon], Math.round(l.fresh * 10), l.isNew, l.trail.length, l.trail[0]?.lat]),
         meLit,
         Math.round(fontUnits),
         ringsLabelled,
@@ -177,6 +180,7 @@ export function createRadar({ north: northLabel = '北' }: RadarOptions = {}): R
         return;
       }
       const labelled = new Set([...placed].sort((a, b) => a.p.d - b.p.d).slice(0, LABEL_MAX).map((x) => x.l.num));
+      for (const x of placed) if (x.l.lead) labelled.add(x.l.num);
       // 近い人ほど上に重ねる
       for (const { l, p } of [...placed].sort((a, b) => b.p.d - a.p.d)) {
         const n = nodeOf(l.num);
@@ -191,6 +195,14 @@ export function createRadar({ north: northLabel = '北' }: RadarOptions = {}): R
           n.ping.remove();
           n.ping = null;
         }
+        if (l.lead && !n.mark) {
+          n.mark = svg('rect', { x: -8, y: -8, width: 16, height: 16, transform: 'rotate(45)', class: 'radar-lead' });
+          n.g.insertBefore(n.mark, n.dot);
+        } else if (!l.lead && n.mark) {
+          n.mark.remove();
+          n.mark = null;
+        }
+        if (n.g.dataset.lead !== (l.lead ?? '')) n.g.dataset.lead = l.lead ?? '';
         const show = labelled.has(l.num);
         n.label.style.display = show ? '' : 'none';
         if (show) {

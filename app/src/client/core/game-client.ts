@@ -1,3 +1,4 @@
+import type { LeadRules } from '../../shared/lead';
 import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
 import { CHAT_KEEP, type ChatCh, type ChatJail, type ChatMode, type ChatMsg } from '../../shared/chat';
@@ -499,6 +500,7 @@ export class GameClient {
       photo?: string;
       free?: boolean;
       n?: number;
+      lead?: Partial<LeadRules>;
       chatMode?: ChatMode;
       chatJail?: ChatJail;
       places?: string[];
