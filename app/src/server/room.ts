@@ -1,9 +1,18 @@
 import { DurableObject } from 'cloudflare:workers';
-import { assignRoles } from '../shared/allocate';
+import { allocateCounts, assignWithWishes, castCounts } from '../shared/allocate';
 import { autoPick, CAPTURE_PHASE_INDEX, captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
 import {
+  cleanMissionSecs,
   cleanMissionTitle,
+  inZone,
+  isMissionKind,
   isPhotoId,
+  makeMeetGroups,
+  MEET_PUBLIC_PAIRS_MAX,
+  MISSION_DEFAULT_TITLES,
+  missionClock,
+  ZONE_NEED_MAX,
+  type MissionKind,
   photosRevealed,
   PHOTO_MAX_BYTES,
   PHOTO_PER_PERSON,
@@ -17,6 +26,7 @@ import type {
   GameView,
   GlowEntry,
   HostCapture,
+  HostCastEntry,
   HostPhoto,
   HostOp,
   HostSummary,
@@ -33,7 +43,31 @@ import type {
   Winner,
 } from '../shared/protocol';
 import { decideWinner, everyoneJailed } from '../shared/jail';
+import {
+  cardOf,
+  CHAT_GAP_MS,
+  CHAT_KEEP,
+  chatText,
+  cleanLine,
+  cleanPlaces,
+  DEFAULT_CHAT_JAIL,
+  DEFAULT_CHAT_MODE,
+  DEFAULT_PLACES,
+  digitText,
+  emojiText,
+  HQ_TEXT_MAX,
+  isChatJail,
+  isChatMode,
+  teamInput,
+  teamOpen,
+  type CardDef,
+  type ChatJail,
+  type ChatMode,
+  type ChatMsg,
+  type ChatScope,
+} from '../shared/chat';
 import { cleanAreaPts, isValidAreaPts, type Area } from '../shared/area';
+import { cleanShrinkPlan, DEFAULT_SHRINK_PLAN, extraStep, isShrinkPlan, makeLive, type ShrinkLive, type ShrinkPlan } from '../shared/shrink';
 import {
   ANNOUNCE_DEFAULT,
   ANNOUNCE_LEAD_MS,
@@ -44,15 +78,19 @@ import {
   DEFAULT_DURATIONS_MS,
   DEFAULT_MIC_MODE,
   DEFAULT_RATIO,
+  DEFAULT_WISH_MODE,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
   EVIDENCE_VALID_MS,
   HEARTBEAT_EVERY_MS,
+  START_LEAD_MS,
   HOLD_MAX_MS,
   HEARD_SLACK_MS,
   HOLD_UNKNOWN_END_MS,
   isMicMode,
+  isRoleId,
   isValidRatio,
+  isWishMode,
   MATES_BROADCAST_MS,
   MATES_STALE_MS,
   PHASES,
@@ -66,6 +104,8 @@ import {
   type MicMode,
   type Ratio,
   type RoleId,
+  type WishMode,
+  WISH_MISS_MAX,
 } from '../shared/rules';
 import {
   GONE_NAME,
@@ -81,12 +121,15 @@ import {
   type AccountEvent,
   type AccountView,
 } from '../shared/account';
+import type { NameState } from '../shared/account';
+import { bannedHit, BAN_MAX_WORDS, DEFAULT_BANNED, isSpecialName, normalizeBanWord, REDO_NAME, SHAME_NAME } from '../shared/badnames';
 import { nameKey, normalizeName } from '../shared/names';
+import { castStatsAll, cleanTag, TAGS_MAX, type CastEvent, type CastStat } from '../shared/cast';
 import { distanceM } from '../shared/run';
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventsToCsv, type EventRow } from './log';
 import type { ProbeHub } from './probe';
-import { hostKeyCandidates, sameHostKey } from '../shared/hostkey';
+import { checkNewHostKey, hostKeyCandidates, sameHostKey } from '../shared/hostkey';
 
 export interface Env {
   GAME: DurableObjectNamespace<GameRoom>;
@@ -112,6 +155,12 @@ interface GameState {
   micMode: MicMode;
   /** 遊ぶ範囲（主催者がゲームの前に描く）。新しい夜を始めても残る。古い保存データには無い */
   area?: Area | null;
+  /** 範囲の縮み方（主催者が試合の前に決める）。新しい夜でも残る。古い保存データには無い */
+  shrinkPlan?: ShrinkPlan;
+  /** このラウンドの縮小（試合を始めたときに決まり、配役・やり直しで消える）。古い保存データには無い */
+  shrink?: ShrinkLive | null;
+  /** 牢屋の場所（主催者がゲームの前に描く）。新しい夜を始めても残る。古い保存データには無い */
+  jail?: Area | null;
   /** 次に名簿に入る人の番号（名簿に入った順。画面には出さない。部屋を空にしても戻さない） */
   nextNum: number;
   counts: { oni: number; runner: number };
@@ -125,6 +174,12 @@ interface GameState {
   missionSeq?: number;
   /** ミッション：このラウンドのミッションは、この番号から（配役・新しい夜を始めるで missionSeq + 1 になる） */
   missionFrom?: number;
+  /**
+   * ミッション（合流・範囲）：全員には配らない中身。groups＝合流の組（pid の並び）と合流した時刻、
+   * freed＝このミッションの成功で牢屋から出た人数、pausedAt＝試合を止めた時刻（再開で締め切りをずらす）、
+   * shrunk＝このミッションの成功で、遊ぶ範囲をもう1段縮めた（1つのミッションで縮むのは1回だけ）
+   */
+  missionPriv?: { groups: { pids: string[]; okAt: number | null }[]; freed: number; pausedAt?: number | null; shrunk?: boolean } | null;
   /** 逃走者が全員同時に牢屋に入った時刻（その配役は鬼の勝ちで決まり）。古い保存データには無い */
   allCaughtAt?: number | null;
   /** result をアプリが決めた */
@@ -135,6 +190,14 @@ interface GameState {
   news?: NewsState | null;
   /** 知らせの番号（増え続ける。配役をまたいでも戻さない） */
   newsSeq?: number;
+  /** 配役の決め方（主催者が切り替える）。古い保存データには無いので load で補う */
+  wishMode: WishMode;
+  /** いまの配役を決めたときの希望の数（くじだけで決めた配役・配役前は null） */
+  wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
+  /** チャット：仲間の回線で送れるもの・牢屋の人の決まり・場所の名前（新しい夜を始めても残る）。古い保存データには無い */
+  chatMode?: ChatMode;
+  chatJail?: ChatJail;
+  chatPlaces?: string[];
 }
 
 /** 最後の知らせ。view は全員に配る形（設定に合わせて名前を絞ったもの）。誰のことかはサーバーだけが持つ */
@@ -143,6 +206,17 @@ interface NewsState {
   /** 知らせの本人たち（名前を出さない設定でも持つ。本人の画面で自分の知らせと重ねないため） */
   runnerPid: string | null;
   oniPid: string | null;
+}
+
+/** チャットの1通（サーバーが持つ形）。msg は参加者に送る形で、送った人の印は入れない */
+interface ChatRec {
+  msg: ChatMsg;
+  /** 送った参加者（本部からなら null） */
+  pid: string | null;
+  /** 本部あて・本部からの返事の、その1人（その人と本部にだけ見える） */
+  owner: string | null;
+  role: RoleId | null;
+  assignId: number;
 }
 
 /** ミッションの写真1枚（中身の画像は SQLite にだけ置き、ここには持たない） */
@@ -197,6 +271,10 @@ interface Member {
   nights: number;
   firstNight: number;
   lastNight: number;
+  /** 主催者が付けた印（男・女・速い…）。主催者の画面にしか出さない */
+  tags: string[];
+  /** 名前の状態（主催者が手を入れたか） */
+  nameState: NameState;
 }
 
 type MemberRow = {
@@ -210,6 +288,8 @@ type MemberRow = {
   nights: number;
   first_night: number;
   last_night: number;
+  tags: string | null;
+  name_state: string | null;
 };
 
 /** 記録に名前を残す相手（今夜の参加者でも、名簿の人でもよい） */
@@ -238,6 +318,14 @@ interface Participant {
   freeUntil: number | null;
   /** 最後に入室・復帰したときの端末（ブラウザの User-Agent）。機種ごとの失敗を後から見るため */
   ua: string | null;
+  /** 配役の希望：次の配役でなりたい役（null＝どちらでも）。今夜のあいだ残る */
+  wish: RoleId | null;
+  /** 配役の希望：続けて希望が通らなかった回数（多い人ほど、次の配役で先に通る） */
+  wishMiss: number;
+  /** いまの配役を決める前の wishMiss（引き直しは、ここからやり直す。外れた回数を二重に数えない） */
+  wishMissPrev: number;
+  /** 主催者の指名：この人はこの役（希望やくじより強い）。配役のあとに主催者が動かした人にも付く。開始で消える */
+  pin: RoleId | null;
 }
 
 /** 逃走者の「捕まった」。最初に長押しを始めた（または鬼に手動で選ばれた）ときに開き、本人が選ぶまで開いている */
@@ -324,6 +412,10 @@ type ParticipantRow = {
   ua: string | null;
   rcode: string | null;
   free_until: number | null;
+  wish: string | null;
+  wish_miss: number | null;
+  wish_miss_prev: number | null;
+  pin: string | null;
 };
 
 /**
@@ -341,6 +433,8 @@ interface RescueHold {
 
 const LOBBY_BROADCAST_MS = 300;
 const HOST_UPDATE_MS = 500;
+/** 範囲の外で失格の知らせを、スマホの遅れ・電波の詰まりの分だけ、ゲームの段階が終わったあとでも受け付ける */
+const DQ_GRACE_MS = 5_000;
 /** 押した時刻として受け付けるのは、届いた時刻からこれだけ前まで（電波の詰まり・つなぎ直しの送り直しで遅れて届く分） */
 const PRESS_MAX_DELAY_MS = 60_000;
 /** 同じ鬼が同じ音を何度も聞き取ったとき、記録し直すまでの間隔（逃走者のスマホは繰り返し鳴らす） */
@@ -349,6 +443,10 @@ const HEARD_DEDUPE_MS = 5_000;
 const HOLD_SAME_MS = 1_000;
 /** 走ると光る：光の知らせはまとめて配る（何人走っていても、全員へは最大でこの間隔に1回） */
 const GLOW_BROADCAST_MS = 250;
+/** ミッション（範囲）：「いま中にいる人数」を配り直す間隔（人が出入りするたびに全員へ配らない） */
+const ZONE_BROADCAST_MS = 1_500;
+/** ミッション（範囲）：部屋が起きてから、位置が届き直すまで判定を待つ時間（位置は MATES_SEND_EVERY_MS ごとに届く） */
+const ZONE_WARM_MS = 7_000;
 /** 走ると光る：記録に残す位置の間隔 */
 const RUN_PATH_EVERY_MS = 2_000;
 
@@ -365,8 +463,11 @@ export class GameRoom extends DurableObject<Env> {
   private readonly people = new Map<string, Participant>();
   /** 名簿（ずっと残る） */
   private readonly members = new Map<string, Member>();
+  private castStatCache: { key: string; stats: Map<string, CastStat> } | null = null;
   /** 名前の形 → 名簿の人（同じ形が2人いれば先に入った人） */
   private readonly memberByName = new Map<string, Member>();
+  /** 主催者が足した、名前に使えない言葉 */
+  private bans: string[] = [];
   private readonly claims = new Map<string, Claim>();
   /** 人 → 最近の長押し（古い順） */
   private readonly holds = new Map<string, HoldRec[]>();
@@ -378,12 +479,26 @@ export class GameRoom extends DurableObject<Env> {
   private readonly runs = new Map<string, RunRec>();
   /** 今の配役で、鬼 → 捕まえた回数（解放されても減らない。主催者の取り消しでだけ減る） */
   private readonly catches = new Map<string, number>();
+  /** 範囲の外で失格を数えた人（配役の番号つき。同じ配役のうちは1回だけ） */
+  private readonly dqSeen = new Map<string, number>();
+  /** 失格のあと牢屋に出頭した人（配役の番号つき。記録を1回にするための印） */
+  private readonly dqDone = new Map<string, number>();
   /** 今の配役で、逃走者 → 牢屋から出した人数 */
   private readonly rescues = new Map<string, number>();
   /** 「助けて」「助ける」の長押し（人 → 最近の分） */
   private readonly rescueHolds = new Map<string, RescueHold[]>();
   /** 助ける人が最後に1人を出した時刻（1回の長押しで1人） */
   private readonly lastRescueAt = new Map<string, number>();
+  /** ミッション（合流）の長押し（人 → 最近の分。保存しない） */
+  private readonly meetHolds = new Map<string, RescueHold[]>();
+  /** ミッション（範囲）：最後に配った「いま中にいる人数」（変わったときだけ配り直す） */
+  private zoneShown: number | null = null;
+  private zoneTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * この部屋が起きた時刻。位置（spots）は休止で消えるので、起きた直後はまだ全員の位置が届き直していない。
+   * 範囲の判定は、起きてから ZONE_WARM_MS たつまで待つ（届き直す前に「0人」で失敗にしないため）
+   */
+  private readonly bornAt = Date.now();
   /**
    * 主催者の操作が最後に効いたときの版番号。アプリが自分で版番号を進めた（時間が0で結果を決めた・全員が牢屋に入った）だけなら、
    * その前の画面からの操作も受ける（古い画面の二度押し・同時押しだけを断る）
@@ -397,6 +512,11 @@ export class GameRoom extends DurableObject<Env> {
   /** 全体の地図：ゲームの段階の間に届いた位置（休止で消えてよい。5秒ごとに届き直す） */
   private readonly spots = new Map<string, Spot>();
   private matesTimer: ReturnType<typeof setTimeout> | null = null;
+  /** チャット：いま画面に出してよい分（今夜の本部の回線と、いまの配役の仲間の回線）。全部は chat テーブルと記録に残る */
+  private chat: ChatRec[] = [];
+  /** chat がどの夜・どの配役の分か（変わったら読み直して、全員に入れ替えを送る） */
+  private chatKey = '';
+  private readonly lastChatAt = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -435,6 +555,12 @@ export class GameRoom extends DurableObject<Env> {
       ['ua', 'ua TEXT'],
       ['rcode', 'rcode TEXT'],
       ['free_until', 'free_until INTEGER'],
+      // 配役の希望を入れたときに足した列
+      ['wish', 'wish TEXT'],
+      ['wish_miss', 'wish_miss INTEGER NOT NULL DEFAULT 0'],
+      ['wish_miss_prev', 'wish_miss_prev INTEGER NOT NULL DEFAULT 0'],
+      // 配役をいじる（主催者の指名）を入れたときに足した列
+      ['pin', 'pin TEXT'],
     ];
     for (const [name, ddl] of columns) {
       if (!have.has(name)) this.sql.exec(`ALTER TABLE participants ADD COLUMN ${ddl}`);
@@ -481,6 +607,13 @@ export class GameRoom extends DurableObject<Env> {
       )`,
     );
     this.sql.exec(`CREATE INDEX IF NOT EXISTS members_name_key ON members (name_key)`);
+    // 主催者が付ける印（配役を決めるときに見る）。すでにある部屋には後から足す
+    const memberCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(members)`).toArray().map((r) => r.name));
+    if (!memberCols.has('tags')) this.sql.exec(`ALTER TABLE members ADD COLUMN tags TEXT`);
+    // 名前の状態（主催者が「付け直させる」「切り替える」をしたか）
+    if (!memberCols.has('name_state')) this.sql.exec(`ALTER TABLE members ADD COLUMN name_state TEXT NOT NULL DEFAULT 'ok'`);
+    // 主催者が足した、名前に使えない言葉
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS name_bans (word TEXT PRIMARY KEY, at INTEGER NOT NULL)`);
     // 新しいスマホへ移す合言葉（古いスマホに出し、新しいスマホで打つ）。休止をまたいでも残すため保存する
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS handoffs (
@@ -527,9 +660,30 @@ export class GameRoom extends DurableObject<Env> {
       )`,
     );
     this.sql.exec(`CREATE INDEX IF NOT EXISTS photos_mission ON photos (mission_id)`);
+    // ミッションの種類と中身（あとから足した列。古い行は集合写真）
+    const missionCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(missions)`).toArray().map((r) => r.name));
+    if (!missionCols.has('kind')) this.sql.exec(`ALTER TABLE missions ADD COLUMN kind TEXT NOT NULL DEFAULT 'photo'`);
+    if (!missionCols.has('data')) this.sql.exec(`ALTER TABLE missions ADD COLUMN data TEXT`);
+    if (!missionCols.has('result')) this.sql.exec(`ALTER TABLE missions ADD COLUMN result TEXT`);
     // 成功で牢屋から出した人数（あとから足した列）
     const photoCols = new Set(this.sql.exec<{ name: string }>(`PRAGMA table_info(photos)`).toArray().map((r) => r.name));
     if (!photoCols.has('freed')) this.sql.exec(`ALTER TABLE photos ADD COLUMN freed INTEGER NOT NULL DEFAULT 0`);
+    // チャット。新しい夜を始めても消さない（画面からは消えるが、あとでログとして読めるように）
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS chat (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        night INTEGER NOT NULL,
+        round INTEGER NOT NULL,
+        assign_id INTEGER NOT NULL,
+        at INTEGER NOT NULL,
+        scope TEXT NOT NULL,
+        pid TEXT,
+        owner TEXT,
+        role TEXT,
+        msg TEXT NOT NULL
+      )`,
+    );
+    this.sql.exec(`CREATE INDEX IF NOT EXISTS chat_night ON chat (night, assign_id)`);
     // 1イベント＝1行。部屋を空にしても消さない（あとで人数比や流れを統計で見るため）
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS events (
@@ -552,7 +706,14 @@ export class GameRoom extends DurableObject<Env> {
     );
   }
 
+  /**
+   * 主催者画面で決めた合言葉（この部屋のもの。無ければ null）。
+   * Cloudflare の HOST_TOKEN は予備の鍵として、これを決めたあとも効く（忘れても入れるように）
+   */
+  private hostKey: string | null = null;
+
   private load(): void {
+    this.hostKey = this.sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'hostkey'`).toArray()[0]?.v ?? null;
     const row = this.sql.exec<{ v: string }>(`SELECT v FROM meta WHERE k = 'game'`).toArray()[0];
     this.game = row
       ? (JSON.parse(row.v) as GameState)
@@ -567,6 +728,7 @@ export class GameRoom extends DurableObject<Env> {
           durations: [...DEFAULT_DURATIONS_MS],
           ratio: { ...DEFAULT_RATIO },
           micMode: DEFAULT_MIC_MODE,
+          wishMode: DEFAULT_WISH_MODE,
           nextNum: 1,
           counts: { oni: 0, runner: 0 },
           night: 1,
@@ -589,6 +751,7 @@ export class GameRoom extends DurableObject<Env> {
     }
     if (!Number.isInteger(this.game.missionFrom)) this.game.missionFrom = (this.game.missionSeq ?? 0) + 1;
     if (this.game.mission === undefined) this.game.mission = null;
+    if (this.game.missionPriv === undefined) this.game.missionPriv = null;
     this.loadPhotos();
     if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
     if (this.game.area === undefined) this.game.area = null;
@@ -596,6 +759,17 @@ export class GameRoom extends DurableObject<Env> {
     if (!isAnnounceSettings(this.game.announce)) this.game.announce = { ...ANNOUNCE_DEFAULT };
     if (this.game.news === undefined) this.game.news = null;
     if (!Number.isInteger(this.game.newsSeq)) this.game.newsSeq = 0;
+    if (!isShrinkPlan(this.game.shrinkPlan)) this.game.shrinkPlan = { ...DEFAULT_SHRINK_PLAN };
+    if (this.game.shrink === undefined) this.game.shrink = null;
+    if (this.game.jail === undefined) this.game.jail = null;
+    // 配役の希望を入れる前の版で作った部屋には、決め方が無い
+    if (!isWishMode(this.game.wishMode)) this.game.wishMode = DEFAULT_WISH_MODE;
+    if (this.game.wishStat === undefined) this.game.wishStat = null;
+    // チャットを入れる前の版で作った部屋には、チャットの決まりが無い
+    if (!isChatMode(this.game.chatMode)) this.game.chatMode = DEFAULT_CHAT_MODE;
+    if (!isChatJail(this.game.chatJail)) this.game.chatJail = DEFAULT_CHAT_JAIL;
+    if (!cleanPlaces(this.game.chatPlaces)) this.game.chatPlaces = [...DEFAULT_PLACES];
+    this.loadChat();
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -616,6 +790,10 @@ export class GameRoom extends DurableObject<Env> {
         ua: r.ua ?? null,
         rcode: r.rcode ?? null,
         freeUntil: r.free_until ?? null,
+        wish: isRoleId(r.wish) ? r.wish : null,
+        wishMiss: r.wish_miss ?? 0,
+        wishMissPrev: r.wish_miss_prev ?? 0,
+        pin: isRoleId(r.pin) ? r.pin : null,
       });
     }
     // 捕獲・牢屋を入れる前の版で配役した部屋（公開の瞬間に試合中だった等）は、3桁が無い。ここで配る
@@ -697,10 +875,14 @@ export class GameRoom extends DurableObject<Env> {
         nights: r.nights,
         firstNight: r.first_night,
         lastNight: r.last_night,
+        tags: parseTags(r.tags),
+        nameState: r.name_state === 'due' || r.name_state === 'shamed' ? r.name_state : 'ok',
       };
       this.members.set(m.pid, m);
-      if (!this.memberByName.has(m.nameKey)) this.memberByName.set(m.nameKey, m);
+      // 主催者が付けた仮の名前・切り替えた名前は何人いてもいい（名前の引き当てには入れない）
+      if (!isSpecialName(m.name) && !this.memberByName.has(m.nameKey)) this.memberByName.set(m.nameKey, m);
     }
+    this.bans = this.sql.exec<{ word: string }>(`SELECT word FROM name_bans ORDER BY at`).toArray().map((r) => r.word);
   }
 
   /** このラウンドの写真の一覧（画像そのものは読まない）と、保存している合計 */
@@ -792,6 +974,8 @@ export class GameRoom extends DurableObject<Env> {
   ): void {
     const at = e.at ?? Date.now();
     const g = this.game;
+    // 試合の外で記録が増えたら、配役のための数字を数え直す
+    if (g.stage !== 'timer') this.castStatCache = null;
     let phase: number | null = null;
     let elapsed: number | null = null;
     if (g.stage === 'timer' && g.timer) {
@@ -836,6 +1020,8 @@ export class GameRoom extends DurableObject<Env> {
     if (m[3]) return new Response('not found', { status: 404 });
 
     if (m[2] === 'key') {
+      // POST：主催者画面で合言葉を変える
+      if (request.method === 'POST') return this.onKeyChange(request);
       // 主催者の合言葉が合っているかだけを答える（主催者の入口が、覚える前に確かめる）
       return new Response(null, { status: this.isHostRequest(request) ? 204 : 403, headers: { 'cache-control': 'no-store' } });
     }
@@ -901,6 +1087,8 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    // ミッションの締め切り（合流を締め切る・範囲を判定する）。位置を消す前、結果を決める前に見る
+    this.missionTick(Date.now());
     // 時間が0になっていたら、結果をアプリが決める（合図のついで。合図が止まる前に見る）
     this.finalizeIfDone(Date.now());
     // 光っている人の位置が届かなくなった・ゲームの段階が終わった分を消す（合図のついで）
@@ -931,7 +1119,10 @@ export class GameRoom extends DurableObject<Env> {
     }
     const att = (ws.deserializeAttachment() as Attachment | null) ?? {};
     // 時間が0になったのに結果がまだなら、先に決める（合図が来ない間に届いた操作でも、結果のあとの状態で受ける）
-    if (msg.t !== 'ping' && msg.t !== 'sync') this.finalizeIfDone(now);
+    if (msg.t !== 'ping' && msg.t !== 'sync') {
+      this.missionTick(now);
+      this.finalizeIfDone(now);
+    }
     switch (msg.t) {
       case 'ping':
         // 時計合わせ：受け取った瞬間のサーバー時刻を返す
@@ -971,6 +1162,7 @@ export class GameRoom extends DurableObject<Env> {
         this.onCmd(ws, att, msg, now);
         // 配役・開始で試合に入ったら合図を始める（止めるのはアラームの側：試合が終わっていたら次を予約しない）
         await this.ensureHeartbeat();
+        await this.ensureMissionAlarm();
         return;
       case 'hold':
         this.onHold(att, msg, now);
@@ -993,6 +1185,9 @@ export class GameRoom extends DurableObject<Env> {
       case 'rescue':
         this.onRescue(att, msg, now);
         return;
+      case 'meet':
+        this.onMeet(att, msg, now);
+        return;
       case 'run':
         this.onRun(att, msg, now);
         return;
@@ -1001,6 +1196,18 @@ export class GameRoom extends DurableObject<Env> {
         return;
       case 'pos':
         this.onPos(att, msg, now);
+        return;
+      case 'dq':
+        this.onDq(att, now);
+        return;
+      case 'dq-ok':
+        this.onDqReport(att, now);
+        return;
+      case 'wish':
+        this.onWish(ws, att, msg.role, now);
+        return;
+      case 'chat':
+        this.onChat(att, msg, now);
         return;
     }
   }
@@ -1013,6 +1220,7 @@ export class GameRoom extends DurableObject<Env> {
       if (!stillOpen) {
         this.endHold(att.pid, Date.now(), 'disconnect');
         this.endRescueHold(att.pid, Date.now());
+        this.endMeetHold(att.pid, Date.now());
       }
     }
     this.scheduleHostUpdate();
@@ -1086,7 +1294,14 @@ export class GameRoom extends DurableObject<Env> {
         m.pid,
       )
       .toArray();
-    return { name: m.name, since: m.createdAt, stats: summarizeAccount(rows, m.pid), busy: this.inMatchTonight(m.pid) };
+    return {
+      name: m.name,
+      since: m.createdAt,
+      stats: summarizeAccount(rows, m.pid),
+      // 付け直すよう言われた人は、試合中でも付け直せる
+      busy: m.nameState !== 'due' && this.inMatchTonight(m.pid),
+      nameState: m.nameState,
+    };
   }
 
   /** この人につながっている接続（今夜に入っている・名前のボタンを待っている） */
@@ -1107,35 +1322,56 @@ export class GameRoom extends DurableObject<Env> {
     answer: (body: unknown, status?: number) => Response,
     fail: (e: AccountError, status: number) => Response,
   ): Response {
-    if (this.inMatchTonight(m.pid)) return fail('busy', 409);
+    if (m.nameState === 'shamed') return fail('name-locked', 409);
+    if (m.nameState !== 'due' && this.inMatchTonight(m.pid)) return fail('busy', 409);
     const name = normalizeName(raw);
-    if (!name || isGoneName(name)) return fail('invalid', 400);
+    if (!name || isGoneName(name) || isSpecialName(name)) return fail('invalid', 400);
+    const hit = bannedHit(name, this.bans);
+    if (hit) {
+      this.log('bad-name', { p: m, at: now, data: { typed: name, hit, rename: true } });
+      return fail('banned', 400);
+    }
     const key = nameKey(name);
     const owner = this.memberByName.get(key);
     if (owner && owner.pid !== m.pid) return fail('taken', 409);
-    if (name === m.name) return answer({ name });
+    if (name === m.name && m.nameState === 'ok') return answer({ name });
+    this.setMemberName(m, name, 'ok', now, 'rename');
+    return answer({ name });
+  }
+
+  /**
+   * 名簿の人の名前を変える（本人が変える・主催者が付け直させる・主催者が切り替える）。
+   * 今夜の一覧・写真の名前も変え、開いているスマホにも届ける。仮の名前・切り替えた名前は名前の引き当てに入れない
+   */
+  private setMemberName(m: Member, name: string, state: NameState, now: number, kind: 'rename' | 'name-redo' | 'name-shame'): void {
     const from = m.name;
+    const key = nameKey(name);
     const p = this.people.get(m.pid);
     this.ctx.storage.transactionSync(() => {
-      this.sql.exec(`UPDATE members SET name = ?, name_key = ? WHERE pid = ?`, name, key, m.pid);
+      this.sql.exec(`UPDATE members SET name = ?, name_key = ?, name_state = ? WHERE pid = ?`, name, key, state, m.pid);
       if (p) this.sql.exec(`UPDATE participants SET name = ? WHERE pid = ?`, name, m.pid);
       this.sql.exec(`UPDATE photos SET name = ? WHERE pid = ?`, name, m.pid);
-      this.log('rename', { p: { pid: m.pid, num: m.num, name }, at: now, data: { from } });
+      this.log(kind, { p: { pid: m.pid, num: m.num, name }, at: now, data: { from } });
     });
     this.forgetName(m);
     m.name = name;
     m.nameKey = key;
-    this.memberByName.set(key, m);
+    m.nameState = state;
+    if (!isSpecialName(name)) this.memberByName.set(key, m);
     if (p) p.name = name;
     for (const ph of this.photos.values()) if (ph.pid === m.pid) ph.name = name;
     // 開いているスマホにも新しい名前を届ける（今夜に入っていれば合い鍵ごと、名前のボタンなら名前だけ）
     for (const { ws, att } of this.socketsOf(m.pid)) {
-      if (att.pid && p) this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name });
-      else this.send(ws, { t: 'known', name });
+      if (att.pid && p) this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name, ...this.nsOf(m) });
+      else this.send(ws, { t: 'known', name, ...this.nsOf(m) });
     }
     this.scheduleBroadcast();
     this.scheduleHostUpdate();
-    return answer({ name });
+  }
+
+  /** welcome・known に付ける名前の状態（ふつうは付けない） */
+  private nsOf(m: Member | undefined): { ns?: 'due' | 'shamed' } {
+    return m && m.nameState !== 'ok' ? { ns: m.nameState } : {};
   }
 
   /** 新しいスマホへ移す合言葉を出す（前に出した合言葉は消える） */
@@ -1311,8 +1547,15 @@ export class GameRoom extends DurableObject<Env> {
    */
   private onJoin(ws: WebSocket, att: Attachment, rawName: unknown, now: number): void {
     const name = normalizeName(rawName);
-    if (!name || isGoneName(name)) {
+    if (!name || isGoneName(name) || isSpecialName(name)) {
       this.send(ws, { t: 'unknown' });
+      return;
+    }
+    // 使えない言葉が入っている名前は入れない（記録には打った名前と引っかかった言葉を残す）
+    const hit = bannedHit(name, this.bans);
+    if (hit) {
+      this.log('bad-name', { at: now, data: { typed: name, hit } });
+      this.send(ws, { t: 'bad-name' });
       return;
     }
     const key = nameKey(name);
@@ -1334,6 +1577,8 @@ export class GameRoom extends DurableObject<Env> {
       nights: 1,
       firstNight: night,
       lastNight: night,
+      tags: [],
+      nameState: 'ok',
     };
     this.game.nextNum += 1;
     const p = this.newParticipant(m, att.ua || null, now);
@@ -1379,6 +1624,7 @@ export class GameRoom extends DurableObject<Env> {
       }
       this.sendSnap(ws, att);
       this.sendGlowTo(ws, Date.now());
+      this.sendChatTo(ws, att);
       this.scheduleHostUpdate();
       return;
     }
@@ -1398,7 +1644,7 @@ export class GameRoom extends DurableObject<Env> {
     att.host = false;
     delete att.syncErr;
     ws.serializeAttachment(att);
-    this.send(ws, { t: 'known', name: m.name });
+    this.send(ws, { t: 'known', name: m.name, ...this.nsOf(m) });
     // 今夜の様子（段階・人数）だけ送る。本人の部分は今夜に入ってから
     this.sendSnap(ws, att);
     this.scheduleHostUpdate();
@@ -1477,6 +1723,10 @@ export class GameRoom extends DurableObject<Env> {
       ua,
       rcode: null,
       freeUntil: null,
+      wish: null,
+      wishMiss: 0,
+      wishMissPrev: 0,
+      pin: null,
     };
   }
 
@@ -1527,9 +1777,43 @@ export class GameRoom extends DurableObject<Env> {
     delete att.reclaim;
     att.host = false;
     ws.serializeAttachment(att);
-    this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name: p.name });
+    this.send(ws, { t: 'welcome', pid: p.pid, key: p.key, num: p.num, name: p.name, ...this.nsOf(this.members.get(p.pid)) });
     this.sendSnap(ws, att);
     this.sendGlowTo(ws, Date.now());
+    this.sendChatTo(ws, att);
+    this.scheduleBroadcast();
+  }
+
+  // ---------- 配役の希望 ----------
+
+  /**
+   * 役が決まってからゲームが終わるまで、その配役に入っている人は希望を変えられない（配役の画面の「希望が通らなかった」が、
+   * あとから変えた希望とずれないように）。配役の前・結果発表・見学の人は変えられる
+   */
+  private wishLocked(p: Participant, now: number): boolean {
+    const g = this.game;
+    if (g.assignId === 0 || p.assignId !== g.assignId || !p.role) return false;
+    if (g.stage === 'assigned') return true;
+    return g.stage === 'timer' && !(g.timer !== null && isDone(g.timer, now));
+  }
+
+  /** 参加者が、次の配役でなりたい役を選んだ（null＝どちらでも）。人数は全員にまとめて配る */
+  private onWish(ws: WebSocket, att: Attachment, role: unknown, now: number): void {
+    if (!att.pid) return;
+    const p = this.people.get(att.pid);
+    if (!p || p.removed) return;
+    const wish = role === null ? null : isRoleId(role) ? role : undefined;
+    // 受け付けないとき・おかしな値のときは、今の状態を送り直す（スマホの板を元に戻す）
+    if (wish === undefined || this.game.wishMode !== 'wish' || this.wishLocked(p, now)) {
+      this.sendSnap(ws, att);
+      return;
+    }
+    if (p.wish !== wish) {
+      p.wish = wish;
+      this.sql.exec(`UPDATE participants SET wish = ? WHERE pid = ?`, wish, p.pid);
+    }
+    // 本人にはすぐ返す。ほかの人の画面の人数は、入室と同じ間隔でまとめて配る
+    this.sendSnapTo([p.pid]);
     this.scheduleBroadcast();
   }
 
@@ -1555,6 +1839,11 @@ export class GameRoom extends DurableObject<Env> {
 
   private isCaught(p: Participant): boolean {
     return p.role === 'runner' && p.caughtAssign === this.game.assignId && this.game.assignId > 0;
+  }
+
+  /** 牢屋にいて、仲間の助けで出られる人（範囲の外で失格した人は捕まった扱いだが、出られない） */
+  private isJailed(p: Participant): boolean {
+    return this.isCaught(p) && p.caughtVia !== 'out';
   }
 
   /** 押した時刻：スマホの見積もり（サーバー時刻）を使うが、未来や古すぎる値は届いた時刻に寄せる */
@@ -1982,7 +2271,7 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 牢屋の人のスマホが、助けに来た人の「助ける番号」を拾った → その瞬間に解放 */
   private onJailHeard(jailed: Participant, code: string, now: number): void {
-    if (!this.isCaught(jailed) || !this.rescueOpen(now)) return;
+    if (!this.isJailed(jailed) || !this.rescueOpen(now)) return;
     const g = this.game;
     let rescuer: Participant | null = null;
     for (const q of this.people.values()) {
@@ -2053,10 +2342,10 @@ export class GameRoom extends DurableObject<Env> {
     // 押している途中の長押しは、まだ終わっていない（押し始めの時刻がサーバーの今に寄せられて同じ値になっても、重なりとみなす）
     const overlaps = (h: RescueHold) => h.start <= (mine.end ?? Infinity) && (h.end ?? Infinity) >= mine.start;
     const g = this.game;
-    const iAmJailed = this.isCaught(p);
+    const iAmJailed = this.isJailed(p);
     if (!iAmJailed && !this.canRescue(p, now)) return;
     const others = [...this.people.values()]
-      .filter((q) => q.pid !== p.pid && !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isCaught(q) !== iAmJailed)
+      .filter((q) => q.pid !== p.pid && !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isJailed(q) !== iAmJailed)
       .map((q) => ({ q, h: this.rescueHoldsOf(q.pid, now).filter((h) => !h.used && overlaps(h)).sort((a, b) => a.start - b.start)[0] }))
       .filter((x) => x.h && (iAmJailed ? this.canRescue(x.q, now) : true))
       .sort((a, b) => a.h!.start - b.h!.start);
@@ -2070,7 +2359,7 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 牢屋から出す。保存してから、本人と助けた人に知らせ、全員の人数を配り直す */
   private freeFromJail(jailed: Participant, rescuer: Participant | null, via: RescueVia, now: number, data: Record<string, unknown>): void {
-    if (!this.isCaught(jailed)) return;
+    if (!this.isJailed(jailed)) return;
     const freeUntil = now + RESCUE_IMMUNE_MS;
     const prev = { by: jailed.caughtBy, at: jailed.caughtAt, jailMs: jailed.caughtAt !== null ? now - jailed.caughtAt : null };
     this.ctx.storage.transactionSync(() => {
@@ -2291,6 +2580,68 @@ export class GameRoom extends DurableObject<Env> {
     const had = this.spots.has(p.pid);
     this.spots.set(p.pid, { pid: p.pid, lat: pos.lat, lon: pos.lon, acc: pos.acc, at: now });
     this.flushMatesSoon(!had);
+    this.zoneChanged(now);
+  }
+
+  // ---------- 範囲の外で失格 ----------
+
+  /** 失格を受け付けるのは、逃げ始めてからゲームの終わりまで（スマホの遅れ分 DQ_GRACE_MS は見る）。範囲が決まっていて、止めていないとき */
+  private dqOpen(now: number): boolean {
+    const g = this.game;
+    if (!g.area || g.stage !== 'timer' || !g.timer || g.timer.status !== 'running') return false;
+    const inWindow = (t: number) => {
+      const pos = positionAt(g.timer!, t);
+      return pos.kind === 'phase' && pos.index >= 1 && pos.index <= CAPTURE_PHASE_INDEX;
+    };
+    return inWindow(now) || inWindow(now - DQ_GRACE_MS);
+  }
+
+  /**
+   * 範囲の外に20秒いた人（スマホが決めて送ってくる）。逃走者は「捕まった」扱い（牢屋の助けでは出られない）、鬼は記録だけ。
+   * 同じ配役のうちは1回だけ数える
+   */
+  private onDq(att: Attachment, now: number): void {
+    const p = this.inRound(att.pid);
+    if (!p || !this.dqOpen(now)) return;
+    const assignId = this.game.assignId;
+    // 出頭済みなら、遅れて届いた失格の送り直しは捨てる（サーバーを入れ替えて印が消えたあとも、牢屋の状態で分かる）
+    if (this.dqSeen.get(p.pid) === assignId || this.dqDone.get(p.pid) === assignId || p.caughtVia === 'reported') return;
+    this.dqSeen.set(p.pid, assignId);
+    this.log('dq', { p, at: now, data: { role: p.role, wasCaught: this.isCaught(p) } });
+    if (p.role !== 'runner') return;
+    if (!this.isCaught(p)) {
+      this.recordCapture(p, null, now, 'out', { dq: true });
+    } else if (p.caughtVia !== 'out') {
+      // すでに牢屋にいる人が失格した：捕まった扱いのまま、助けでは出られなくする
+      this.sql.exec(`UPDATE participants SET caught_via = 'out' WHERE pid = ?`, p.pid);
+      p.caughtVia = 'out';
+      this.rescueHolds.delete(p.pid);
+      this.claims.delete(p.pid);
+      this.broadcastNow();
+    }
+  }
+
+  /**
+   * 失格のあと、牢屋に出頭した（本人が長押しで伝える）。逃走者は「捕まった」のまま、ふつうの牢屋の人になる（仲間の助けで出られる）。
+   * 鬼は記録だけ。何度届いても1回だけ。スマホが先に解いて、サーバーはあとから揃える（つなぎ直しの送り直し）
+   */
+  private onDqReport(att: Attachment, now: number): void {
+    const p = this.inRound(att.pid);
+    if (!p) return;
+    const assignId = this.game.assignId;
+    const first = this.dqDone.get(p.pid) !== assignId;
+    if (p.role === 'runner' && this.isCaught(p) && p.caughtVia === 'out') {
+      this.dqDone.set(p.pid, assignId);
+      this.log('dq-ok', { p, at: now, data: { role: p.role } });
+      this.sql.exec(`UPDATE participants SET caught_via = 'reported' WHERE pid = ?`, p.pid);
+      p.caughtVia = 'reported';
+      this.broadcastNow();
+      return;
+    }
+    if (p.role === 'oni' && first && this.dqSeen.get(p.pid) === assignId) {
+      this.dqDone.set(p.pid, assignId);
+      this.log('dq-ok', { p, at: now, data: { role: p.role } });
+    }
   }
 
   private dropSpot(pid: string): void {
@@ -2390,7 +2741,31 @@ export class GameRoom extends DurableObject<Env> {
 
   /** 空白・大文字小文字・全角半角のちがいは同じ合言葉とみなす（スマホで打つため。shared/hostkey.ts） */
   private isHostToken(token: unknown): boolean {
-    return sameHostKey(token, this.env.HOST_TOKEN);
+    return sameHostKey(token, this.env.HOST_TOKEN) || (this.hostKey !== null && sameHostKey(token, this.hostKey));
+  }
+
+  /**
+   * 主催者画面で合言葉を変える（いまの合言葉で入っている人だけ）。
+   * 変えるのは「主催者画面で決めた合言葉」で、Cloudflare の HOST_TOKEN は予備の鍵として残る。
+   * 204＝変えた、400＝短すぎる・長すぎる（{ error }）、403＝主催者ではない
+   */
+  private async onKeyChange(request: Request): Promise<Response> {
+    const headers = { 'cache-control': 'no-store' };
+    if (!this.isHostRequest(request)) return new Response('forbidden', { status: 403, headers });
+    let key = '';
+    try {
+      const body = (await request.json()) as { key?: unknown };
+      if (typeof body?.key === 'string') key = body.key.trim();
+    } catch {
+      // 中身が読めない → 下で short になる
+    }
+    const verdict = checkNewHostKey(key);
+    if (verdict !== 'ok') return Response.json({ error: verdict }, { status: 400, headers });
+    this.hostKey = key;
+    this.sql.exec(`INSERT INTO meta (k, v) VALUES ('hostkey', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`, key);
+    // 記録には「変えた」ことだけを残す（合言葉そのものは残さない）
+    this.log('host-key', { at: Date.now() });
+    return new Response(null, { status: 204, headers });
   }
 
   /** ヘッダー x-host-token の合言葉。日本語が入る合言葉は % の形で届く（前の版の画面はそのまま送ってくる） */
@@ -2410,6 +2785,7 @@ export class GameRoom extends DurableObject<Env> {
     ws.serializeAttachment(att);
     this.sendSnap(ws, att);
     this.sendGlowTo(ws, Date.now());
+    this.sendChatTo(ws, att);
   }
 
   private reject(ws: WebSocket, att: Attachment, op: HostOp, reason: string): void {
@@ -2435,6 +2811,31 @@ export class GameRoom extends DurableObject<Env> {
       // 外にいた最後の逃走者が外されたら、全員が牢屋にいることになる
       if (!this.checkAllCaught(now, now)) this.broadcastNow();
       this.refreshAutoResult();
+      return;
+    }
+
+    // 名前の見張り。1人ずつ・言葉ずつの操作なので版番号を見ない
+    if (op === 'name-redo' || op === 'name-shame') {
+      const m = typeof msg.pid === 'string' ? this.members.get(msg.pid) : undefined;
+      if (!m) return this.reject(ws, att, op, 'not-found');
+      if (op === 'name-redo') this.setMemberName(m, REDO_NAME, 'due', now, 'name-redo');
+      else this.setMemberName(m, SHAME_NAME, 'shamed', now, 'name-shame');
+      return;
+    }
+    if (op === 'ban-add' || op === 'ban-remove') {
+      const word = normalizeBanWord(msg.word);
+      if (!word) return this.reject(ws, att, op, 'invalid');
+      if (op === 'ban-add') {
+        if (this.bans.includes(word)) return;
+        if (this.bans.length >= BAN_MAX_WORDS) return this.reject(ws, att, op, 'full');
+        this.sql.exec(`INSERT OR IGNORE INTO name_bans (word, at) VALUES (?, ?)`, word, now);
+        this.bans.push(word);
+      } else {
+        this.sql.exec(`DELETE FROM name_bans WHERE word = ?`, word);
+        this.bans = this.bans.filter((w) => w !== word);
+      }
+      this.log(op, { at: now, data: { word } });
+      this.scheduleHostUpdate();
       return;
     }
 
@@ -2523,15 +2924,35 @@ export class GameRoom extends DurableObject<Env> {
         }
         const active = [...this.people.values()].filter((p) => !p.removed);
         if (active.length === 0) return this.reject(ws, att, op, 'no-participants');
-        const roles = assignRoles(
-          active.map((p) => p.pid),
-          ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] })),
+        const isReroll = g.stage === 'assigned';
+        const rules = ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] }));
+        // 主催者の指名で片方の役が0人になるなら、配役しない（主催者の画面に理由を出す）
+        if (!castCounts(active.length, rules, rules.map((r) => active.filter((p) => p.pin === r.id).length))) {
+          return this.reject(ws, att, op, 'empty-role');
+        }
+        // 主催者の指名が先。残りの枠は、希望を聞く：枠より多い希望はくじで、前に外れた人から先に通す（くじだけのときは全員くじ）。
+        // 引き直しは、引き直す前の回数からやり直す（遊んでいない配役で外れた分を数えない）
+        const missBase = new Map(active.map((p) => [p.pid, isReroll ? p.wishMissPrev : p.wishMiss] as const));
+        const drawn = assignWithWishes(
+          active.map((p) => ({ pid: p.pid, wish: g.wishMode === 'wish' ? p.wish : null, miss: missBase.get(p.pid) ?? 0, pin: p.pin })),
+          rules,
         );
+        const wished = g.wishMode === 'wish' ? drawn : null;
+        const roles = drawn.roles;
+        const missAfter = new Map(active.map((p) => [p.pid, wished ? (wished.miss.get(p.pid) ?? 0) : (missBase.get(p.pid) ?? 0)] as const));
+        const missedNow = new Set(wished ? wished.missed : []);
+        const wishStat = wished
+          ? {
+              oni: active.filter((p) => p.wish === 'oni').length,
+              runner: active.filter((p) => p.wish === 'runner').length,
+              none: active.filter((p) => p.wish === null).length,
+              missed: wished.missed.length,
+            }
+          : null;
         // 1人に2つ：捕まったとき鳴らす番号（code）と、牢屋の人を助けるとき鳴らす番号（rcode）。部屋の中で重ならない
         const codes = pickCodes(active.length * 2);
         const codeOf = new Map(active.map((p, i) => [p.pid, codes[i]] as const));
         const rcodeOf = new Map(active.map((p, i) => [p.pid, codes[active.length + i]] as const));
-        const isReroll = g.stage === 'assigned';
         const nextRound = isReroll ? Math.max(g.round, 1) : g.round + 1;
         const nextAssignId = g.assignId + 1;
         let oni = 0;
@@ -2549,16 +2970,20 @@ export class GameRoom extends DurableObject<Env> {
           allCaughtAt: null,
           counts: { oni, runner },
           news: null,
+          wishStat,
+          shrink: null,
           ...this.missionReset(now, 'assign'),
         };
         this.ctx.storage.transactionSync(() => {
           for (const [pid, role] of roles) {
             this.sql.exec(
-              `UPDATE participants SET role = ?, assign_id = ?, ack_id = 0, code = ?, rcode = ?, free_until = NULL WHERE pid = ?`,
+              `UPDATE participants SET role = ?, assign_id = ?, ack_id = 0, code = ?, rcode = ?, free_until = NULL, wish_miss = ?, wish_miss_prev = ? WHERE pid = ?`,
               role,
               nextAssignId,
               codeOf.get(pid) ?? null,
               rcodeOf.get(pid) ?? null,
+              missAfter.get(pid) ?? 0,
+              missBase.get(pid) ?? 0,
               pid,
             );
           }
@@ -2571,9 +2996,14 @@ export class GameRoom extends DurableObject<Env> {
           this.game = next;
           for (const [pid, role] of roles) {
             const p = this.people.get(pid)!;
-            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid) } });
+            // 希望を聞いた配役では、その人の希望（wish）・通らなかったか（missed）・先に通る強さ（prio＝配役の前の、続けて外れた回数）も残す
+            const wishData = wished ? { wish: p.wish, missed: missedNow.has(pid), prio: missBase.get(pid) ?? 0 } : {};
+            // 主催者が指名した人には pin（指名した役）を残す
+            const pinData = p.pin ? { pin: p.pin } : {};
+            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid), ...wishData, ...pinData } });
           }
-          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll } });
+          const pins = active.filter((p) => p.pin !== null).length;
+          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll, how: g.wishMode, ...(wishStat ? { wish: wishStat } : {}), ...(pins ? { pins } : {}) } });
         });
         this.photos.clear();
         for (const [pid, role] of roles) {
@@ -2584,24 +3014,34 @@ export class GameRoom extends DurableObject<Env> {
           p.code = codeOf.get(pid) ?? null;
           p.rcode = rcodeOf.get(pid) ?? null;
           p.freeUntil = null;
+          p.wishMissPrev = missBase.get(pid) ?? 0;
+          p.wishMiss = missAfter.get(pid) ?? 0;
         }
         break;
       }
       case 'start':
         if (g.stage !== 'assigned') return this.reject(ws, att, op, 'not-allowed');
-        this.commit({ stage: 'timer', timer: startTimer(g.durations, now), result: null });
-        this.log('start', { at: now, data: { durations: g.durations } });
+        // 主催者の指名は、この試合のためのもの。始まったら消す（次の配役はまっさらから）
+        this.sql.exec(`UPDATE participants SET pin = NULL WHERE pin IS NOT NULL`);
+        for (const p of this.people.values()) p.pin = null;
+        {
+          // 範囲の縮小：縮む先（毎回ランダムならここで引く）と、時間の段をこのラウンドの分だけ決める
+          const shrink = makeLive(g.shrinkPlan, g.area?.pts, g.durations, Math.random);
+          this.commit({ stage: 'timer', timer: startTimer(g.durations, now), result: null, shrink });
+          this.log('start', { at: now, data: { durations: g.durations } });
+          if (shrink && shrink.steps.length) this.log('shrink-plan', { at: now, data: { center: shrink.center, steps: shrink.steps.length } });
+        }
         break;
       case 'pause':
         if (g.stage !== 'timer' || !g.timer || g.timer.status !== 'running' || timerDone) {
           return this.reject(ws, att, op, 'not-allowed');
         }
-        this.commit({ timer: pauseTimer(g.timer, now) });
+        this.commit({ timer: pauseTimer(g.timer, now), ...this.missionPaused(now) });
         this.log('pause', { at: now });
         break;
       case 'resume':
         if (g.stage !== 'timer' || !g.timer || g.timer.status !== 'paused') return this.reject(ws, att, op, 'not-allowed');
-        this.commit({ timer: resumeTimer(g.timer, now) });
+        this.commit({ timer: resumeTimer(g.timer, now), ...this.missionResumed(now) });
         this.log('resume', { at: now });
         break;
       case 'skip': {
@@ -2639,7 +3079,9 @@ export class GameRoom extends DurableObject<Env> {
             p.caughtVia = null;
           }
         }
-        this.commit({ stage: 'assigned', timer: null, result: null, allCaughtAt: null, resultAuto: false, news: null });
+        // 合流・範囲のミッションは、やり直しで締め切る（判定しない）。集合写真はそのまま
+        const stopped = g.mission?.open && (g.mission.kind === 'meet' || g.mission.kind === 'zone') ? { mission: this.closedMission(now, 'reset') } : {};
+        this.commit({ stage: 'assigned', timer: null, result: null, allCaughtAt: null, resultAuto: false, shrink: null, news: null, ...stopped });
         break;
       }
       case 'end': {
@@ -2709,6 +3151,108 @@ export class GameRoom extends DurableObject<Env> {
         this.broadcastNow();
         break;
       }
+      case 'wish-mode': {
+        // 配役の決め方：次の配役（引き直しも）から効く。試合中は変えられない（割合と同じ）
+        if (!(g.stage === 'lobby' || g.stage === 'assigned' || g.stage === 'result')) {
+          return this.reject(ws, att, op, 'not-allowed');
+        }
+        if (!isWishMode(msg.wishMode)) return this.reject(ws, att, op, 'bad-input');
+        if (msg.wishMode === g.wishMode) break;
+        this.commit({ wishMode: msg.wishMode });
+        this.log('wish-mode', { at: now, data: { how: msg.wishMode } });
+        break;
+      }
+      case 'chat-mode': {
+        // いつでも切り替えられる（試合中でも、そのときから全員に効く。どの制約が面白いか試すため）
+        const mode = msg.chatMode === undefined ? (g.chatMode ?? DEFAULT_CHAT_MODE) : msg.chatMode;
+        const jail = msg.chatJail === undefined ? (g.chatJail ?? DEFAULT_CHAT_JAIL) : msg.chatJail;
+        if (!isChatMode(mode) || !isChatJail(jail)) return this.reject(ws, att, op, 'bad-input');
+        if (mode === g.chatMode && jail === g.chatJail) break;
+        this.commit({ chatMode: mode, chatJail: jail });
+        this.log('chat-mode', { at: now, data: { mode, jail } });
+        break;
+      }
+      case 'chat-places': {
+        const places = cleanPlaces(msg.places);
+        if (!places) return this.reject(ws, att, op, 'bad-input');
+        this.commit({ chatPlaces: places });
+        this.log('chat-places', { at: now, data: { places } });
+        break;
+      }
+      case 'cast': {
+        // 配役をいじる：まとめて指名する／指名を外す。配役済み（開始の前）なら、役がちがう人をその場で動かす。
+        // 試合中（時間が0になる前）はできない
+        if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        const role = msg.role === null ? null : isRoleId(msg.role) ? msg.role : undefined;
+        const ids = Array.isArray(msg.pids) ? [...new Set(msg.pids.filter((x): x is string => typeof x === 'string'))] : [];
+        if (role === undefined || ids.length === 0 || ids.length > 1_000) return this.reject(ws, att, op, 'bad-input');
+        const targets = ids.map((pid) => this.people.get(pid)).filter((p): p is Participant => p !== undefined && !p.removed);
+        if (targets.length !== ids.length) return this.reject(ws, att, op, 'not-found');
+        // 配役済みのときだけ、いまの配役に入っていて役がちがう人を動かす
+        const movers = g.stage === 'assigned' && role !== null ? targets.filter((p) => this.inRound(p.pid) && p.role !== role) : [];
+        const counts = { ...g.counts };
+        for (const p of movers) {
+          counts[p.role as RoleId] -= 1;
+          counts[role as RoleId] += 1;
+        }
+        // 2人以上いるのに片方の役が0人になる動かし方は断る
+        if (movers.length > 0 && counts.oni + counts.runner >= ROLES.length && ROLES.some((r) => counts[r.id] < r.min)) {
+          return this.reject(ws, att, op, 'empty-role');
+        }
+        const changed = targets.filter((p) => p.pin !== role);
+        if (changed.length === 0 && movers.length === 0) break;
+        // 動かした人の「続けて外れた回数」は、この配役の前の回数から数え直す（希望どおりになれば 0、希望とちがえば 1 増える）
+        const moved = new Set(movers.map((p) => p.pid));
+        const missOf = (p: Participant): number =>
+          g.wishStat == null || p.wish === null ? p.wishMiss : role === p.wish ? 0 : Math.min(WISH_MISS_MAX, p.wishMissPrev + 1);
+        this.ctx.storage.transactionSync(() => {
+          for (const p of targets) {
+            if (moved.has(p.pid)) {
+              const from = p.role;
+              const miss = missOf(p);
+              this.sql.exec(`UPDATE participants SET pin = ?, role = ?, ack_id = 0, wish_miss = ? WHERE pid = ?`, role, role, miss, p.pid);
+              p.role = role;
+              p.ackId = 0;
+              p.wishMiss = miss;
+              this.log('recast', { p, at: now, data: { role, from, wish: p.wish, missed: p.wish !== null && p.wish !== role } });
+            } else if (p.pin !== role) {
+              this.sql.exec(`UPDATE participants SET pin = ? WHERE pid = ?`, role, p.pid);
+            }
+            p.pin = role;
+          }
+          this.log('cast', { at: now, data: { role, people: targets.length, moved: movers.length } });
+        });
+        // 動かしたあとの人数と、希望が通らなかった人数を数え直す
+        const inRound = [...this.people.values()].filter((p) => this.inRound(p.pid));
+        const wishStat =
+          g.wishStat != null && movers.length > 0
+            ? { ...g.wishStat, missed: inRound.filter((p) => p.wish !== null && p.role !== p.wish).length }
+            : g.wishStat;
+        this.commit(movers.length > 0 ? { counts, wishStat } : {});
+        break;
+      }
+      case 'tag': {
+        // 印を付ける・外す（男・女・速い…）。名簿に残る。いつでもできる（主催者の画面にしか出ない）
+        const tag = cleanTag(msg.tag);
+        const ids = Array.isArray(msg.pids) ? [...new Set(msg.pids.filter((x): x is string => typeof x === 'string'))] : [];
+        if (tag === null || typeof msg.on !== 'boolean' || ids.length === 0 || ids.length > 1_000) {
+          return this.reject(ws, att, op, 'bad-input');
+        }
+        const targets = ids.map((pid) => this.members.get(pid)).filter((m): m is Member => m !== undefined);
+        if (targets.length !== ids.length) return this.reject(ws, att, op, 'not-found');
+        const on = msg.on;
+        const changed = targets.filter((m) => m.tags.includes(tag) !== on);
+        if (on && changed.some((m) => m.tags.length >= TAGS_MAX)) return this.reject(ws, att, op, 'too-many-tags');
+        if (changed.length === 0) break;
+        this.ctx.storage.transactionSync(() => {
+          for (const m of changed) {
+            m.tags = on ? [...m.tags, tag] : m.tags.filter((t) => t !== tag);
+            this.sql.exec(`UPDATE members SET tags = ? WHERE pid = ?`, m.tags.length ? JSON.stringify(m.tags) : null, m.pid);
+          }
+        });
+        this.commit({});
+        break;
+      }
       case 'mic': {
         // いつでも切り替えられる（どちらがいいか試すため）。試合中に変えても、そのときから全員のスマホに効く
         if (!isMicMode(msg.mic)) return this.reject(ws, att, op, 'bad-input');
@@ -2719,17 +3263,36 @@ export class GameRoom extends DurableObject<Env> {
       }
       case 'area': {
         // ゲームの前に決める。試合中（時間が0になる前）は変えない（走っている人の「外」が急に変わらないように）
+        // 牢屋の場所（layer＝jail）も同じ決まりで同じ形
         if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        const layer = msg.layer === 'jail' ? 'jail' : 'area';
+        const kind = layer === 'jail' ? 'jail-place' : 'area';
         if (msg.area === null) {
-          if (!g.area) break;
-          this.commit({ area: null });
-          this.log('area', { at: now, data: { area: null } });
+          if (!g[layer]) break;
+          this.commit({ [layer]: null });
+          this.log(kind, { at: now, data: { pts: null } });
           break;
         }
         if (!isValidAreaPts(msg.area, CAMPUS_CENTER)) return this.reject(ws, att, op, 'bad-input');
-        const area: Area = { pts: cleanAreaPts(msg.area), at: now };
-        this.commit({ area });
-        this.log('area', { at: now, data: { pts: area.pts } });
+        const place: Area = { pts: cleanAreaPts(msg.area), at: now };
+        this.commit({ [layer]: place });
+        this.log(kind, { at: now, data: { pts: place.pts } });
+        break;
+      }
+      case 'shrink-plan': {
+        // 縮み方：遊ぶ範囲と同じく、試合中（時間が0になる前）は変えない
+        if (g.stage === 'timer' && !timerDone) return this.reject(ws, att, op, 'not-allowed');
+        if (!isShrinkPlan(msg.plan)) return this.reject(ws, att, op, 'bad-input');
+        const plan = cleanShrinkPlan(msg.plan);
+        if (JSON.stringify(plan) === JSON.stringify(g.shrinkPlan)) break;
+        this.commit({ shrinkPlan: plan });
+        this.log('shrink-plan', { at: now, data: { ...plan } });
+        break;
+      }
+      case 'shrink-now': {
+        // 主催者の手で今すぐ1段（予告のあと縮む）。逃げ始めてからゲームの終わりまで
+        const res = this.addShrinkStep('host', now, {});
+        if (res !== true) return this.reject(ws, att, op, res);
         break;
       }
       case 'clear': {
@@ -2747,9 +3310,11 @@ export class GameRoom extends DurableObject<Env> {
           resultAuto: false,
           allCaughtAt: null,
           counts: { oni: 0, runner: 0 },
+          wishStat: null,
           night: g.night + 1,
           nightAt: now,
           news: null,
+          shrink: null,
           ...this.missionReset(now, 'clear'),
         };
         this.dropJail();
@@ -2788,23 +3353,237 @@ export class GameRoom extends DurableObject<Env> {
     // 一時停止・やり直し・配役・部屋を空にする・次に進む → 光っている人は消す（ゲームの段階が動いている間だけ光る）
     this.sweepRuns(now);
     this.broadcastNow();
+    // 配役・新しい夜で、見えてよいチャットが変わる（前の試合の会話は画面から消える）
+    this.syncChat();
+  }
+
+  // ---------- チャット ----------
+
+  /** いま画面に出してよい分を読む：今夜の本部の回線（全員あて・1人との分）と、いまの配役の分（仲間の回線・役あて） */
+  private loadChat(): void {
+    const g = this.game;
+    this.chat = [];
+    for (const r of this.sql.exec<{ assign_id: number; pid: string | null; owner: string | null; role: string | null; msg: string }>(
+      `SELECT assign_id, pid, owner, role, msg FROM chat WHERE night = ? AND (scope IN ('all', 'hq') OR assign_id = ?) ORDER BY id`,
+      g.night,
+      g.assignId,
+    )) {
+      try {
+        this.chat.push({ msg: JSON.parse(r.msg) as ChatMsg, pid: r.pid, owner: r.owner, role: isRoleId(r.role) ? r.role : null, assignId: r.assign_id });
+      } catch {
+        // 読めない行は飛ばす
+      }
+    }
+    this.chatKey = `${g.night}:${g.assignId}`;
+  }
+
+  private syncChat(): void {
+    if (this.chatKey === `${this.game.night}:${this.game.assignId}`) return;
+    this.loadChat();
+    for (const ws of this.ctx.getWebSockets()) this.sendChatTo(ws, (ws.deserializeAttachment() as Attachment | null) ?? {});
+  }
+
+  /** この接続に見せてよいか。主催者は全部。参加者は、同じ役の分・全員あて・自分と本部の分だけ */
+  private chatVisible(rec: ChatRec, att: Attachment): boolean {
+    if (att.host) return true;
+    const p = att.pid ? this.people.get(att.pid) : undefined;
+    if (!p || p.removed) return false;
+    const scope = rec.msg.scope;
+    if (scope === 'all') return true;
+    if (scope === 'hq') return rec.owner === p.pid;
+    return rec.assignId === this.game.assignId && this.inRound(p.pid)?.role === scope;
+  }
+
+  private chatFor(rec: ChatRec, att: Attachment): ChatMsg {
+    return att.host ? { ...rec.msg, pid: rec.pid ?? rec.owner ?? undefined, role: rec.role } : rec.msg;
+  }
+
+  /** 同じ役の仲間（自分は入れない）。「◯◯、一緒に来て！」で選ぶ相手 */
+  private chatTeam(att: Attachment): { num: number; name: string }[] {
+    const me = this.inRound(att.pid);
+    if (!me) return [];
+    const g = this.game;
+    return [...this.people.values()]
+      .filter((p) => !p.removed && p.assignId === g.assignId && p.role === me.role && p.pid !== me.pid)
+      .sort((a, b) => a.num - b.num)
+      .map((p) => ({ num: p.num, name: p.name }));
+  }
+
+  /** いま見えてよい全部を送る（つないだとき・配役が変わったとき）。受け取った側は手元の分を入れ替える */
+  private sendChatTo(ws: WebSocket, att: Attachment): void {
+    if (!att.pid && !att.host) return;
+    const msgs = this.chat.filter((r) => this.chatVisible(r, att)).slice(-CHAT_KEEP).map((r) => this.chatFor(r, att));
+    this.send(ws, { t: 'chat', s: Date.now(), reset: true, msgs, team: this.chatTeam(att) });
+  }
+
+  /** 札の中身を確かめて組み立てる（仲間の名前・場所の名前・位置）。合わなければ null */
+  private cardBody(c: CardDef, msg: Extract<ClientMsg, { t: 'chat' }>, p: Participant): { body: Partial<ChatMsg>; other: Participant | null } | null {
+    const body: Partial<ChatMsg> = { kind: 'card', card: c.id };
+    let other: Participant | null = null;
+    if (c.pick === 'person') {
+      const g = this.game;
+      other = [...this.people.values()].find((q) => q.num === msg.person && !q.removed && q.assignId === g.assignId && q.role === p.role && q.pid !== p.pid) ?? null;
+      if (!other) return null;
+      body.person = other.name;
+    }
+    if (c.pick === 'place') {
+      if (typeof msg.place !== 'string' || !(this.game.chatPlaces ?? []).includes(msg.place)) return null;
+      body.place = msg.place;
+    }
+    if (c.pos) {
+      const pos = cleanPos(msg.lat, msg.lon, msg.acc);
+      if (pos) body.pos = pos;
+    }
+    return { body, other };
+  }
+
+  /**
+   * チャットが届いた。参加者は自由な文字を送れない：仲間の回線は札・絵文字・数字のうち主催者が決めた1つ（牢屋の人は絵文字だけ）、
+   * 本部あては札だけ。決まりに合わない分・続けて送りすぎた分は捨てる（スマホの側でも押せなくしてある）
+   */
+  private onChat(att: Attachment, msg: Extract<ClientMsg, { t: 'chat' }>, now: number): void {
+    const g = this.game;
+    if (att.host) {
+      const text = cleanLine(msg.text, HQ_TEXT_MAX);
+      if (!text) return;
+      const to = typeof msg.to === 'string' ? msg.to : 'all';
+      if (to === 'all' || to === 'oni' || to === 'runner') {
+        this.recordChat({ ch: 'hq', scope: to, from: null, kind: 'text', text }, null, null, null, null, now);
+        return;
+      }
+      const target = to.startsWith('pid:') ? this.people.get(to.slice(4)) : undefined;
+      if (!target || target.removed) return;
+      this.recordChat({ ch: 'hq', scope: 'hq', from: null, kind: 'text', text, toName: target.name }, null, target.pid, null, target, now);
+      return;
+    }
+    const p = att.pid ? this.people.get(att.pid) : undefined;
+    if (!p || p.removed || g.stage === 'ended') return;
+    if (now - (this.lastChatAt.get(p.pid) ?? 0) < CHAT_GAP_MS) return;
+    const inRound = this.inRound(p.pid);
+    const from = { num: p.num, name: p.name };
+    if (msg.ch === 'hq') {
+      const c = cardOf(msg.card);
+      const made = c && c.ch === 'hq' ? this.cardBody(c, msg, p) : null;
+      if (!made) return;
+      this.lastChatAt.set(p.pid, now);
+      this.recordChat({ ch: 'hq', scope: 'hq', from, ...made.body } as Omit<ChatMsg, 'id' | 'at'>, p, p.pid, inRound?.role ?? null, null, now);
+      return;
+    }
+    if (msg.ch !== 'team' || !inRound || !inRound.role || !teamOpen(g, now)) return;
+    const caught = this.isCaught(inRound);
+    const input = teamInput(g.chatMode ?? DEFAULT_CHAT_MODE, g.chatJail ?? DEFAULT_CHAT_JAIL, caught);
+    let body: Partial<ChatMsg> | null = null;
+    let other: Participant | null = null;
+    if (input === 'emoji') {
+      const text = emojiText(msg.emoji);
+      if (text) body = { kind: 'emoji', text };
+    } else if (input === 'digit') {
+      const text = digitText(msg.digit);
+      if (text) body = { kind: 'digit', text };
+    } else if (input === 'card') {
+      const c = cardOf(msg.card);
+      const made = c && c.ch === 'team' ? this.cardBody(c, msg, inRound) : null;
+      if (made) {
+        body = made.body;
+        other = made.other;
+      }
+    }
+    if (!body) return;
+    if (caught) body.jail = true;
+    this.lastChatAt.set(p.pid, now);
+    this.recordChat({ ch: 'team', scope: inRound.role, from, ...body } as Omit<ChatMsg, 'id' | 'at'>, p, null, inRound.role, other, now);
+  }
+
+  /** 1通を保存して、見えてよい人に配り、記録（CSV）に残す */
+  private recordChat(
+    partial: Omit<ChatMsg, 'id' | 'at'>,
+    sender: Participant | null,
+    owner: string | null,
+    role: RoleId | null,
+    other: Participant | null,
+    now: number,
+  ): void {
+    const g = this.game;
+    const scope: ChatScope = partial.scope;
+    let rec!: ChatRec;
+    this.ctx.storage.transactionSync(() => {
+      // 番号を先に取り、番号の入った形を保存する（読み直したときも同じ番号で届く）
+      const id = this.sql
+        .exec<{ id: number }>(
+          `INSERT INTO chat (night, round, assign_id, at, scope, pid, owner, role, msg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '') RETURNING id`,
+          g.night,
+          g.round,
+          g.assignId,
+          now,
+          scope,
+          sender?.pid ?? null,
+          owner,
+          role,
+        )
+        .one().id;
+      const msg: ChatMsg = { ...partial, id, at: now };
+      this.sql.exec(`UPDATE chat SET msg = ? WHERE id = ?`, JSON.stringify(msg), id);
+      rec = { msg, pid: sender?.pid ?? null, owner, role, assignId: g.assignId };
+      this.log('chat', {
+        p: sender,
+        other,
+        at: now,
+        data: {
+          ch: msg.ch,
+          to: scope,
+          from: sender ? (role ?? 'none') : 'hq',
+          kind: msg.kind,
+          text: chatText(msg)[0],
+          ...(msg.card ? { card: msg.card } : {}),
+          ...(msg.pos ? { pos: [msg.pos.lat, msg.pos.lon, msg.pos.acc] } : {}),
+          ...(msg.jail ? { jail: true } : {}),
+        },
+      });
+    });
+    this.chat.push(rec);
+    const cache = new Map<boolean, string>();
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as Attachment | null;
+      if (!att || !this.chatVisible(rec, att)) continue;
+      const host = att.host === true;
+      let raw = cache.get(host);
+      if (!raw) {
+        raw = JSON.stringify({ t: 'chat', s: now, msgs: [this.chatFor(rec, att)] } satisfies ServerMsg);
+        cache.set(host, raw);
+      }
+      try {
+        ws.send(raw);
+      } catch {
+        // 閉じかけの接続は、つなぎ直したときに全部を送り直す
+      }
+    }
   }
 
   // ---------- ミッション（集合写真） ----------
 
   /** 開いているミッションを締め切った形（記録に残す）。開いていなければそのまま */
-  private closedMission(now: number, reason: string): MissionView | null {
+  private closedMission(now: number, reason: string, done?: NonNullable<MissionView['done']>): MissionView | null {
     const cur = this.game.mission ?? null;
     if (!cur || !cur.open) return cur;
-    this.sql.exec(`UPDATE missions SET closed_at = ? WHERE id = ?`, now, cur.id);
-    this.log('mission-close', { at: now, data: { mission: cur.id, title: cur.title, reason } });
-    return { ...cur, open: false };
+    const kind: MissionKind = cur.kind ?? 'photo';
+    const priv = this.game.missionPriv ?? null;
+    // 合流は、締め切った時点で成功した組が1つでもあれば成功。範囲は、判定（done）を渡されたときだけ結果が付く
+    let result = done ?? cur.done ?? null;
+    if (!result && kind === 'meet' && priv) {
+      const ok = priv.groups.filter((x) => x.okAt !== null).length;
+      result = { ok: ok > 0, at: now, freed: priv.freed, count: ok };
+    }
+    this.meetHolds.clear();
+    this.zoneShown = null;
+    this.sql.exec(`UPDATE missions SET closed_at = ?, result = ? WHERE id = ?`, now, result ? JSON.stringify(result) : null, cur.id);
+    this.log('mission-close', { at: now, data: { mission: cur.id, title: cur.title, kind, reason, ...(result ? { result } : {}) } });
+    return kind === 'photo' ? { ...cur, open: false } : { ...cur, open: false, done: result };
   }
 
   /** 配役・新しい夜を始めるで、ミッションを消してラウンドの区切りを進める（GameState に混ぜる形で返す） */
-  private missionReset(now: number, reason: string): Pick<GameState, 'mission' | 'missionFrom'> {
+  private missionReset(now: number, reason: string): Pick<GameState, 'mission' | 'missionFrom' | 'missionPriv'> {
     this.closedMission(now, reason);
-    return { mission: null, missionFrom: (this.game.missionSeq ?? 0) + 1 };
+    return { mission: null, missionPriv: null, missionFrom: (this.game.missionSeq ?? 0) + 1 };
   }
 
   private onMissionCmd(ws: WebSocket, att: Attachment, msg: Extract<ClientMsg, { t: 'cmd' }>, now: number): void {
@@ -2813,23 +3592,70 @@ export class GameRoom extends DurableObject<Env> {
     if (op === 'mission') {
       // 夜の最後（SEE YOU AGAIN）の間は出せない。配役の前（待合室）・試合中・結果発表は出せる
       if (g.stage === 'ended') return this.reject(ws, att, op, 'not-allowed');
-      const title = cleanMissionTitle(msg.title);
+      const kind: MissionKind = msg.kind === undefined ? 'photo' : isMissionKind(msg.kind) ? msg.kind : 'photo';
+      if (msg.kind !== undefined && !isMissionKind(msg.kind)) return this.reject(ws, att, op, 'bad-input');
+      const rawTitle = typeof msg.title === 'string' && msg.title.trim() ? msg.title : MISSION_DEFAULT_TITLES[kind];
+      const title = cleanMissionTitle(rawTitle);
       const id = (g.missionSeq ?? 0) + 1;
+      let view: MissionView = { id, title, at: now, open: true };
+      let priv: GameState['missionPriv'] = null;
+      let data: Record<string, unknown> = {};
+      if (kind !== 'photo') {
+        // 合流・範囲は、役が決まっている間だけ（配役のあと〜ゲームの段階が終わるまで）
+        const clock = missionClock(g, now, CAPTURE_PHASE_INDEX);
+        if (clock !== 'live') return this.reject(ws, att, op, 'not-game');
+        const secs = cleanMissionSecs(msg.secs);
+        if (secs === false) return this.reject(ws, att, op, 'bad-input');
+        // 成功で牢屋から出す人数：free=false で出さない（0）、n を省くと全員（null）
+        let free: number | null = null;
+        if (msg.free === false) free = 0;
+        else if (msg.n !== undefined && msg.n !== null) {
+          const n = Number(msg.n);
+          if (!Number.isInteger(n) || n < 1 || n > 999) return this.reject(ws, att, op, 'bad-input');
+          free = n;
+        }
+        const runners = [...this.people.values()]
+          .filter((q) => !q.removed && q.assignId === g.assignId && q.role === 'runner' && !this.isCaught(q))
+          .sort((a, b) => a.num - b.num);
+        view = { ...view, kind, until: secs === null ? null : now + secs * 1000, free, done: null };
+        if (kind === 'meet') {
+          const scope = msg.scope === 'one' ? 'one' : msg.scope === undefined || msg.scope === 'all' ? 'all' : null;
+          if (!scope) return this.reject(ws, att, op, 'bad-input');
+          const groups = makeMeetGroups(runners.map((q) => q.pid), scope, Math.random);
+          if (groups.length === 0) return this.reject(ws, att, op, 'too-few');
+          priv = { groups: groups.map((pids) => ({ pids, okAt: null })), freed: 0, pausedAt: null };
+          view = { ...view, meet: { scope, groups: groups.length, ok: 0 } };
+          data = { scope, secs, free, groups: groups.map((pids) => pids.map((pid) => this.people.get(pid)?.name ?? '')) };
+        } else {
+          // 範囲：位置が届くのはゲームの段階（追跡が始まってから）だけなので、その間にしか出せない
+          if (!this.glowOpen(now)) return this.reject(ws, att, op, 'not-game');
+          if (secs === null) return this.reject(ws, att, op, 'bad-input');
+          if (!isValidAreaPts(msg.zone, CAMPUS_CENTER)) return this.reject(ws, att, op, 'bad-zone');
+          const need = Number(msg.need);
+          if (!Number.isInteger(need) || need < 1 || need > ZONE_NEED_MAX) return this.reject(ws, att, op, 'bad-input');
+          const pts = cleanAreaPts(msg.zone);
+          priv = { groups: [], freed: 0, pausedAt: null };
+          view = { ...view, zone: { pts, need, now: null } };
+          data = { secs, free, need, pts, runners: runners.length };
+        }
+      }
       this.ctx.storage.transactionSync(() => {
         // 前のミッションが開いていれば締め切る（記録に残る）。ミッションは1つずつ
         this.closedMission(now, 'next');
         this.sql.exec(
-          `INSERT INTO missions (id, night, round, assign_id, title, at) VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO missions (id, night, round, assign_id, title, at, kind, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           id,
           g.night,
           g.round,
           g.assignId,
           title,
           now,
+          kind,
+          kind === 'photo' ? null : JSON.stringify(data),
         );
-        this.game = { ...this.game, missionSeq: id, mission: { id, title, at: now, open: true } };
+        this.game = { ...this.game, missionSeq: id, mission: view, missionPriv: priv };
         this.saveGame();
-        this.log('mission', { at: now, data: { mission: id, title } });
+        this.log('mission', { at: now, data: { mission: id, title, kind, ...data } });
       });
       this.broadcastNow();
       return;
@@ -2843,7 +3669,7 @@ export class GameRoom extends DurableObject<Env> {
       this.broadcastNow();
       return;
     }
-    // judge
+    // judge（集合写真だけ）
     const ph = isPhotoId(msg.photo) ? this.photos.get(msg.photo) : undefined;
     if (!ph) return this.reject(ws, att, op, 'not-found');
     if (typeof msg.ok !== 'boolean') return this.reject(ws, att, op, 'bad-input');
@@ -2874,8 +3700,28 @@ export class GameRoom extends DurableObject<Env> {
         }
       }
     }
+    // 成功で範囲も縮める（主催者が縮み方で選んでいれば）。1枚の写真で縮むのは1回だけ。範囲・試合の外なら何もしない
+    if (msg.ok && this.game.shrinkPlan?.mission && this.game.shrink && !this.game.shrink.byPhoto.includes(ph.id)) {
+      this.addShrinkStep('mission', now, { photo: ph.id, by: ph.name });
+    }
     // 成功したかどうかは全員に見せる
     this.broadcastNow();
+  }
+
+  /**
+   * 範囲を1段縮める（ミッション・主催者）。予告を今から始める。逃げ始めてからゲームの終わりまで（止めている間も）。
+   * 縮めたら true、できなければ理由
+   */
+  private addShrinkStep(why: 'mission' | 'host', now: number, data: { photo?: string; by?: string }): true | 'not-allowed' {
+    const g = this.game;
+    if (!g.area || !g.shrink || g.stage !== 'timer' || !g.timer) return 'not-allowed';
+    const pos = positionAt(g.timer, now);
+    if (pos.kind !== 'phase' || pos.index < 1 || pos.index > CAPTURE_PHASE_INDEX) return 'not-allowed';
+    const step = extraStep(elapsedAt(g.timer, now), why);
+    const byPhoto = data.photo ? [...g.shrink.byPhoto, data.photo] : g.shrink.byPhoto;
+    this.commit({ shrink: { ...g.shrink, steps: [...g.shrink.steps, step], byPhoto } });
+    this.log('shrink', { at: now, data: { why, at: step.at, ...data } });
+    return true;
   }
 
   /**
@@ -2887,7 +3733,7 @@ export class GameRoom extends DurableObject<Env> {
     const pos = g.stage === 'timer' && g.timer ? positionAt(g.timer, now) : null;
     if (!pos || pos.kind !== 'phase' || pos.index !== CAPTURE_PHASE_INDEX || g.allCaughtAt != null) return 'not-allowed';
     const jailed = [...this.people.values()]
-      .filter((q) => !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isCaught(q))
+      .filter((q) => !q.removed && q.assignId === g.assignId && q.role === 'runner' && this.isJailed(q))
       .sort((a, b) => (a.caughtAt ?? 0) - (b.caughtAt ?? 0) || a.num - b.num);
     if (jailed.length === 0) return 'nobody-jailed';
     const out = n === null ? jailed : jailed.slice(0, n);
@@ -2896,6 +3742,229 @@ export class GameRoom extends DurableObject<Env> {
     this.log('mission-free', { at: now, data: { n, released: out.length, jailed: jailed.length, ...from } });
     for (const q of out) this.freeFromJail(q, null, 'mission', now, { mission: n ?? 'all', ...from });
     return out.length;
+  }
+
+  // ---------- ミッション（合流・範囲） ----------
+
+  /** いま開いている合流・範囲のミッション（無ければ null） */
+  private liveMission(kind: 'meet' | 'zone'): MissionView | null {
+    const m = this.game.mission ?? null;
+    return m && m.open && m.kind === kind ? m : null;
+  }
+
+  /** 試合を止めた：締め切りも止める（止めた時刻を覚えておく） */
+  private missionPaused(now: number): Partial<GameState> {
+    const m = this.game.mission;
+    const priv = this.game.missionPriv;
+    if (!m?.open || !m.until || !priv) return {};
+    return { missionPriv: { ...priv, pausedAt: now } };
+  }
+
+  /** 試合を再開した：止めていた分（と、再開までの2秒）だけ締め切りを後ろへ */
+  private missionResumed(now: number): Partial<GameState> {
+    const m = this.game.mission;
+    const priv = this.game.missionPriv;
+    if (!m?.open || !m.until || !priv || priv.pausedAt == null) return {};
+    return { mission: { ...m, until: m.until + (now + START_LEAD_MS - priv.pausedAt) }, missionPriv: { ...priv, pausedAt: null } };
+  }
+
+  /** 締め切りの瞬間に起きるよう、アラームを締め切りに合わせる（合図のアラームより先なら早める） */
+  private async ensureMissionAlarm(): Promise<void> {
+    const m = this.game.mission;
+    if (!m?.open || !m.until || (m.kind !== 'meet' && m.kind !== 'zone')) return;
+    const cur = await this.ctx.storage.getAlarm();
+    const at = Math.max(m.until, Date.now() + 20);
+    if (cur === null || cur > at) await this.ctx.storage.setAlarm(at);
+  }
+
+  /**
+   * 合流・範囲のミッションの時間を見る（合図・届いた操作のたび）。
+   * 止めている間は何もしない。締め切り・ゲームの段階の終わりで、合流は締め切り、範囲は判定する。
+   * 試合の外へ出た（やり直し・結果）ときは、判定しないで締め切る
+   */
+  private missionTick(now: number): void {
+    const g = this.game;
+    const m = g.mission ?? null;
+    if (!m || !m.open || (m.kind !== 'meet' && m.kind !== 'zone')) return;
+    const clock = missionClock(g, now, CAPTURE_PHASE_INDEX);
+    if (clock === 'paused') return;
+    const timeUp = m.until != null && now >= m.until;
+    if (clock === 'live' && !timeUp) return;
+    if (m.kind === 'zone' && clock !== 'off') {
+      // 起きた直後（位置がまだ届き直していない）の締め切りは、少し待ってから判定する。ゲームの段階が終わったときは待たない（位置はもう来ない）
+      if (clock === 'live' && now - this.bornAt < ZONE_WARM_MS) return;
+      this.judgeZone(now, timeUp ? 'time' : 'game-over');
+      return;
+    }
+    this.ctx.storage.transactionSync(() => {
+      this.game = { ...this.game, mission: this.closedMission(now, timeUp ? 'time' : clock === 'over' ? 'game-over' : 'stage') };
+      this.saveGame();
+    });
+    this.broadcastNow();
+  }
+
+  /** 範囲の中にいる逃走者（牢屋の外・位置が新しい人だけ） */
+  private zoneInside(pts: [number, number][], now: number): Participant[] {
+    const out: Participant[] = [];
+    for (const sp of this.spots.values()) {
+      const p = this.inRound(sp.pid);
+      if (!p || p.role !== 'runner' || this.isCaught(p) || now - sp.at > MATES_STALE_MS) continue;
+      if (inZone(pts, sp)) out.push(p);
+    }
+    return out.sort((a, b) => a.num - b.num);
+  }
+
+  /** 位置が届いた・人が捕まった：範囲の中の人数が変わっていたら、全員に配り直す（まとめて） */
+  private zoneChanged(now: number): void {
+    const m = this.liveMission('zone');
+    if (!m?.zone) return;
+    const n = this.zoneInside(m.zone.pts, now).length;
+    if (n === this.zoneShown || this.zoneTimer) return;
+    this.zoneTimer = setTimeout(() => {
+      this.zoneTimer = null;
+      const cur = this.liveMission('zone');
+      if (cur?.zone && this.zoneInside(cur.zone.pts, Date.now()).length !== this.zoneShown) this.broadcastNow();
+    }, ZONE_BROADCAST_MS);
+  }
+
+  /** 範囲を判定する：いま中にいる逃走者が、決めた人数以上なら成功。成功なら牢屋から出す（決めておいた人数） */
+  private judgeZone(now: number, reason: string): void {
+    const m = this.liveMission('zone');
+    if (!m?.zone) return;
+    const inside = this.zoneInside(m.zone.pts, now);
+    const ok = inside.length >= m.zone.need;
+    this.log('mission-zone', { at: now, data: { mission: m.id, ok, count: inside.length, need: m.zone.need, inside: inside.map((p) => p.name), reason } });
+    let freed = 0;
+    if (ok && m.free !== 0) {
+      const res = this.missionFree(m.free ?? null, now, { mission: m.id, kind: 'zone' });
+      if (typeof res === 'number') freed = res;
+    }
+    // 成功で遊ぶ範囲も縮める（主催者が縮み方で「ミッションの成功で1段」を選んでいれば。集合写真と同じ）
+    const shrunk = ok && this.missionShrink(now, m.title);
+    this.ctx.storage.transactionSync(() => {
+      const priv = this.game.missionPriv;
+      this.game = {
+        ...this.game,
+        mission: this.closedMission(now, reason, { ok, at: now, freed, count: inside.length }),
+        missionPriv: priv ? { ...priv, freed, shrunk: shrunk || priv.shrunk } : priv,
+      };
+      this.saveGame();
+    });
+    this.broadcastNow();
+  }
+
+  /** 合流・範囲の成功で、遊ぶ範囲を1段縮める（縮み方で選んでいるときだけ）。縮めたら true */
+  private missionShrink(now: number, by: string): boolean {
+    if (!this.game.shrinkPlan?.mission || !this.game.shrink) return false;
+    return this.addShrinkStep('mission', now, { by }) === true;
+  }
+
+  /** 合流の長押しをしてよいか：合流のミッションが開いていて、試合が動いている */
+  private meetOpen(now: number): boolean {
+    return !!this.liveMission('meet') && missionClock(this.game, now, CAPTURE_PHASE_INDEX) === 'live';
+  }
+
+  private meetHoldsOf(pid: string, now: number): RescueHold[] {
+    const list = this.meetHolds.get(pid) ?? [];
+    for (const h of list) if (h.end === null && now - h.start > HOLD_UNKNOWN_END_MS) h.end = h.start + HOLD_UNKNOWN_END_MS;
+    return list.filter((h) => h.end === null || now - h.end <= RESCUE_HOLD_KEEP_MS);
+  }
+
+  /** 合流の長押し。同じ組の2人の長押しが重なった瞬間に、その組は成功 */
+  private onMeet(att: Attachment, msg: Extract<ClientMsg, { t: 'meet' }>, now: number): void {
+    const p = this.inRound(att.pid);
+    if (!p || p.role !== 'runner') return;
+    const at = this.pressAt(msg.at, now);
+    if (msg.on !== true) {
+      this.endMeetHold(p.pid, at, Number.isFinite(Number(msg.start)) ? Number(msg.start) : undefined);
+      return;
+    }
+    const group = this.game.missionPriv?.groups.find((x) => x.pids.includes(p.pid));
+    if (!this.meetOpen(now) || !group || group.okAt !== null || this.isCaught(p)) {
+      this.notify(p.pid, 'closed');
+      return;
+    }
+    const list = this.meetHoldsOf(p.pid, now);
+    const same = list.find((h) => Math.abs(h.start - at) <= HOLD_SAME_MS);
+    if (!same) {
+      for (const h of list) if (h.end === null) h.end = at;
+      list.push({ start: at, end: null });
+      this.meetHolds.set(p.pid, list.slice(-4));
+      this.log('meet-hold', { p, at, data: { on: true, mission: this.game.mission?.id, lagMs: now - at } });
+    }
+    const mine = this.meetHoldsOf(p.pid, now).find((h) => Math.abs(h.start - at) <= HOLD_SAME_MS);
+    if (!mine || mine.used) return;
+    const overlaps = (h: RescueHold) => h.start <= (mine.end ?? Infinity) && (h.end ?? Infinity) >= mine.start;
+    const hit = group.pids
+      .filter((pid) => pid !== p.pid)
+      .map((pid) => this.inRound(pid))
+      .filter((q): q is Participant => !!q && q.role === 'runner' && !this.isCaught(q))
+      .map((q) => ({ q, h: this.meetHoldsOf(q.pid, now).filter((h) => !h.used && overlaps(h)).sort((a, b) => a.start - b.start)[0] }))
+      .filter((x) => x.h)
+      .sort((a, b) => a.h!.start - b.h!.start)[0];
+    if (!hit) return;
+    mine.used = true;
+    hit.h!.used = true;
+    this.meetSucceed(group, p, hit.q, now);
+  }
+
+  private endMeetHold(pid: string, at: number, start?: number): void {
+    const list = this.meetHolds.get(pid);
+    if (!list) return;
+    const h = list.find((x) => x.end === null && (start === undefined || Math.abs(x.start - start) <= HOLD_SAME_MS));
+    if (!h) return;
+    h.end = Math.max(h.start, at);
+    this.log('meet-hold', { p: this.people.get(pid) ?? null, at: h.end, data: { on: false, ms: h.end - h.start } });
+  }
+
+  /** 1組が合流した。記録して、決めておいた人数を牢屋から出す。1組だけのミッション・全部の組が合流したら締め切る */
+  private meetSucceed(group: { pids: string[]; okAt: number | null }, a: Participant, b: Participant, now: number): void {
+    const m = this.liveMission('meet');
+    const priv = this.game.missionPriv;
+    if (!m || !priv || group.okAt !== null) return;
+    group.okAt = now;
+    this.log('meet', { p: a, other: b, via: 'together', at: now, data: { mission: m.id, group: group.pids.map((pid) => this.people.get(pid)?.name ?? '') } });
+    let freed = 0;
+    if (m.free !== 0) {
+      const res = this.missionFree(m.free ?? null, now, { mission: m.id, kind: 'meet', by: `${a.name}・${b.name}` });
+      if (typeof res === 'number') freed = res;
+    }
+    for (const pid of group.pids) this.meetHolds.delete(pid);
+    // 成功で遊ぶ範囲も縮める（選んでいれば）。組がいくつ成功しても、1つのミッションで縮むのは最初の1回だけ
+    const shrunk = priv.shrunk === true || this.missionShrink(now, `${a.name}・${b.name}`);
+    const okCount = priv.groups.filter((x) => x.okAt !== null).length;
+    const total = priv.freed + freed;
+    const allDone = okCount === priv.groups.length;
+    this.ctx.storage.transactionSync(() => {
+      this.game = { ...this.game, missionPriv: { ...priv, freed: total, shrunk } };
+      if (allDone) {
+        this.game = { ...this.game, mission: this.closedMission(now, 'done', { ok: true, at: now, freed: total, count: okCount }) };
+      }
+      this.saveGame();
+    });
+    this.notify(a.pid, 'met', b, 'together');
+    this.notify(b.pid, 'met', a, 'together');
+    this.broadcastNow();
+  }
+
+  /** 全員に配るミッション（合流の組の数・名前、範囲のいまの人数を足す） */
+  private missionView(now: number): MissionView | null {
+    const m = this.game.mission ?? null;
+    if (!m) return null;
+    const priv = this.game.missionPriv ?? null;
+    if (m.kind === 'meet' && m.meet && priv) {
+      const ok = priv.groups.filter((x) => x.okAt !== null).length;
+      const pairs =
+        priv.groups.length <= MEET_PUBLIC_PAIRS_MAX
+          ? priv.groups.map((x) => ({ names: x.pids.map((pid) => this.people.get(pid)?.name ?? '？'), okAt: x.okAt }))
+          : undefined;
+      return { ...m, meet: { scope: m.meet.scope, groups: priv.groups.length, ok, ...(pairs ? { pairs } : {}) } };
+    }
+    if (m.kind === 'zone' && m.zone) {
+      const n = m.open ? this.zoneInside(m.zone.pts, now).length : null;
+      return { ...m, zone: { ...m.zone, now: n } };
+    }
+    return m;
   }
 
   /** 写真を受け取る（POST）・取り出す（GET /photo/<印>） */
@@ -2934,7 +4003,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!who || !p || p.removed) return Response.json({ error: 'not-in' }, { status: 403 });
     const mission = this.game.mission;
     const mid = Number(url.searchParams.get('m'));
-    if (!mission || !mission.open || mission.id !== mid) return Response.json({ error: 'closed' }, { status: 409 });
+    if (!mission || !mission.open || mission.id !== mid || (mission.kind ?? 'photo') !== 'photo') return Response.json({ error: 'closed' }, { status: 409 });
     const mine = [...this.photos.values()].filter((ph) => ph.pid === p.pid && ph.missionId === mission.id).length;
     if (mine >= PHOTO_PER_PERSON) return Response.json({ error: 'too-many' }, { status: 429 });
     // 大きさを言わない送り方（chunked）は断る。言っても、読みながら上限を超えたらそこで止める（部屋のメモリを守る）
@@ -3058,7 +4127,7 @@ export class GameRoom extends DurableObject<Env> {
       durations: g.durations,
       nightAt: g.nightAt,
       ratio: g.ratio,
-      mission: g.mission ?? null,
+      mission: this.missionView(Date.now()),
       missionOk: [...this.photos.values()]
         .filter((ph) => ph.status === 'ok')
         .map((ph) => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, freed: ph.freed })),
@@ -3068,6 +4137,49 @@ export class GameRoom extends DurableObject<Env> {
       area: g.area ?? null,
       announce: g.announce ?? { ...ANNOUNCE_DEFAULT },
       news: g.news?.view ?? null,
+      shrinkPlan: g.shrinkPlan ?? DEFAULT_SHRINK_PLAN,
+      shrink: g.shrink ?? null,
+      jail: g.jail ?? null,
+      wishMode: g.wishMode,
+      ...this.wishCounts(),
+      chat: { mode: g.chatMode ?? DEFAULT_CHAT_MODE, jail: g.chatJail ?? DEFAULT_CHAT_JAIL, places: g.chatPlaces ?? [...DEFAULT_PLACES] },
+    };
+  }
+
+  /**
+   * 配役の希望：いま入室している人のうち、それぞれの役を希望している人数（wishes）と、開いている枠（wishSlots）。
+   * 主催者が指名した人は希望に数えず、その分の枠も引く（残りの枠を、指名されていない人で分けるため）
+   */
+  private wishCounts(): { wishes: { oni: number; runner: number }; wishSlots: { oni: number; runner: number } } {
+    const wishes = { oni: 0, runner: 0 };
+    const pinned = { oni: 0, runner: 0 };
+    let n = 0;
+    for (const p of this.people.values()) {
+      if (p.removed) continue;
+      n++;
+      if (p.pin !== null) pinned[p.pin]++;
+      else if (p.wish !== null) wishes[p.wish]++;
+    }
+    const rules = ROLES.map((r) => ({ ...r, weight: this.game.ratio[r.id] }));
+    // 指名で配役できない形（片方が0人）になっている間は、割合のままの人数で出す
+    const counts = castCounts(n, rules, rules.map((r) => pinned[r.id])) ?? allocateCounts(n, rules);
+    const slot = (id: RoleId) => Math.max(0, counts[rules.findIndex((r) => r.id === id)] - pinned[id]);
+    return { wishes, wishSlots: { oni: slot('oni'), runner: slot('runner') } };
+  }
+
+  /** 合流のミッションでの自分の組（入っていなければ null） */
+  private myMeet(p: Participant): MeView['meet'] {
+    const m = this.game.mission ?? null;
+    const group = m?.kind === 'meet' ? this.game.missionPriv?.groups.find((x) => x.pids.includes(p.pid)) : undefined;
+    if (!m || !group) return null;
+    return {
+      missionId: m.id,
+      with: group.pids
+        .filter((pid) => pid !== p.pid)
+        .map((pid) => this.people.get(pid))
+        .filter((q): q is Participant => !!q)
+        .map((q) => ({ name: q.name, jailed: this.isCaught(q) })),
+      okAt: group.okAt,
     };
   }
 
@@ -3101,10 +4213,16 @@ export class GameRoom extends DurableObject<Env> {
       sent: [...this.photos.values()]
         .filter((ph) => ph.pid === p.pid)
         .map((ph) => ({ id: ph.id, missionId: ph.missionId, status: ph.status, at: ph.at })),
+      meet: live ? this.myMeet(p) : null,
       rcode: live && p.role === 'runner' ? p.rcode : null,
       freeUntil: live && p.role === 'runner' && !this.isCaught(p) && p.freeUntil !== null && p.freeUntil > now ? p.freeUntil : null,
       rescues: live && p.role === 'runner' ? (this.rescues.get(p.pid) ?? 0) : 0,
       newsAbout: g.news && (g.news.runnerPid === p.pid || g.news.oniPid === p.pid) ? g.news.view.seq : null,
+      wish: p.wish,
+      wishMiss: p.wishMiss,
+      // 役が決まってからゲームの終わりまで、その配役の人は希望を変えられないので、その間はこれで合っている
+      wishMissed: live && g.wishStat != null && p.wish !== null && p.role !== null && p.role !== p.wish,
+      hostCast: p.pin !== null,
     };
   }
 
@@ -3142,7 +4260,27 @@ export class GameRoom extends DurableObject<Env> {
     };
   }
 
+  /** 配役を決めるための数字。記録を全部読むので、段階・配役・夜が変わったときだけ数え直す（試合中は前のまま） */
+  private castStats(): Map<string, CastStat> {
+    const g = this.game;
+    const key = `${g.night}:${g.round}:${g.assignId}:${g.stage}:${g.result ?? ''}`;
+    if (this.castStatCache?.key === key) return this.castStatCache.stats;
+    const rows = this.sql
+      .exec<CastEvent>(
+        `SELECT at, assign_id, kind, pid, other_pid, elapsed,
+           CASE WHEN kind = 'run-end' THEN json_object('ms', json_extract(data, '$.ms'), 'm', json_extract(data, '$.m')) ELSE data END AS data
+         FROM events
+         WHERE kind IN ('clear', 'start', 'reset', 'skip', 'role', 'recast', 'capture', 'release', 'run-end')
+         ORDER BY id`,
+      )
+      .toArray();
+    const stats = castStatsAll(rows);
+    this.castStatCache = { key, stats };
+    return stats;
+  }
+
   private hostSummary(): HostSummary {
+    const stats = this.castStats();
     const active = this.activePeople();
     const connected = new Set<string>();
     const synced = new Set<string>();
@@ -3197,7 +4335,49 @@ export class GameRoom extends DurableObject<Env> {
         (ph): HostPhoto => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, status: ph.status, bytes: ph.bytes, freed: ph.freed }),
       ),
       photoBytes: this.photoBytes,
+      meets:
+        g.mission?.kind === 'meet'
+          ? (g.missionPriv?.groups ?? []).map((x) => {
+              const ps = x.pids.map((pid) => this.people.get(pid)).filter((q): q is Participant => !!q);
+              return { names: ps.map((q) => q.name), okAt: x.okAt, jailed: ps.filter((q) => this.isCaught(q)).map((q) => q.name) };
+            })
+          : undefined,
+      zoneIn: g.mission?.open && g.mission.kind === 'zone' && g.mission.zone ? this.zoneInside(g.mission.zone.pts, Date.now()).map((q) => q.name) : undefined,
+      wishStat: g.stage === 'lobby' ? null : (g.wishStat ?? null),
+      wishPrio: active.filter((p) => p.wish !== null && p.wishMiss > 0).length,
+      cast: [...active]
+        .sort((a, b) => a.num - b.num)
+        .map(
+          (p): HostCastEntry => ({
+            pid: p.pid,
+            num: p.num,
+            name: p.name,
+            wish: p.wish,
+            pin: p.pin,
+            role: g.assignId > 0 && p.assignId === g.assignId ? p.role : null,
+            prio: p.wish !== null && p.wishMiss > 0,
+            on: connected.has(p.pid),
+            ...(this.members.get(p.pid)?.tags.length ? { tags: this.members.get(p.pid)!.tags } : {}),
+            ...(stats.has(p.pid) ? { stat: stats.get(p.pid)! } : {}),
+          }),
+        ),
+      names: this.watchNames(active),
+      bans: { custom: [...this.bans], builtin: DEFAULT_BANNED.length },
     };
+  }
+
+  /** 名前の見張り：今夜の人（引っかかる人を先に）と、今夜いないが引っかかる・手を入れた名簿の人 */
+  private watchNames(active: Participant[]): NonNullable<HostSummary['names']> {
+    const out: NonNullable<HostSummary['names']> = [];
+    const tonight = new Set(active.map((p) => p.pid));
+    for (const m of this.members.values()) {
+      const hit = m.nameState === 'ok' ? bannedHit(m.name, this.bans) : null;
+      const here = tonight.has(m.pid);
+      if (!here && !hit && m.nameState === 'ok') continue;
+      out.push({ pid: m.pid, num: m.num, name: m.name, hit, state: m.nameState, tonight: here });
+    }
+    const rank = (x: (typeof out)[number]) => (x.hit ? 0 : x.state === 'due' ? 1 : x.state === 'shamed' ? 2 : 3);
+    return out.sort((a, b) => rank(a) - rank(b) || a.num - b.num);
   }
 
   private snapFor(att: Attachment, game: GameView, host: HostSummary | null): ServerMsg {
@@ -3252,6 +4432,8 @@ export class GameRoom extends DurableObject<Env> {
     }
     const game = this.gameView();
     const host = this.hostSummary();
+    // 範囲のミッション：全員に配った「いま中にいる人数」を覚えておく（変わったときだけ配り直すため）
+    this.zoneShown = game.mission?.open && game.mission.zone ? game.mission.zone.now : null;
     for (const ws of this.ctx.getWebSockets()) {
       const att = (ws.deserializeAttachment() as Attachment | null) ?? {};
       if (!att.pid && !att.host) continue;
@@ -3360,4 +4542,14 @@ function randomKey(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function parseTags(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return Array.isArray(v) ? v.map(cleanTag).filter((t): t is string => t !== null).slice(0, TAGS_MAX) : [];
+  } catch {
+    return [];
+  }
 }

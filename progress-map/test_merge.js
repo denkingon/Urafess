@@ -28,6 +28,18 @@ const statics = JSON.parse(fs.readFileSync(__dirname + '/static_boxes.json', 'ut
 const cb = new B.Component();
 const D = cb.data();
 const names = D.items.map((it) => it.n);
+{ // 段階の名前はねじりで輪ごとに回る。箱も同じだけ回す（回した箱は正方形で囲む）
+  const K = D.twist || 0, twr = (r) => K * Math.log(650 / Math.max(30, Math.min(r, 650)));
+  statics.forEach((s) => {
+    if (!s.r) return;
+    const a = twr(s.r);
+    s.b = s.b.map((b) => {
+      const cx = (b[0] + b[2]) / 2 - 840, cy = (b[1] + b[3]) / 2 - 780, e = Math.max(b[2] - b[0], b[3] - b[1]) / 2;
+      const x = cx * Math.cos(a) - cy * Math.sin(a) + 840, y = cx * Math.sin(a) + cy * Math.cos(a) + 780;
+      return [x - e, y - e, x + e, y + e];
+    });
+  });
+}
 const probs = new Map();
 let nanAt = null, maxChars = 0;
 for (const motion of ['当日だけ動く', '日付の間を直線で']) {

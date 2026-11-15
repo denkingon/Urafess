@@ -11,6 +11,8 @@ import { esc, glyph, say, sent, setHTML } from '../ui';
 export interface AccountDeps {
   gameId: string;
   identity(): Identity | null;
+  /** 名前の状態（due＝主催者に付け直すよう言われた・shamed＝主催者が名前を変えた） */
+  nameState(): 'ok' | 'due' | 'shamed';
   /** 名前を変えた（このスマホの覚えている名前も替える） */
   renamed(name: string): void;
   /** このスマホから出る（名簿には残る） */
@@ -32,6 +34,8 @@ const ERROR_TEXT: Record<AccountError | 'network', [string, string]> = {
   busy: ['試合中はできない。結果のあとで', 'Not during a match. Try after the result'],
   'bad-code': ['合言葉が違うか、切れている。古いスマホでもう一度出す', 'Wrong or expired code. Get a new one on your old phone'],
   locked: ['打ち間違いが多い。10分たってから', 'Too many tries. Wait 10 minutes'],
+  banned: ['その名前は使えない。ちがう名前にする', 'That name is not allowed. Pick another one'],
+  'name-locked': ['主催者が名前を変えたので、自分では変えられない', 'The host changed your name. You cannot change it'],
   'bad-input': ['うまく送れなかった', 'Something went wrong'],
   network: ['つながらない。電波のいい所でもう一度', 'Offline. Try again with a better signal'],
 };
@@ -81,6 +85,7 @@ export function createAccount(deps: AccountDeps): AccountScreen {
     <div class="ac-top">
       <button type="button" class="quiet ac-back" data-a="close">${say(['← もどる', 'BACK'])}</button>
     </div>
+    <p class="ac-due" data-k="due" hidden>${sent(['主催者から：名前を付け直す。新しい名前を入れるまで、ほかの画面には戻れない', 'From the host: pick a new name. You can go back after you change it'])}</p>
     <h1 class="ac-name" data-k="name"></h1>
     <p class="note" data-k="since"></p>
 
@@ -177,12 +182,24 @@ export function createAccount(deps: AccountDeps): AccountScreen {
       setHTML(q('gotCaught'), String(s.gotCaught));
       setHTML(q('freed'), String(s.freed));
     }
-    const locked = inMatchNow || (view?.busy ?? false);
-    renameBtn.disabled = busy || locked;
-    input.disabled = busy || locked;
+    const ns = view?.nameState && view.nameState !== 'ok' ? view.nameState : deps.nameState();
+    const due = ns === 'due';
+    const shamed = ns === 'shamed';
+    const locked = (inMatchNow || (view?.busy ?? false)) && !due;
+    q('due').hidden = !due;
+    (el.querySelector('[data-a="close"]') as HTMLElement).hidden = due;
+    renameBtn.disabled = busy || locked || shamed;
+    input.disabled = busy || locked || shamed;
     leaveBtn.disabled = busy || locked;
     handoffBtn.disabled = busy;
-    setHTML(q('renameNote'), locked ? sent(['試合中は変えられない。結果のあとで', 'Not during a match']) : sent(['名前は名簿の中で1人1つ', 'Each name belongs to one person']));
+    setHTML(
+      q('renameNote'),
+      shamed
+        ? sent(['主催者が名前を変えた。自分では変えられない', 'The host changed your name. You cannot change it'])
+        : locked
+          ? sent(['試合中は変えられない。結果のあとで', 'Not during a match'])
+          : sent(['名前は名簿の中で1人1つ', 'Each name belongs to one person']),
+    );
     // 合言葉と残り時間
     const left = code ? code.until - Date.now() : 0;
     q('code').hidden = !code || left <= 0;
@@ -222,7 +239,7 @@ export function createAccount(deps: AccountDeps): AccountScreen {
     busy = false;
     if (r.ok) {
       deps.renamed(r.value.name);
-      if (view) view = { ...view, name: r.value.name };
+      if (view) view = { ...view, name: r.value.name, nameState: 'ok' };
       input.value = '';
       input.blur();
     } else {

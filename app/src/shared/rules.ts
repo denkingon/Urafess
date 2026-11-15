@@ -32,6 +32,27 @@ export function isValidRatio(r: unknown): r is Ratio {
 
 export const ROLE_NAME: Record<RoleId, string> = { oni: '鬼', runner: '逃走者' };
 
+export const isRoleId = (r: unknown): r is RoleId => r === 'oni' || r === 'runner';
+
+// ---------- 配役の希望 ----------
+//
+// 配役の前（待合室・結果発表）に、参加者が「逃走者がいい」「鬼がいい」を選べる。選ばなければ「どちらでも」。
+// 人数は主催者の割合のまま変えない。希望が枠より多い役は、その中からくじで枠の人数だけ通し、外れた人はもう一方の役になる。
+// 外れた人は、次の配役で先に通る（続けて外れた回数が多い人ほど先。通ったら 0 に戻る）。
+// 希望は今夜のあいだ残る（毎回選び直さなくていい）。新しい夜を始めると消える。
+
+/**
+ * 配役の決め方。主催者が切り替える（次の配役から効く）
+ * - wish：希望を聞く（割合は守る。枠より多い希望はくじ）
+ * - lot：くじだけ（希望を聞かない。前の版と同じ）
+ */
+export type WishMode = 'wish' | 'lot';
+export const DEFAULT_WISH_MODE: WishMode = 'wish';
+export const isWishMode = (m: unknown): m is WishMode => m === 'wish' || m === 'lot';
+
+/** 続けて外れた回数は、ここまで数える（これより上は同じ強さ） */
+export const WISH_MISS_MAX = 99;
+
 /** 1ラウンドの時間で区切られた段階（配役と結果発表は主催者が進める） */
 export const PHASES = [
   { id: 'escape', label: '逃走開始まで' },

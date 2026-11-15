@@ -106,4 +106,52 @@ describe('主催者の合言葉', () => {
     expect((await fetch(`${BASE}/api/game/${GAME}/photos`, { headers: { 'x-host-token': encodeHostKey(TOKEN) } })).status).toBe(200);
     expect((await fetch(`${BASE}/api/game/${GAME}/debug`, { headers: { 'x-host-token': encodeHostKey(TOKEN) } })).status).toBe(200);
   });
+
+  it('主催者画面で合言葉を変える：新しい合言葉で入れる。最初の合言葉も予備として効く。前に決めた合言葉は効かなくなる', async () => {
+    const change = (current: string | null, key: unknown) =>
+      fetch(`${BASE}/api/game/${GAME}/key`, {
+        method: 'POST',
+        headers: { ...(current === null ? {} : { 'x-host-token': encodeHostKey(current) }), 'content-type': 'application/json' },
+        body: JSON.stringify({ key }),
+      });
+
+    // 主催者でなければ変えられない
+    expect((await change(null, 'Urafess no')).status).toBe(403);
+    expect((await change('ちがう合言葉', 'Urafess no')).status).toBe(403);
+    expect((await check('Urafess no')).status).toBe(403);
+
+    // 短い・長い・字でないものは受けない（変わらない）
+    for (const bad of ['urafess', '1234', 'u r a f', '', 12345678]) {
+      const res = await change(TOKEN, bad);
+      expect(res.status, String(bad)).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe('short');
+    }
+    expect(((await (await change(TOKEN, 'a'.repeat(65))).json()) as { error: string }).error).toBe('long');
+    expect((await check('urafess')).status).toBe(403);
+
+    // 変える
+    expect((await change(TOKEN, 'Urafess no')).status).toBe(204);
+    for (const typed of ['Urafess no', 'urafessno', 'URAFESS NO', 'ｕｒａｆｅｓｓ　ｎｏ']) expect((await check(typed)).status, typed).toBe(204);
+    expect((await check('urafess')).status).toBe(403);
+    // 最初の合言葉（サーバーに入れてあるもの）は予備の鍵として効く
+    expect((await check(TOKEN)).status).toBe(204);
+
+    // 新しい合言葉でつなげる・記録も取れる
+    const fresh = host('urafessno');
+    await waitFor('新しい合言葉で主催者として入る', () => fresh.state.phase === 'ready' && fresh.state.host !== null);
+    const csv = await (await fetch(`${BASE}/api/game/${GAME}/log`, { headers: { 'x-host-token': encodeHostKey('Urafess no') } })).text();
+    expect(csv).toContain('主催者の合言葉を変えた');
+    expect(csv).not.toContain('Urafess no');
+    expect(csv.toLowerCase()).not.toContain('urafessno');
+
+    // 新しい合言葉で、もう一度変えられる。前に決めた合言葉は効かなくなる
+    expect((await change('urafessno', 'noprecedent')).status).toBe(204);
+    expect((await check('noprecedent')).status).toBe(204);
+    expect((await check('Urafess no')).status).toBe(403);
+    expect((await check(TOKEN)).status).toBe(204);
+
+    // ほかの部屋には効かない（部屋ごとのもの）
+    expect((await fetch(`${BASE}/api/game/${GAME}other/key`, { headers: { 'x-host-token': encodeHostKey('noprecedent') } })).status).toBe(403);
+    expect((await fetch(`${BASE}/api/game/${GAME}other/key`, { headers: { 'x-host-token': encodeHostKey(TOKEN) } })).status).toBe(204);
+  });
 });

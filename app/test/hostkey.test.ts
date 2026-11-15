@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { encodeHostKey, hostKeyCandidates, normalizeHostKey, sameHostKey } from '../src/shared/hostkey';
+import { checkNewHostKey, encodeHostKey, HOST_KEY_MIN, hostKeyCandidates, normalizeHostKey, sameHostKey } from '../src/shared/hostkey';
 
 const KEY = 'urafess with no 前例';
 
@@ -54,5 +54,24 @@ describe('主催者の合言葉の合わせ方', () => {
     expect(hostKeyCandidates('a%20b')).toEqual(['a b', 'a%20b']);
     expect(hostKeyCandidates(null)).toEqual([]);
     expect(hostKeyCandidates('')).toEqual([]);
+  });
+});
+
+describe('主催者画面で決める新しい合言葉', () => {
+  it('そろえたあと8文字以上なら使える（空白は数えない）', () => {
+    expect(HOST_KEY_MIN).toBe(8);
+    expect(checkNewHostKey('Urafess no')).toBe('ok'); // urafessno＝9文字
+    expect(checkNewHostKey('noprecedent')).toBe('ok');
+    expect(checkNewHostKey('前例のない夜の祭り')).toBe('ok');
+  });
+
+  it('短いもの・空白でかさ増ししたもの・字でないものは受けない', () => {
+    for (const v of ['', 'urafess', '1234', 'u r a f e s s', '        ', 'ａｂｃ　ｄｅｆ']) expect(checkNewHostKey(v), v).toBe('short');
+    for (const v of [undefined, null, 12345678, {}]) expect(checkNewHostKey(v)).toBe('short');
+  });
+
+  it('長すぎるものは受けない', () => {
+    expect(checkNewHostKey('a'.repeat(64))).toBe('ok');
+    expect(checkNewHostKey('a'.repeat(65))).toBe('long');
   });
 });

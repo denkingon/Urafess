@@ -13,13 +13,16 @@ import { Sensors } from './sense';
 import { callAccount, createAccount, errorText } from './views/account';
 import { createAnnounce } from './views/announce';
 import { createCapture } from './views/capture';
+import { createChat } from './views/chat';
 import { createGlow } from './views/glow';
-import { createHost } from './views/host';
+import { createHost, type HostActions } from './views/host';
+import { createHQ } from './views/hq';
 import { createJail } from './views/jail';
 import { createInstall, type InstallScreen } from './views/install';
 import { createJoin, type EntryMode } from './views/join';
 import { createLab } from './views/lab';
 import { createMission, createPhotoLoader } from './views/mission';
+import { createWish } from './views/wish';
 import { mountBackdrop } from './views/backdrop';
 import { createRunLab } from './views/lab-run';
 import { createPhone } from './views/phone';
@@ -165,6 +168,7 @@ function startPlayer(): void {
   const account = createAccount({
     gameId,
     identity: () => client.state.identity,
+    nameState: () => client.state.nameState,
     renamed: (name) => client.setName(name),
     forget: () => {
       accountOpen = false;
@@ -209,18 +213,31 @@ function startPlayer(): void {
   // 牢屋：牢屋の人はマイクで聞き、外の逃走者は「助ける」で鳴らす
   const jail = createJail({ client, emitter, listener });
   phone.slot.append(jail.el, capture.el);
+  // 配役の希望：次の配役の前（待合室・結果発表）に、逃走者／鬼の板を出す
+  const wish = createWish({ client });
+  phone.slot.append(wish.el);
   // ミッション（集合写真）：題と「写真を撮る」は長押しの上に、成功した写真は結果発表の間だけ真ん中に
+  // 走ると光る・全体の地図のセンサー（ミッションの「範囲」も、自分が中か外かをこの位置で見る）
+  const sensors = new Sensors();
   const mission = createMission({
     gameId,
     identity: () => client.state.identity,
     serverNow: () => client.serverNow() ?? Date.now(),
+    meetStart: (at) => client.meetStart(at),
+    meetEnd: (at) => client.meetEnd(at),
+    position: () => {
+      const p = sensors.position(Date.now());
+      return p ? { lat: p.lat, lon: p.lon } : null;
+    },
   });
   phone.slot.prepend(mission.card);
   phone.stage.prepend(mission.gallery);
   // 走ると光る：走っているかはこのスマホが決め、光っている間だけ位置を送る
-  const sensors = new Sensors();
-  const glow = createGlow({ sensors, root: phone.el });
+  const glow = createGlow({ sensors, root: phone.el, onDisqualified: () => client.disqualified(), onReported: () => client.reportedToJail() });
   phone.stage.append(glow.el);
+  // チャット：1行の帯は長押しの板のすぐ上、開いた板は真ん中の絵の場所（長押しの板は出したまま）
+  const chat = createChat({ client, sensors, root: phone.el });
+  phone.slot.before(chat.panel, chat.strip);
   const reporter = new RunReporter();
   let lastView: PhoneView | null = null;
   let lastMatePos = 0;
@@ -299,9 +316,11 @@ function startPlayer(): void {
       askedPersist = true;
       void navigator.storage?.persist?.().catch(() => false);
     }
+    // 主催者に「名前を付け直させる」と言われた：試合中でも、付け直すまで自分のページ（名前を変える）を出す
+    if (s.identity && s.nameState === 'due' && !accountOpen) openAccount();
     if (accountOpen) {
       // 試合が始まった（今夜に入っている）・このスマホが名前を忘れた → 自分のページを閉じる
-      const inGame = s.phase === 'ready' && inMatch(s.game?.stage);
+      const inGame = s.phase === 'ready' && inMatch(s.game?.stage) && s.nameState !== 'due';
       if (!s.identity || inGame) {
         accountOpen = false;
       } else {
@@ -329,7 +348,9 @@ function startPlayer(): void {
       phone.mine.hidden = true;
       phone.update(waiting);
       mission.update(null, null);
+      wish.update(waiting, s);
       glow.update(waiting, s, client.serverNow());
+      chat.update(null, s, Date.now());
       return;
     }
     show(phone.el);
@@ -348,7 +369,9 @@ function startPlayer(): void {
     capture.update(view, s);
     mission.update(s.game, s.me);
     jail.update(view, s);
+    wish.update(view, s);
     glow.update(view, s, client.serverNow());
+    chat.update(view, s, client.serverNow() ?? Date.now());
     // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）
     if (s.me.code && s.me.code !== preparedCode) {
       preparedCode = s.me.code;
@@ -398,15 +421,18 @@ function startLab(): void {
 // ---------- 主催者 ----------
 
 function startHost(token: string): void {
-  const client = makeClient({ kind: 'host', token });
+  // 合言葉を変えたら、つなぎ直しとヘッダーも新しい合言葉を使う（mode は GameClient がつなぎ直すたびに読む）
+  const mode = { kind: 'host' as const, token };
+  const client = makeClient(mode);
   // 合言葉に日本語が入っていると、そのままではヘッダーに載せられない（記録の保存と写真が送る前に失敗する）
   const hostHeaders = { 'x-host-token': encodeHostKey(token) };
   startUpdateChecks(() => !inMatch(client.state.game?.stage));
   const photos = createPhotoLoader(gameId, () => hostHeaders);
   // 走ると光る：主催者の画面の地図の真ん中（位置）と向き。主催者は光らない
   const sensors = new Sensors();
-  const host = createHost({
+  const hostActions: HostActions = {
     command: (op, extra) => client.command(op, extra),
+    chat: (to, text) => client.hostChat(to, text),
     downloadLog: async () => {
       const res = await fetch(`/api/game/${gameId}/log`, { headers: hostHeaders, cache: 'no-store' });
       if (!res.ok) throw new Error(`log ${res.status}`);
@@ -425,7 +451,45 @@ function startHost(token: string): void {
       if (!res.ok) throw new Error(`photos ${res.status}`);
       return res.json();
     },
-  }, sensors);
+    changeKey: async (value) => {
+      try {
+        const res = await fetch(`/api/game/${gameId}/key`, {
+          method: 'POST',
+          headers: { ...hostHeaders, 'content-type': 'application/json' },
+          body: JSON.stringify({ key: value }),
+          cache: 'no-store',
+        });
+        if (res.status === 204) {
+          mode.token = value;
+          hostHeaders['x-host-token'] = encodeHostKey(value);
+          storage.set('urafess:host-token', value);
+          return 'ok';
+        }
+        if (res.status === 403) return 'denied';
+        if (res.status === 400) return ((await res.json().catch(() => null)) as { error?: string } | null)?.error === 'long' ? 'long' : 'short';
+        return 'offline';
+      } catch {
+        return 'offline';
+      }
+    },
+  };
+  // 本部（新しい主催者画面）：前の画面は残してあり、この端末で切りかえる（/host?hq=1 でも本部になる）
+  if (params.get('hq') === '1') storage.set('urafess:hq', '1');
+  const useHQ = storage.get('urafess:hq') === '1';
+  const setHQ = (on: boolean) => {
+    if (on) storage.set('urafess:hq', '1');
+    else storage.remove('urafess:hq');
+    location.replace(location.pathname + (gameId === 'main' ? '' : `?g=${gameId}`));
+  };
+  const host = useHQ ? createHQ(hostActions, sensors, () => setHQ(false)) : createHost(hostActions, sensors);
+  if (!useHQ) {
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'ghost';
+    go.textContent = '新しい本部 HQ を試す';
+    go.addEventListener('click', () => setHQ(true));
+    host.el.querySelector('.host-head')?.after(go);
+  }
   root.replaceChildren(host.el);
   // 主催者の画面にも全員への知らせを出す（確保の音も鳴る。音のために、どこかのタップで一度準備する）
   const chime = new AnnounceChime();
@@ -439,7 +503,7 @@ function startHost(token: string): void {
     if (s.phase === 'denied') {
       screenKeeper.set(false);
       storage.remove('urafess:host-token');
-      showTokenForm(WRONG_KEY, token);
+      showTokenForm(WRONG_KEY, mode.token);
       return false;
     }
     if (s.host && storage.get(HOST_DEVICE_KEY) !== '1') storage.set(HOST_DEVICE_KEY, '1');
@@ -451,6 +515,7 @@ function startHost(token: string): void {
       lastReject: s.lastReject,
       glow: s.glow,
       mates: s.mates,
+      chat: s.chat,
     });
     announce.update({ news: s.game?.news ?? null, aboutMe: false, serverNow: client.serverNow() ?? Date.now(), freeRunner: false, busy: false });
   });

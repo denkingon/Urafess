@@ -1,7 +1,9 @@
 import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
+import { CHAT_KEEP, type ChatCh, type ChatJail, type ChatMode, type ChatMsg } from '../../shared/chat';
+import type { MeetScope, MissionKind } from '../../shared/mission';
 import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
-import { SILENCE_LIMIT_MS, type AnnounceSettings } from '../../shared/rules';
+import { SILENCE_LIMIT_MS, type AnnounceSettings, type RoleId, type WishMode } from '../../shared/rules';
 
 /**
  * しくみの層。接続・時計合わせ・状態だけを持ち、見た目は一切知らない。
@@ -74,6 +76,8 @@ export interface ClientState {
   joinError: string | null;
   /** taken・reclaiming のときの、名簿にある名前 */
   takenName: string | null;
+  /** 名前の状態：ok／due＝主催者に付け直すよう言われた／shamed＝主催者が名前を変えた */
+  nameState: 'ok' | 'due' | 'shamed';
   notice: Notice | null;
   /** 手動で選ぶための一覧（頼んだあとに届く）。seq は届くたびに増える */
   roster: { seq: number; people: RosterEntry[] } | null;
@@ -81,7 +85,15 @@ export interface ClientState {
   glow: { seq: number; s: number; runs: GlowEntry[] } | null;
   /** 全体の地図：見えてよい人の位置（届くたびに seq が増える）。scope は誰の位置か（同じ役・全員・誰も） */
   mates: { seq: number; s: number; scope: MatesScope; people: MateEntry[] } | null;
+  /** チャット：いま見えてよい分（古い順）と、同じ役の仲間。届くたびに seq が増える。古いサーバーからは来ない（null のまま） */
+  chat: { seq: number; msgs: ChatMsg[]; team: { num: number; name: string }[] } | null;
 }
+
+/** チャットで送るもの（参加者）。何を送れるかはサーバーが決める */
+export type ChatSend =
+  | { ch: ChatCh; card: string; person?: number; place?: string; pos?: { lat: number; lon: number; acc: number } | null }
+  | { ch: 'team'; emoji: number[] }
+  | { ch: 'team'; digit: string };
 
 const CONNECTING = 0;
 const OPEN = 1;
@@ -130,6 +142,7 @@ export class GameClient {
   private sawHeartbeat = false;
   private roughOffset: number | null = null;
   private ackedAssignId = 0;
+  private ackedRole: RoleId | null = null;
   private pendingJoinName: string | null = null;
   /** 名前のボタンを押した（つなぎ直したら送り直す） */
   private pendingEnter = false;
@@ -139,6 +152,7 @@ export class GameClient {
   private holding: { at: number | undefined } | null = null;
   /** 押している「助けて」「助ける」（押し始めのサーバー時刻）。つなぎ直したら送り直す */
   private rescuing: { at: number | undefined } | null = null;
+  private meeting: { at: number | undefined } | null = null;
   /** 最近離した長押し。切れていて届いたか分からないので、つなぎ直したら送り直す（サーバーは同じ押し始めを2回数えない） */
   private recentHolds: { start: number; end: number; doneAt: number }[] = [];
   /** 送ったが、届いて効いたか分からない操作。つなぎ直して最初の状態を受け取ったとき、まだ効いていなければ送り直す */
@@ -148,6 +162,7 @@ export class GameClient {
   private rosterSeq = 0;
   private glowSeq = 0;
   private matesSeq = 0;
+  private chatSeq = 0;
   /** 走ると光る：最後に知らせたセンサーの状態（つなぎ直したら送り直す） */
   private senseState: { motion: SenseState; geo: SenseState } | null = null;
   private stopped = false;
@@ -169,10 +184,12 @@ export class GameClient {
       lastReject: null,
       joinError: null,
       takenName: null,
+      nameState: 'ok',
       notice: null,
       roster: null,
       glow: null,
       mates: null,
+      chat: null,
     };
   }
 
@@ -260,10 +277,13 @@ export class GameClient {
   /** 自分のページで名前を変えた（サーバーからも届くが、切れていてもすぐ画面に出す） */
   setName(name: string): void {
     const identity = this.state.identity;
-    if (!identity || identity.name === name) return;
+    if (!identity) return;
+    // 自分で付け直せた＝主催者の「付け直させる」は済んだ
+    const nameState = this.state.nameState === 'due' ? 'ok' : this.state.nameState;
+    if (identity.name === name && nameState === this.state.nameState) return;
     const next = { ...identity, name };
     this.saveIdentity(next);
-    this.state = { ...this.state, identity: next };
+    this.state = { ...this.state, identity: next, nameState };
     this.emit();
   }
 
@@ -308,6 +328,20 @@ export class GameClient {
     const start = this.rescuing.at;
     this.rescuing = null;
     this.send({ t: 'rescue', on: false, at: this.toServer(localAt), start });
+  }
+
+  /** ミッション（合流）の長押しを始めた（HOLD_MIN_MS 押し続けたら呼ぶ） */
+  meetStart(localAt: number): void {
+    const at = this.toServer(localAt);
+    this.meeting = { at };
+    this.send({ t: 'meet', on: true, at });
+  }
+
+  meetEnd(localAt: number): void {
+    if (!this.meeting) return;
+    const start = this.meeting.at;
+    this.meeting = null;
+    this.send({ t: 'meet', on: false, at: this.toServer(localAt), start });
   }
 
   holdStart(localAt: number): void {
@@ -374,6 +408,45 @@ export class GameClient {
     this.send({ t: 'sense', motion, geo });
   }
 
+  /** 範囲の外に20秒いて失格になったことを伝える（同じ配役のうちは何度送ってもサーバーが1回だけ数える） */
+  disqualified(): void {
+    this.send({ t: 'dq' });
+  }
+
+  /** 失格のあと牢屋に出頭したことを伝える（何度送ってもサーバーが1回だけ数える） */
+  reportedToJail(): void {
+    this.send({ t: 'dq-ok' });
+  }
+
+  /**
+   * 配役の希望：次の配役でなりたい役を送る（null＝どちらでも）。届いたかどうかは、返ってくる状態（me.wish）で分かる。
+   * 切れている間は送れない（false を返す。画面の板は押せなくしてある）
+   */
+  wish(role: RoleId | null): boolean {
+    if (!this.isOpen()) return false;
+    this.send({ t: 'wish', role });
+    return true;
+  }
+
+  /** チャットを送る（参加者）。切れている間は送れない（false）。届いた分は、サーバーから戻ってきて画面に出る */
+  chat(m: ChatSend): boolean {
+    if (!this.isOpen()) return false;
+    if ('card' in m) {
+      const { pos, ...rest } = m;
+      this.send({ t: 'chat', ...rest, ...(pos ? { lat: pos.lat, lon: pos.lon, acc: Math.round(pos.acc) } : {}) });
+    } else {
+      this.send({ t: 'chat', ...m });
+    }
+    return true;
+  }
+
+  /** チャットを送る（本部）。to＝all・oni・runner・pid:<その人> */
+  hostChat(to: string, text: string): boolean {
+    if (!this.isOpen()) return false;
+    this.send({ t: 'chat', ch: 'hq', to, text });
+    return true;
+  }
+
   /** 逃走者が「捕まった」を取り下げる */
   cancelClaim(): void {
     this.pending = { kind: 'cancel', at: this.deps.now() };
@@ -409,15 +482,31 @@ export class GameClient {
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
       announce?: AnnounceSettings;
+      wishMode?: WishMode;
+      pids?: string[];
+      role?: RoleId | null;
+      tag?: string;
+      on?: boolean;
       area?: [number, number][] | null;
+      plan?: import('../../shared/shrink').ShrinkPlan;
+      layer?: 'area' | 'jail';
       pid?: string;
       by?: string;
       rid?: string;
       ok?: boolean;
       title?: string;
+      word?: string;
       photo?: string;
       free?: boolean;
       n?: number;
+      chatMode?: ChatMode;
+      chatJail?: ChatJail;
+      places?: string[];
+      kind?: MissionKind;
+      scope?: MeetScope;
+      zone?: [number, number][];
+      need?: number;
+      secs?: number | null;
     } = {},
   ): boolean {
     const game = this.state.game;
@@ -484,6 +573,7 @@ export class GameClient {
       this.lastRecvAt = this.deps.now();
       // つなぎ直したら受け取りの返事も送り直す（サーバー側で重複は無視される）
       this.ackedAssignId = 0;
+      this.ackedRole = null;
       this.state = { ...this.state, online: true };
       this.hello();
       this.burst(BURST_ON_CONNECT, BURST_JITTER_MS);
@@ -556,6 +646,7 @@ export class GameClient {
       else this.send({ t: 'hold', on: false, at: this.toServer(now), resume: true });
       // 「助けて」「助ける」も同じ：押していれば送り直し、押していなければ「離した」（切れている間に離した分を閉じる）
       if (this.rescuing) this.send({ t: 'rescue', on: true, at: this.rescuing.at });
+      if (this.meeting) this.send({ t: 'meet', on: true, at: this.meeting.at });
       else this.send({ t: 'rescue', on: false, at: this.toServer(now) });
       // 選んだ・取り下げたが効いたかは、最初に届く状態を見てから決めて送り直す
       this.resendAfterSnap = this.pending !== null;
@@ -666,7 +757,7 @@ export class GameClient {
         this.pendingEnter = false;
         this.pendingReclaimName = null;
         this.saveIdentity(identity);
-        this.state = { ...this.state, identity, takenName: null, joinError: null };
+        this.state = { ...this.state, identity, takenName: null, joinError: null, nameState: msg.ns ?? 'ok' };
         break;
       }
       case 'known': {
@@ -679,12 +770,24 @@ export class GameClient {
           ...this.state,
           identity,
           me: null,
+          chat: null,
           phase: this.pendingEnter ? 'joining' : 'known',
           joinError: null,
           takenName: null,
+          nameState: msg.ns ?? 'ok',
         };
         break;
       }
+      case 'bad-name':
+        // 入れた名前に使えない言葉が入っている
+        this.pendingJoinName = null;
+        this.state = {
+          ...this.state,
+          phase: 'need-name',
+          takenName: null,
+          joinError: 'その名前は使えない。ちがう名前で入る。／That name is not allowed.',
+        };
+        break;
       case 'taken':
         // 入れた名前は名簿のほかの人のもの。「前の◯◯？」と聞く
         this.pendingJoinName = null;
@@ -739,8 +842,10 @@ export class GameClient {
         }
         // 役を受け取ったことをサーバーに返す（主催者画面の「受け取り済み」）
         const me = msg.me;
-        if (me && me.role && me.assignId === msg.game.assignId && this.ackedAssignId !== me.assignId) {
+        // 同じ配役のまま主催者が役を動かしたときも、新しい役を受け取ったことを返し直す
+        if (me && me.role && me.assignId === msg.game.assignId && (this.ackedAssignId !== me.assignId || this.ackedRole !== me.role)) {
           this.ackedAssignId = me.assignId;
+          this.ackedRole = me.role;
           this.send({ t: 'ack', assignId: me.assignId });
         }
         break;
@@ -761,6 +866,14 @@ export class GameClient {
       case 'glow':
         this.state = { ...this.state, glow: { seq: ++this.glowSeq, s: msg.s, runs: Array.isArray(msg.runs) ? msg.runs : [] } };
         break;
+      case 'chat': {
+        const got = Array.isArray(msg.msgs) ? msg.msgs : [];
+        const prev = msg.reset ? [] : (this.state.chat?.msgs ?? []);
+        const seen = new Set(prev.map((m) => m.id));
+        const msgs = [...prev, ...got.filter((m) => !seen.has(m.id))].sort((a, b) => a.id - b.id).slice(-CHAT_KEEP * 2);
+        this.state = { ...this.state, chat: { seq: ++this.chatSeq, msgs, team: msg.reset ? (msg.team ?? []) : (this.state.chat?.team ?? []) } };
+        break;
+      }
       case 'mates':
         this.state = {
           ...this.state,

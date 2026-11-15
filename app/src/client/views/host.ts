@@ -1,13 +1,13 @@
 import { SHOW_EXAMPLE, SOUND_NAME } from '../../shared/announce';
-import { VIA_NAME } from '../../shared/capture';
+import { CAPTURE_PHASE_INDEX, captureOpenAt, VIA_NAME } from '../../shared/capture';
 import type { GameView, HostOp, HostSummary, Winner } from '../../shared/protocol';
-import { allocateCounts } from '../../shared/allocate';
+import { allocateCounts, castCounts } from '../../shared/allocate';
+import { CAST_SORTS, castStatText, DEFAULT_TAGS, sortCast, TAG_MAX_LEN, TAGS_MAX, type CastSort } from '../../shared/cast';
 import {
   ANNOUNCE_DEFAULT,
   type AnnounceSettings,
   type AnnounceShow,
   type AnnounceSound,
-  CAMPUS_BOX,
   DEFAULT_RATIO,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
@@ -19,17 +19,48 @@ import {
   MATES_STALE_MS,
   RUN_STALE_MS,
   START_LEAD_MS,
+  type RoleId,
+  type WishMode,
 } from '../../shared/rules';
-import { isDone, positionAt } from '../../shared/schedule';
-import { MISSION_DEFAULT_TITLE, MISSION_TITLE_MAX, PHOTO_STATUS_NAME, PHOTO_STORE_MAX_BYTES, type PhotoStatus } from '../../shared/mission';
-import { glowPhase, hostStatus } from '../../shared/viewmodel';
+import { formatClock, isDone, positionAt } from '../../shared/schedule';
+import {
+  MISSION_DEFAULT_TITLES,
+  MISSION_KIND_NAME,
+  MISSION_TITLE_MAX,
+  missionClock,
+  PHOTO_STATUS_NAME,
+  PHOTO_STORE_MAX_BYTES,
+  ZONE_NEED_MAX,
+  type MeetScope,
+  type MissionKind,
+  type PhotoStatus,
+} from '../../shared/mission';
+import { glowPhase, hostStatus, wishNote } from '../../shared/viewmodel';
+import { checkNewHostKey, HOST_KEY_MIN } from '../../shared/hostkey';
 import type { ClientState } from '../core/game-client';
 import type { Sensors } from '../sense';
-import { createLightsBoard } from './glow';
-import { createOverview } from './overview';
+import { createChatHost, type ChatHostScreen } from './chat-host';
+import type { ChatJail, ChatMode } from '../../shared/chat';
+import { createLightsBoard, openZone } from './glow';
+import { createOverview, RING_BOX } from './overview';
 import { AREA_MAX_PTS, AREA_MIN_PTS, isFarOutside } from '../../shared/area';
+import {
+  DEFAULT_SHRINK_PLAN,
+  midOf,
+  scalePts,
+  SHRINK_FINAL_AREAS,
+  SHRINK_MAX_TIMES,
+  shrinkActive,
+  timeSteps,
+  ZONE_MOVE_MS,
+  ZONE_STEP_AREA,
+  ZONE_WARN_MS,
+  zoneAt,
+  type ShrinkPlan,
+} from '../../shared/shrink';
 import { distanceM } from '../../shared/run';
 import { bigFontSize } from './phone';
+import { esc } from '../ui';
 
 /** 主催者画面の大きい数字・文字の上限（「逃走者の勝ち」など長いときは枠に収まるまで縮める） */
 const HOST_BIG_MAX_PX = 56;
@@ -51,35 +82,59 @@ export interface HostInput {
   glow?: ClientState['glow'];
   /** 全体の地図：全員の位置（主催者には役つきで届く） */
   mates?: ClientState['mates'];
+  /** チャット：全部の回線（主催者には送った人と役つきで届く） */
+  chat?: ClientState['chat'];
 }
 
 export interface HostActions {
   command(
     op: HostOp,
     extra?: {
+      plan?: ShrinkPlan;
       winner?: Winner;
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
       announce?: AnnounceSettings;
+      wishMode?: WishMode;
+      pids?: string[];
+      role?: RoleId | null;
+      tag?: string;
+      on?: boolean;
       area?: [number, number][] | null;
+      layer?: 'area' | 'jail';
       pid?: string;
       by?: string;
       rid?: string;
       ok?: boolean;
       title?: string;
+      word?: string;
       photo?: string;
       free?: boolean;
       n?: number;
+      chatMode?: ChatMode;
+      chatJail?: ChatJail;
+      places?: string[];
+      kind?: MissionKind;
+      scope?: MeetScope;
+      zone?: [number, number][];
+      need?: number;
+      secs?: number | null;
     },
   ): void;
+  /** チャット：本部から送る（to＝all・oni・runner・pid:<その人>）。古い呼び出し側には無い */
+  chat?(to: string, text: string): boolean;
   /** 1イベント＝1行の記録を CSV で保存する */
   downloadLog(): Promise<void>;
   /** ミッションの写真を取り出して、画面で使える URL にする */
   photo(id: string): Promise<string | null>;
   /** 全部の夜の写真の一覧 */
   album(): Promise<AlbumData>;
+  /** 主催者の合言葉を変える。ok＝変えた（このスマホは新しい合言葉を覚える） */
+  changeKey(value: string): Promise<KeyChangeResult>;
 }
+
+export type KeyChangeResult = 'ok' | 'short' | 'long' | 'denied' | 'offline';
 
 export interface AlbumData {
   bytes: number;
@@ -89,14 +144,23 @@ export interface AlbumData {
 export interface HostScreen {
   el: HTMLElement;
   update(input: HostInput): void;
+  /** チャットの部品（本部が置き場所を変える・要対応に出す） */
+  chat?: ChatHostScreen;
 }
+
+const ROLE_LABEL: Record<RoleId, string> = { oni: '鬼', runner: '逃走者' };
 
 const REASONS: Record<string, string> = {
   stale: '別の主催者画面が先に操作した。今の状態に更新したので、もう一度確かめて押す。',
   'not-allowed': '今の段階ではできない操作。',
   'no-participants': 'まだ誰も入室していない。',
   'nobody-jailed': '牢屋に誰もいない。',
+  'not-game': '合流は配役のあと〜ゲームの段階の間、範囲は追跡が始まってからゲームの段階の間にだけ出せる。',
+  'too-few': '捕まっていない逃走者が2人いない。',
+  'bad-zone': '範囲の形が正しくない。地図を押して角を3つ以上足す。',
   'bad-input': '入力が正しくない。',
+  'empty-role': 'その決め方だと、鬼か逃走者が0人になる。',
+  'too-many-tags': `印は1人に${TAGS_MAX}つまで。`,
   'not-found': 'その人は見つからない（もう待っていない・つながっていない）。',
 };
 
@@ -166,6 +230,41 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       <p class="note" data-k="annNote"></p>
       <button type="button" data-k="annTest">全員のスマホで試す（帯と音）</button>
     </div>
+    <div class="mic-mode wish-mode">
+      <span>配役の決め方</span>
+      <div class="seg" role="group" aria-label="配役の決め方">
+        <button type="button" data-wishmode="wish" aria-pressed="false">希望を聞く</button>
+        <button type="button" data-wishmode="lot" aria-pressed="false">くじだけ</button>
+      </div>
+      <p class="note" data-k="wishNote"></p>
+    </div>
+    <section class="cap-host cast-host" data-k="cast" hidden>
+      <div class="cap-host-head"><b>配役をいじる</b><span data-k="castNow"></span></div>
+      <p class="note" data-k="castNote"></p>
+      <div class="cast-sort" role="group" aria-label="並べ方">
+        ${CAST_SORTS.map((x) => `<button type="button" data-sort="${x.id}" aria-pressed="false">${x.label}</button>`).join('')}
+      </div>
+      <div class="cast-pick">
+        <label>上から<input type="number" min="1" max="999" step="1" value="3" inputmode="numeric" data-k="castTop" aria-label="上から選ぶ人数">人</label>
+        <button type="button" data-cast="top">選ぶ</button>
+        <button type="button" data-cast="all">全員</button>
+        <button type="button" data-cast="none">選ばない</button>
+      </div>
+      <div class="cast-list" data-k="castList"></div>
+      <div class="cast-act" data-k="castAct">
+        <b data-k="castSel"></b>
+        <div class="cast-roles">
+          <button type="button" data-cast="oni"></button>
+          <button type="button" data-cast="runner"></button>
+          <button type="button" data-cast="lot" class="ghost">指名を外す</button>
+        </div>
+        <div class="cast-tags" data-k="castTags"></div>
+        <form data-k="castTagForm">
+          <input type="text" maxlength="${TAG_MAX_LEN}" placeholder="新しい印（${TAG_MAX_LEN}文字まで）" aria-label="新しい印">
+          <button type="submit">付ける</button>
+        </form>
+      </div>
+    </section>
     <details class="durations">
       <summary>時間の設定</summary>
       <form>
@@ -183,15 +282,45 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       </form>
     </details>
     <section class="cap-host area-host" data-k="area">
-      <div class="cap-host-head"><b>遊ぶ範囲</b><span data-k="areaNow"></span></div>
+      <div class="cap-host-head"><b>遊ぶ範囲・牢屋</b><span data-k="areaNow"></span></div>
+      <div class="area-layers" role="tablist">
+        <button type="button" role="tab" data-layer="area" aria-selected="true"><b>遊ぶ範囲</b><span>まだ</span></button>
+        <button type="button" role="tab" data-layer="jail" aria-selected="false"><b>牢屋</b><span>まだ</span></button>
+      </div>
       <p class="note" data-k="areaNote">地図を押して角を足していく（3つ以上）。「決める」で全員の地図に線が出る。逃げ始めてからゲームの終わりまで、範囲の外へ 15m 出て3秒たった人のスマホに「戻れ」と戻る向きが出る。</p>
       <div class="area-map" data-k="areaMap"></div>
       <div class="area-btns">
         <button type="button" data-area="undo">1つ戻す</button>
         <button type="button" data-area="redo">描き直す</button>
-        <button type="button" data-area="campus">キャンパスの四角</button>
+        <button type="button" data-area="campus">メビウスリングの四角</button>
         <button type="button" data-area="save" class="primary">決める</button>
         <button type="button" data-area="none" class="ghost">範囲なしにする</button>
+      </div>
+      <div class="shrink-host" data-k="shrink">
+        <div class="cap-host-head"><b>範囲の縮小</b><span data-k="shrinkNow"></span></div>
+        <div class="mic-mode">
+          <span>時間で</span>
+          <div class="seg" role="group" aria-label="時間で縮む回数">
+            ${Array.from({ length: SHRINK_MAX_TIMES + 1 }, (_, i) => `<button type="button" data-shrink-times="${i}" aria-pressed="false">${i === 0 ? '縮まない' : `${i}回`}</button>`).join('')}
+          </div>
+        </div>
+        <div class="mic-mode">
+          <span>最後の広さ</span>
+          <div class="seg" role="group" aria-label="時間で縮み終えたときの広さ">
+            ${SHRINK_FINAL_AREAS.map((a) => `<button type="button" data-shrink-final="${a}" aria-pressed="false">${a === 0.5 ? '半分' : `1/${Math.round(1 / a)}`}</button>`).join('')}
+          </div>
+        </div>
+        <div class="mic-mode">
+          <span>縮む先</span>
+          <div class="seg" role="group" aria-label="縮む先">
+            <button type="button" data-shrink-to="mid" aria-pressed="false">範囲の真ん中</button>
+            <button type="button" data-shrink-to="pick" aria-pressed="false">地図で選ぶ</button>
+            <button type="button" data-shrink-to="random" aria-pressed="false">毎回ランダム</button>
+          </div>
+        </div>
+        <label class="shrink-mission"><input type="checkbox" data-shrink-mission> ミッションの「成功」で1段縮む（広さ ×${ZONE_STEP_AREA}）</label>
+        <p class="note" data-k="shrinkNote"></p>
+        <button type="button" class="wide" data-act="shrink-now">今すぐ1段縮める</button>
       </div>
     </section>
     <section class="cap-host" data-k="cap" hidden>
@@ -216,11 +345,41 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     </section>
     <section class="cap-host mission-host" data-k="missionPhoto">
       <div class="cap-host-head"><b>ミッション</b><span data-k="missionNow"></span></div>
+      <div class="mission-kinds" role="tablist" aria-label="ミッションの種類" data-k="missionKinds">
+        <button type="button" role="tab" data-kind="photo" aria-selected="true"><b>集合写真</b><span>撮って送る</span></button>
+        <button type="button" role="tab" data-kind="meet" aria-selected="false"><b>合流</b><span>2人で長押し</span></button>
+        <button type="button" role="tab" data-kind="zone" aria-selected="false"><b>範囲</b><span>締め切りに集まる</span></button>
+      </div>
       <form data-k="missionForm">
-        <input type="text" maxlength="${MISSION_TITLE_MAX}" placeholder="${MISSION_DEFAULT_TITLE}" data-k="missionTitle" aria-label="ミッションの題">
+        <input type="text" maxlength="${MISSION_TITLE_MAX}" placeholder="${MISSION_DEFAULT_TITLES.photo}" data-k="missionTitle" aria-label="ミッションの題">
         <button type="submit" data-k="missionGo">ミッションを出す</button>
       </form>
-      <button type="button" class="ghost" data-k="missionClose" hidden>締め切る（成功した写真はそのまま）</button>
+      <div class="mission-opts" data-k="missionOpts" hidden>
+        <div class="mission-opt" data-for="meet">
+          <span>組</span>
+          <div class="seg" data-k="meetScope">
+            <button type="button" data-scope="all" aria-pressed="true">全員を2人組に</button>
+            <button type="button" data-scope="one" aria-pressed="false">1組だけ</button>
+          </div>
+        </div>
+        <label class="mission-opt" data-for="zone">集まる人数
+          <input type="number" min="1" max="${ZONE_NEED_MAX}" step="1" value="3" inputmode="numeric" data-k="zoneNeed">人
+        </label>
+        <label class="mission-opt">締め切り
+          <select data-k="missionSecs" aria-label="締め切りまでの時間"></select>
+        </label>
+        <div data-for="zone">
+          <p class="note">地図を押して角を足していく（3つ以上）。出すと、鬼にも逃走者にも地図に光る枠が出る。描いた形はこのスマホが覚えている。</p>
+          <div class="area-map zone-map" data-k="zoneMap"></div>
+          <div class="area-btns">
+            <button type="button" data-zone="undo">1つ戻す</button>
+            <button type="button" data-zone="redo">描き直す</button>
+          </div>
+        </div>
+        <p class="note" data-k="kindNote"></p>
+      </div>
+      <div class="mission-live" data-k="missionLive" hidden></div>
+      <button type="button" class="ghost" data-k="missionClose" hidden>締め切る</button>
       <label class="mission-free-pick">「成功」で牢屋から
         <select data-k="missionFree" aria-label="成功で牢屋から出す人数">
           <option value="all" selected>全員を出す</option>
@@ -230,7 +389,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
           <option value="0">出さない</option>
         </select>
       </label>
-      <p class="note">届いた写真を見て「成功」か「やり直し」を押す。成功は全員の画面に名前が出る。ゲームの段階なら、上で選んだ人数を牢屋から出す（入った順。1枚の写真で1回だけ）。写真そのものは結果発表で全員の画面に出る。</p>
+      <p class="note" data-k="photoNote">届いた写真を見て「成功」か「やり直し」を押す。成功は全員の画面に名前が出る。ゲームの段階なら、上で選んだ人数を牢屋から出す（入った順。1枚の写真で1回だけ）。写真そのものは結果発表で全員の画面に出る。</p>
       <div class="photo-grid" data-k="photoGrid"></div>
       <details class="album" data-k="album">
         <summary>写真（全部の夜）</summary>
@@ -239,8 +398,32 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       </details>
     </section>
     <div class="dups" data-k="duplist"></div>
+    <section class="cap-host names-host" data-k="names">
+      <div class="cap-host-head"><b>名前の見張り</b><span data-k="namesNow"></span></div>
+      <p class="note">使えない言葉の入った名前は、入るときと名前を変えるときに自動で弾く。すり抜けた名前はここで直す：「付け直させる」＝その人のスマホに名前を入れ直す画面が出る（試合中でも）／「切り替える」＝「不適切な名前にしたために名前を変更されたやつ」になり、本人は変えられない（戻すには「付け直させる」）。</p>
+      <div class="names-list" data-k="nameList"></div>
+      <details class="names-ban">
+        <summary data-k="banSum">名前に使えない言葉</summary>
+        <p class="note">最初から入っている言葉のほかに足せる。名前のどこかに入っていれば弾く。頭に = を付けると、その言葉ちょうどの名前（または区切った1語）だけ弾く（例：=しね はシネマを弾かない）。ひらがな・カタカナ・全角半角・空白や記号の違いは同じとみなす。</p>
+        <form class="names-ban-form" data-k="banForm">
+          <input type="text" data-k="banInput" maxlength="20" placeholder="例：うんこ" aria-label="足す言葉">
+          <button type="submit">足す</button>
+        </form>
+        <div class="names-ban-list" data-k="banList"></div>
+      </details>
+    </section>
     <div class="spacer"></div>
     <button type="button" class="wide" data-op="csv">記録をCSVで保存（誰が・誰を・何分に）</button>
+    <details class="key-change" data-k="keyChange">
+      <summary>合言葉を変える</summary>
+      <form>
+        <label for="newkey">新しい合言葉</label>
+        <input id="newkey" name="newkey" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="done" required>
+        <p class="note">${HOST_KEY_MIN}文字以上（空白は数えない）。空白・大文字小文字・全角半角は、どう打っても合う。変えたあとも、最初に決めた合言葉は予備の鍵として効く（忘れたときに入れるように）。</p>
+        <p class="note" data-k="keyResult" role="status" hidden></p>
+        <button type="submit">合言葉を変える</button>
+      </form>
+    </details>
     <p class="note" data-k="foot"></p>
   `;
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
@@ -296,6 +479,113 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       actions.command('mic', { mic: b.dataset.mic as 'always' | 'hold' });
     }),
   );
+
+  // 合言葉を変える：打った字を見せて確かめてから送る。変わったら、このスマホは新しい合言葉を覚える
+  const keyForm = q('keyChange').querySelector('form')!;
+  const keyInput = keyForm.querySelector('input')!;
+  const keySubmit = keyForm.querySelector('button')!;
+  const keyResult = (message: string | null) => {
+    q('keyResult').hidden = !message;
+    q('keyResult').textContent = message ?? '';
+  };
+  keyInput.addEventListener('input', () => keyResult(null));
+  keyForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const value = keyInput.value.trim();
+    if (!value || keySubmit.disabled) return;
+    if (checkNewHostKey(value) === 'short') return keyResult(`短い。${HOST_KEY_MIN}文字以上にする（空白は数えない）`);
+    if (checkNewHostKey(value) === 'long') return keyResult('長すぎる。');
+    if (!confirm(`主催者の合言葉を「${value}」に変える。よいか？`)) return;
+    keySubmit.disabled = true;
+    keyResult('変えている…');
+    void actions.changeKey(value).then((r) => {
+      keySubmit.disabled = false;
+      if (r === 'ok') {
+        keyInput.value = '';
+        keyResult(`変えた。新しい合言葉は「${value}」。このスマホは覚えた。ほかのスマホは、次に聞かれたときに新しい合言葉を打つ`);
+        return;
+      }
+      keyResult(
+        r === 'short'
+          ? `短い。${HOST_KEY_MIN}文字以上にする（空白は数えない）`
+          : r === 'long'
+            ? '長すぎる。'
+            : r === 'denied'
+              ? '変えられなかった（このスマホの合言葉が古い）。画面を開き直して、入り直してからもう一度'
+              : 'つながらない。電波を確かめて、もう一度押す',
+      );
+    });
+  });
+
+  // 配役の決め方：希望を聞く（割合は守る。枠より多い希望はくじ）／くじだけ。次の配役から効く
+  const wishBtns = [...el.querySelectorAll('[data-wishmode]')] as HTMLButtonElement[];
+  wishBtns.forEach((b) =>
+    b.addEventListener('click', () => {
+      if (b.getAttribute('aria-pressed') === 'true') return;
+      actions.command('wish-mode', { wishMode: b.dataset.wishmode as WishMode });
+    }),
+  );
+
+  // 配役をいじる：並べて、選んで、まとめて指名する／動かす／印を付ける
+  const castSel = new Set<string>();
+  let castSort: CastSort = 'num';
+  let castOrder: string[] = [];
+  let castTagsOf = new Map<string, string[]>();
+  let lastCastKey = '';
+  let redraw = (): void => {};
+  const castTouch = () => {
+    lastCastKey = '';
+    redraw();
+  };
+  const sortBtns = [...el.querySelectorAll('[data-sort]')] as HTMLButtonElement[];
+  sortBtns.forEach((b) =>
+    b.addEventListener('click', () => {
+      castSort = b.dataset.sort as CastSort;
+      castTouch();
+    }),
+  );
+  q('castList').addEventListener('click', (e) => {
+    const t = (e.target as HTMLElement).closest('button[data-pid]') as HTMLButtonElement | null;
+    if (!t?.dataset.pid) return;
+    if (!castSel.delete(t.dataset.pid)) castSel.add(t.dataset.pid);
+    castTouch();
+  });
+  q('cast').addEventListener('click', (e) => {
+    const t = (e.target as HTMLElement).closest('button[data-cast]') as HTMLButtonElement | null;
+    if (!t) return;
+    const kind = t.dataset.cast;
+    if (kind === 'top' || kind === 'all' || kind === 'none') {
+      const n = kind === 'all' ? castOrder.length : kind === 'none' ? 0 : Math.floor(Number((q('castTop') as HTMLInputElement).value));
+      if (!Number.isFinite(n) || n < 0) return;
+      castSel.clear();
+      for (const pid of castOrder.slice(0, n)) castSel.add(pid);
+      castTouch();
+      return;
+    }
+    if (castSel.size === 0) return;
+    actions.command('cast', { pids: [...castSel], role: kind === 'lot' ? null : (kind as RoleId) });
+    castSel.clear();
+    castTouch();
+  });
+  // 印：選んだ全員に付いていれば外す。そうでなければ付ける
+  const sendTag = (tag: string) => {
+    const pids = [...castSel];
+    if (pids.length === 0 || !tag) return;
+    const all = pids.every((pid) => castTagsOf.get(pid)?.includes(tag));
+    actions.command('tag', { pids: all ? pids : pids.filter((pid) => !castTagsOf.get(pid)?.includes(tag)), tag, on: !all });
+  };
+  q('castTags').addEventListener('click', (e) => {
+    const t = (e.target as HTMLElement).closest('button[data-tag]') as HTMLButtonElement | null;
+    if (t?.dataset.tag) sendTag(t.dataset.tag);
+  });
+  q('castTagForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = q('castTagForm').querySelector('input') as HTMLInputElement;
+    const tag = input.value.normalize('NFKC').trim();
+    if (!tag || castSel.size === 0) return;
+    sendTag(tag);
+    input.value = '';
+  });
 
   btn('csv').addEventListener('click', () => {
     const b = btn('csv');
@@ -369,19 +659,174 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     if (pid && confirm(`${target.dataset.label} を参加者から外す。よいか？`)) actions.command('remove', { pid });
   });
 
+  // 名前の見張り
+  q('nameList').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+    if (!b?.dataset.pid) return;
+    const name = b.dataset.name ?? '';
+    if (b.dataset.nop === 'redo') {
+      if (confirm(`「${name}」に名前を付け直させる。付け直すまで名前は「名前を付け直し中」になる。よいか？`)) actions.command('name-redo', { pid: b.dataset.pid });
+    } else if (b.dataset.nop === 'shame') {
+      if (confirm(`「${name}」の名前を「不適切な名前にしたために名前を変更されたやつ」に切り替える。本人は変えられない。よいか？`)) actions.command('name-shame', { pid: b.dataset.pid });
+    }
+  });
+  q('banForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = q('banInput') as HTMLInputElement;
+    const word = input.value.trim();
+    if (!word) return;
+    actions.command('ban-add', { word });
+    input.value = '';
+  });
+  q('banList').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+    if (b?.dataset.word !== undefined && confirm(`「${b.dataset.word}」を使えない言葉から外す。よいか？`)) actions.command('ban-remove', { word: b.dataset.word });
+  });
+
   // ミッション
   const missionForm = q('missionForm') as HTMLFormElement;
   const missionTitle = q('missionTitle') as HTMLInputElement;
   let missionOpen = false;
+  // 種類をまとめて扱う層：題・締め切り・「成功で牢屋から」はどの種類も同じ場所。種類ごとの決めごとだけ下に出す
+  let missionKind: MissionKind = 'photo';
+  let meetScope: MeetScope = 'all';
+  const ZONE_KEY = 'urafess:zone-draft';
+  let zoneDraft: [number, number][] = [];
+  try {
+    const kept = JSON.parse(localStorage.getItem(ZONE_KEY) ?? '[]') as unknown;
+    if (Array.isArray(kept) && kept.every((p) => Array.isArray(p) && p.length === 2 && p.every((v) => typeof v === 'number' && Number.isFinite(v)))) {
+      zoneDraft = (kept as [number, number][]).slice(0, AREA_MAX_PTS);
+    }
+  } catch {
+    // 覚えていなければ、描くところから
+  }
+  const keepZone = () => {
+    try {
+      localStorage.setItem(ZONE_KEY, JSON.stringify(zoneDraft));
+    } catch {
+      // 覚えられなくても、この画面の間は使える
+    }
+  };
+  const SECS: Record<'meet' | 'zone', [string, string][]> = {
+    meet: [['', 'なし'], ['60', '1分'], ['120', '2分'], ['180', '3分'], ['300', '5分']],
+    zone: [['60', '1分'], ['120', '2分'], ['180', '3分'], ['300', '5分'], ['600', '10分']],
+  };
+  const secsPick = q('missionSecs') as HTMLSelectElement;
+  const zoneNeed = q('zoneNeed') as HTMLInputElement;
+  const kindBtns = [...el.querySelectorAll<HTMLButtonElement>('[data-kind]')];
+  const scopeBtns = [...el.querySelectorAll<HTMLButtonElement>('[data-scope]')];
+  let zoneMapKey = '';
+  const zoneMap = createOverview({
+    onTap: (p) => {
+      if (zoneDraft.length >= AREA_MAX_PTS) return;
+      zoneDraft = [...zoneDraft, [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6]];
+      keepZone();
+      drawZone();
+    },
+  });
+  q('zoneMap').append(zoneMap.el);
+  const zoneBtn = (k: string) => el.querySelector(`[data-zone="${k}"]`) as HTMLButtonElement;
+  const drawZone = () => {
+    zoneBtn('undo').disabled = zoneBtn('redo').disabled = zoneDraft.length === 0;
+    if (missionKind !== 'zone') return;
+    zoneMap.update({
+      me: null,
+      meKind: 'unknown',
+      meLit: false,
+      points: [],
+      labelMax: 0,
+      area: saved.area,
+      jail: saved.jail,
+      draft: zoneDraft,
+      draftLayer: 'mzone',
+      frameBase: saved.area ? 'area' : 'campus',
+    });
+  };
+  zoneBtn('undo').addEventListener('click', () => {
+    zoneDraft = zoneDraft.slice(0, -1);
+    keepZone();
+    drawZone();
+  });
+  zoneBtn('redo').addEventListener('click', () => {
+    zoneDraft = [];
+    keepZone();
+    drawZone();
+  });
+  const applyKind = () => {
+    for (const b of kindBtns) b.setAttribute('aria-selected', String(b.dataset.kind === missionKind));
+    for (const b of scopeBtns) b.setAttribute('aria-pressed', String(b.dataset.scope === meetScope));
+    q('missionPhoto').dataset.kind = missionKind;
+    missionTitle.placeholder = MISSION_DEFAULT_TITLES[missionKind];
+    q('missionOpts').hidden = missionKind === 'photo';
+    for (const x of el.querySelectorAll<HTMLElement>('[data-k="missionOpts"] [data-for]')) x.hidden = x.dataset.for !== missionKind;
+    q('photoNote').hidden = missionKind !== 'photo';
+    if (missionKind !== 'photo') {
+      const key = missionKind;
+      if (zoneMapKey !== key) {
+        zoneMapKey = key;
+        secsPick.replaceChildren(
+          ...SECS[key].map(([v, label]) => {
+            const o = document.createElement('option');
+            o.value = v;
+            o.textContent = label;
+            o.selected = v === '180';
+            return o;
+          }),
+        );
+      }
+    }
+    lastKindNote = '';
+    drawZone();
+  };
+  let lastKindNote = '';
+  for (const b of kindBtns) {
+    b.addEventListener('click', () => {
+      missionKind = b.dataset.kind as MissionKind;
+      applyKind();
+    });
+  }
+  for (const b of scopeBtns) {
+    b.addEventListener('click', () => {
+      meetScope = b.dataset.scope as MeetScope;
+      applyKind();
+    });
+  }
   missionForm.addEventListener('submit', (e) => {
     e.preventDefault();
-    const title = missionTitle.value.trim() || MISSION_DEFAULT_TITLE;
-    if (missionOpen && !confirm(`いまのミッションを締め切って、「${title}」を出す。よいか？`)) return;
-    actions.command('mission', { title });
+    const typed = missionTitle.value.trim();
+    const title = typed || MISSION_DEFAULT_TITLES[missionKind];
+    if (missionKind === 'photo') {
+      if (missionOpen && !confirm(`いまのミッションを締め切って、「${title}」を出す。よいか？`)) return;
+      actions.command('mission', { title });
+      missionTitle.value = '';
+      return;
+    }
+    // 合流・範囲：成功で牢屋から出す人数は、出すときに決めておく（判定はアプリがする）
+    const pick = (q('missionFree') as HTMLSelectElement).value;
+    const free = pick === '0' ? { free: false } : pick === 'all' ? { free: true } : { free: true, n: Number(pick) };
+    const secs = secsPick.value ? Number(secsPick.value) : null;
+    if (missionKind === 'zone') {
+      const need = Math.round(Number(zoneNeed.value));
+      if (zoneDraft.length < AREA_MIN_PTS) {
+        q('kindNote').textContent = '先に、地図を押して範囲を描く（角を3つ以上）。';
+        lastKindNote = 'x';
+        return;
+      }
+      if (!Number.isInteger(need) || need < 1 || need > ZONE_NEED_MAX) {
+        q('kindNote').textContent = '集まる人数を入れる（1人以上）。';
+        lastKindNote = 'x';
+        return;
+      }
+      if (missionOpen && !confirm(`いまのミッションを締め切って、「${title}」を出す。よいか？`)) return;
+      actions.command('mission', { kind: 'zone', title: typed, zone: zoneDraft, need, secs, ...free });
+    } else {
+      if (missionOpen && !confirm(`いまのミッションを締め切って、「${title}」を出す。よいか？`)) return;
+      actions.command('mission', { kind: 'meet', title: typed, scope: meetScope, secs, ...free });
+    }
     missionTitle.value = '';
   });
   q('missionClose').addEventListener('click', () => {
-    if (confirm('ミッションを締め切る。もう写真は送れなくなる。よいか？')) actions.command('mission-close');
+    if (confirm('ミッションを締め切る。よいか？')) actions.command('mission-close');
   });
   const onPhotoClick = (e: Event) => {
     const t = e.target as HTMLElement;
@@ -481,9 +926,12 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     return fig;
   }
   let lastPhotoKey = '';
+  let lastLiveKey = '';
+  applyKind();
 
   let lastDupKey = '';
   let lastCapKey = '';
+  let lastNamesKey = '';
   let lastAskKey = '';
   // 走ると光る：主催者の画面にも光の地図（真ん中はこの画面の場所。たいてい広場）
   const board = createLightsBoard({ listMax: 6, start: 'all', labelMax: 60 });
@@ -491,92 +939,251 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   const glowMap = el.querySelector('[data-act="glow-map"]') as HTMLButtonElement;
   glowMap.addEventListener('click', () => sensors?.request());
 
-  // 遊ぶ範囲：地図を押して角を足す（下書き）→「決める」で送る。試合中は描けない
-  let draft: [number, number][] = [];
+  // 遊ぶ範囲と牢屋の場所：同じ道具で描く（上の札で切りかえ）。地図を押して角を足す（下書き）→「決める」で送る。試合中は描けない
+  type Layer = 'area' | 'jail';
+  let layer: Layer = 'area';
+  const drafts: Record<Layer, [number, number][]> = { area: [], jail: [] };
+  const saved: Record<Layer, [number, number][] | null> = { area: null, jail: null };
   let areaLocked = false;
-  let savedArea: [number, number][] | null = null;
-  const drawArea = () =>
+  // 範囲の縮小：縮み方（サーバーの値）と、地図で縮む先を選んでいる途中か
+  let plan: ShrinkPlan = { ...DEFAULT_SHRINK_PLAN };
+  let picking = false;
+  /** 描く地図に見せる「最後はここまで縮む」形と縮む先（毎回ランダムなら形は見せない） */
+  const planPreview = () => {
+    const area = saved.area;
+    if (!area || drafts.area.length || layer !== 'area') return null;
+    const center = plan.to === 'pick' && plan.pick ? plan.pick : plan.to === 'mid' ? midOf(area) : null;
+    if (!center || plan.times === 0) return center ? { center } : null;
+    return { center, preview: scalePts(area, center, Math.sqrt(plan.finalArea)) };
+  };
+  const LAYER_TEXT: Record<Layer, { none: string; note: string; clear: string; confirm: string }> = {
+    area: {
+      none: '範囲なし',
+      note: '地図を押して角を足していく（3つ以上）。「決める」で全員の地図に線が出る。逃げ始めてからゲームの終わりまで、範囲の外へ 15m 出て3秒たった人のスマホに「戻れ」と戻る向きが出る。',
+      clear: '範囲なしにする',
+      confirm: '遊ぶ範囲をなくす（どこまで行っても「戻れ」は出ない）。よいか？',
+    },
+    jail: {
+      none: 'まだ決めていない',
+      note: '牢屋にする場所を、地図を押して角で囲む（3つ以上）。「決める」で全員の地図に「牢屋」が出る。捕まった人のスマホに、牢屋への向きと距離が出る（着いたら「牢屋に着いた」）。',
+      clear: '牢屋の場所をなくす',
+      confirm: '牢屋の場所をなくす（捕まった人に向きが出なくなる）。よいか？',
+    },
+  };
+  const draw = () => {
+    const d = drafts[layer];
     areaMap.update({
       me: null,
       meKind: 'unknown',
       meLit: false,
       points: [],
       labelMax: 0,
-      area: savedArea,
-      draft: draft.length ? draft : null,
+      area: saved.area,
+      jail: saved.jail,
+      draft: d.length ? d : null,
+      draftLayer: layer,
       frameBase: 'campus',
+      zone: planPreview(),
     });
+  };
+  const sendPlan = (patch: Partial<ShrinkPlan>) => {
+    plan = { ...plan, ...patch };
+    actions.command('shrink-plan', { plan });
+    refreshShrink();
+    draw();
+  };
   const areaMap = createOverview({
     onTap: (p) => {
-      if (areaLocked || draft.length >= AREA_MAX_PTS) return;
-      draft = [...draft, [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6]];
-      drawArea();
+      if (picking) {
+        // 縮む先を選ぶ：押した場所（範囲の中でなければ、始めるときに範囲の真ん中になる）
+        picking = false;
+        sendPlan({ to: 'pick', pick: [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6] });
+        return;
+      }
+      const d = drafts[layer];
+      if (areaLocked || d.length >= AREA_MAX_PTS) return;
+      drafts[layer] = [...d, [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6]];
+      draw();
       refreshAreaBtns();
     },
   });
   q('areaMap').append(areaMap.el);
   const areaBtn = (k: string) => el.querySelector(`[data-area="${k}"]`) as HTMLButtonElement;
-  const refreshAreaBtns = () => {
-    areaBtn('undo').disabled = areaLocked || draft.length === 0;
-    areaBtn('redo').disabled = areaLocked || draft.length === 0;
-    areaBtn('campus').disabled = areaLocked;
-    areaBtn('save').disabled = areaLocked || draft.length < AREA_MIN_PTS;
-    areaBtn('none').disabled = areaLocked || !savedArea;
+  const layerBtns = [...el.querySelectorAll<HTMLButtonElement>('[data-layer]')];
+  const refreshAreaHead = () => {
+    const pts = saved[layer];
+    q('areaNow').textContent = pts ? `決まっている（角 ${pts.length}・${areaSize(pts)}）` : LAYER_TEXT[layer].none;
+    q('areaNote').textContent = areaLocked
+      ? '試合中は変えられない（走っている人の「外」や牢屋が急に変わらないように）。時間が0になったら変えられる。'
+      : LAYER_TEXT[layer].note;
+    areaBtn('none').textContent = LAYER_TEXT[layer].clear;
+    for (const b of layerBtns) {
+      const on = b.dataset.layer === layer;
+      b.setAttribute('aria-selected', String(on));
+      const st = b.querySelector('span');
+      if (st) st.textContent = saved[b.dataset.layer as Layer] ? '決まっている' : 'まだ';
+    }
   };
+  const refreshAreaBtns = () => {
+    const d = drafts[layer];
+    areaBtn('undo').disabled = areaLocked || d.length === 0;
+    areaBtn('redo').disabled = areaLocked || d.length === 0;
+    areaBtn('campus').hidden = layer !== 'area';
+    areaBtn('campus').disabled = areaLocked;
+    areaBtn('save').disabled = areaLocked || d.length < AREA_MIN_PTS;
+    areaBtn('none').disabled = areaLocked || !saved[layer];
+  };
+  for (const b of layerBtns) {
+    b.addEventListener('click', () => {
+      layer = b.dataset.layer as Layer;
+      el.querySelector('[data-k="area"]')!.setAttribute('data-layer', layer);
+      refreshAreaHead();
+      refreshAreaBtns();
+      draw();
+    });
+  }
   areaBtn('undo').addEventListener('click', () => {
-    draft = draft.slice(0, -1);
-    drawArea();
+    drafts[layer] = drafts[layer].slice(0, -1);
+    draw();
     refreshAreaBtns();
   });
   areaBtn('redo').addEventListener('click', () => {
-    draft = [];
-    drawArea();
+    drafts[layer] = [];
+    draw();
     refreshAreaBtns();
   });
   areaBtn('campus').addEventListener('click', () => {
-    draft = [
-      [CAMPUS_BOX.north, CAMPUS_BOX.west],
-      [CAMPUS_BOX.north, CAMPUS_BOX.east],
-      [CAMPUS_BOX.south, CAMPUS_BOX.east],
-      [CAMPUS_BOX.south, CAMPUS_BOX.west],
+    drafts.area = [
+      [RING_BOX.north, RING_BOX.west],
+      [RING_BOX.north, RING_BOX.east],
+      [RING_BOX.south, RING_BOX.east],
+      [RING_BOX.south, RING_BOX.west],
     ];
-    drawArea();
+    draw();
     refreshAreaBtns();
   });
   areaBtn('save').addEventListener('click', () => {
-    if (draft.length < AREA_MIN_PTS) return;
-    actions.command('area', { area: draft });
-    savedArea = draft;
-    draft = [];
-    drawArea();
+    const d = drafts[layer];
+    if (d.length < AREA_MIN_PTS) return;
+    actions.command('area', { area: d, layer });
+    saved[layer] = d;
+    drafts[layer] = [];
+    draw();
+    refreshAreaHead();
     refreshAreaBtns();
   });
   areaBtn('none').addEventListener('click', () => {
-    if (confirm('遊ぶ範囲をなくす（どこまで行っても「戻れ」は出ない）。よいか？')) actions.command('area', { area: null });
+    if (confirm(LAYER_TEXT[layer].confirm)) actions.command('area', { area: null, layer });
   });
 
-  return {
+  // チャット：流れと送る欄・制約。同じ名前の一覧の上に置く
+  const chatHost = createChatHost({
+    chat: (to, text) => actions.chat?.(to, text) ?? false,
+    command: (op, extra) => actions.command(op, extra),
+  });
+  q('duplist').before(chatHost.feed, chatHost.settings);
+  // 範囲の縮小のボタン：押したらすぐ送る（試合中は変えられない）
+  const shrinkBtns = (k: string) => [...el.querySelectorAll(`[data-shrink-${k}]`)] as HTMLButtonElement[];
+  const missionBox = el.querySelector('[data-shrink-mission]') as HTMLInputElement;
+  const nowBtn = el.querySelector('[data-act="shrink-now"]') as HTMLButtonElement;
+  shrinkBtns('times').forEach((b) => b.addEventListener('click', () => sendPlan({ times: Number(b.dataset.shrinkTimes) })));
+  shrinkBtns('final').forEach((b) => b.addEventListener('click', () => sendPlan({ finalArea: Number(b.dataset.shrinkFinal) })));
+  shrinkBtns('to').forEach((b) =>
+    b.addEventListener('click', () => {
+      const to = b.dataset.shrinkTo as ShrinkPlan['to'];
+      if (to === 'pick') {
+        // 次に地図を押した場所が縮む先
+        picking = true;
+        refreshShrink();
+        return;
+      }
+      picking = false;
+      sendPlan({ to });
+    }),
+  );
+  missionBox.addEventListener('change', () => sendPlan({ mission: missionBox.checked }));
+  nowBtn.addEventListener('click', () => actions.command('shrink-now'));
+  let shrinkKey = '';
+  const refreshShrink = () => {
+    const off = areaLocked || !saved.area;
+    shrinkBtns('times').forEach((b) => {
+      b.setAttribute('aria-pressed', String(Number(b.dataset.shrinkTimes) === plan.times));
+      b.disabled = off;
+    });
+    shrinkBtns('final').forEach((b) => {
+      b.setAttribute('aria-pressed', String(Number(b.dataset.shrinkFinal) === plan.finalArea));
+      b.disabled = off || plan.times === 0;
+    });
+    shrinkBtns('to').forEach((b) => {
+      b.setAttribute('aria-pressed', String(picking ? b.dataset.shrinkTo === 'pick' : b.dataset.shrinkTo === plan.to));
+      b.disabled = off;
+    });
+    missionBox.checked = plan.mission;
+    missionBox.disabled = off;
+    q('area').classList.toggle('is-picking', picking);
+  };
+
+  const screen: HostScreen = {
     el,
+    chat: chatHost,
     update(input) {
       const { game, host, serverNow, online, lastReject } = input;
+      chatHost.update({ game, chat: input.chat, online });
       if (!game || !host) return;
+      redraw = () => screen.update(input);
       {
-        // 遊ぶ範囲
-        const pts = game.area?.pts ?? null;
+        // 遊ぶ範囲・牢屋の場所
+        const next: Record<Layer, [number, number][] | null> = { area: game.area?.pts ?? null, jail: game.jail?.pts ?? null };
         // サーバーと同じ決まり：試合中（時間が0になる前）は変えられない
         const locked = game.stage === 'timer' && !!game.timer && !isDone(game.timer, serverNow);
-        const changed = JSON.stringify(pts) !== JSON.stringify(savedArea) || locked !== areaLocked;
-        savedArea = pts;
+        const changed = JSON.stringify(next) !== JSON.stringify(saved) || locked !== areaLocked;
+        saved.area = next.area;
+        saved.jail = next.jail;
         areaLocked = locked;
         if (changed) {
-          refreshAreaBtns();
-          q('areaNow').textContent = pts ? `決まっている（角 ${pts.length}・${areaSize(pts)}）` : '範囲なし';
           q('area').classList.toggle('is-locked', locked);
-          q('areaNote').textContent = locked
-            ? '試合中は範囲を変えられない（走っている人の「外」が急に変わらないように）。時間が0になったら変えられる。'
-            : '地図を押して角を足していく（3つ以上）。「決める」で全員の地図に線が出る。逃げ始めてからゲームの終わりまで、範囲の外へ 15m 出て3秒たった人のスマホに「戻れ」と戻る向きが出る。';
+          refreshAreaHead();
+          refreshAreaBtns();
         }
-        drawArea();
+        // 範囲の縮小
+        const sp = game.shrinkPlan ?? DEFAULT_SHRINK_PLAN;
+        if (JSON.stringify(sp) !== JSON.stringify(plan) || changed) {
+          plan = { ...sp };
+          refreshShrink();
+        }
+        q('shrink').hidden = game.shrinkPlan === undefined;
+        const zone = zoneAt(game.area, game.shrink, game.timer, serverNow);
+        const live = !!game.shrink && game.stage === 'timer' && !!game.timer && !isDone(game.timer, serverNow);
+        const pos = game.timer ? positionAt(game.timer, serverNow) : null;
+        const canNow = live && !!zone && pos?.kind === 'phase' && pos.index >= 1 && pos.index <= 2;
+        nowBtn.disabled = !canNow;
+        const st = zone?.status;
+        const nowText = !saved.area
+          ? '範囲を決めると使える'
+          : !live
+            ? shrinkActive(sp)
+              ? `${sp.times ? `時間で${sp.times}回・最後は広さ${sp.finalArea === 0.5 ? '半分' : `1/${Math.round(1 / sp.finalArea)}`}` : '時間では縮まない'}${sp.mission ? '・ミッションで1段' : ''}`
+              : '縮まない'
+            : st?.kind === 'warn'
+              ? `予告中：あと${Math.ceil(st.leftMs / 1000)}秒で縮み始める`
+              : st?.kind === 'move'
+                ? `縮んでいる：あと${Math.ceil(st.leftMs / 1000)}秒`
+                : `今の広さ ${Math.round((zone?.scale ?? 1) ** 2 * 100)}%` + (st?.kind === 'idle' && st.nextInMs !== null ? `・次の予告まで ${formatClock(st.nextInMs)}` : '');
+        const steps = timeSteps(sp, game.durations);
+        const note = picking
+          ? '地図を押した場所が縮む先になる（範囲の中を押す）'
+          : locked
+            ? `試合中は縮み方を変えられない。「今すぐ1段縮める」は逃げ始めてからゲームの終わりまで押せる（広さ ×${ZONE_STEP_AREA}。${ZONE_WARN_MS / 1000}秒の予告のあと${ZONE_MOVE_MS / 1000}秒で縮む）。`
+            : `縮む先へ向けて、形のまま小さくなる。1回ごとに、全員の地図に次の範囲（蓄光の点線）が出て${ZONE_WARN_MS / 1000}秒後に縮み始め、${ZONE_MOVE_MS / 1000}秒で縮む。取り残された人には「戻れ」、20秒で失格。` +
+              (steps.length ? `予告の始まり（ゲームの残り）：${steps.map((x) => formatClock(game.durations[2] - (x.at - game.durations[0] - game.durations[1]))).join('・')}。` : '') +
+              (sp.to === 'random' ? '毎回ランダムは、開始を押したときに範囲の中のどこかに決まる。' : '');
+        const sk = `${nowText}|${note}`;
+        if (sk !== shrinkKey) {
+          shrinkKey = sk;
+          q('shrinkNow').textContent = nowText;
+          q('shrinkNote').textContent = note;
+        }
+        draw();
       }
       const s = hostStatus(game, serverNow);
       q('round').textContent = `ラウンド ${Math.max(game.round, 1)}${online ? '' : '・切断中'}`;
@@ -597,6 +1204,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         `時間：${PHASES.map((p, i) => `${p.label} ${fmt(game.durations[i])}`).join(' → ')}` +
         `　／　割合 鬼${(game.ratio ?? DEFAULT_RATIO).oni}：逃走者${(game.ratio ?? DEFAULT_RATIO).runner}` +
         `　／　鬼のマイク ${(game.micMode ?? 'always') === 'always' ? 'ずっと聞く' : '押している間だけ'}` +
+        `　／　配役 ${(game.wishMode ?? 'lot') === 'wish' ? '希望を聞く' : 'くじだけ'}` +
         (host.waiting ? `　／　次の配役を待っている人 ${host.waiting}人` : '') +
         (host.registry !== undefined ? `　／　名簿 ${host.registry}人` : '');
       // 前の夜のまま集め始めないように：待合室で、夜を始めてから半日以上たっていたら知らせる
@@ -701,6 +1309,104 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
           ? 'マイクをオンにした鬼は、押さなくても聞いている。逃走者の長押しの間に拾えば記録される'
           : '鬼は「捕まえた」を押している間だけ聞く（前の版と同じ）';
 
+      const wishMode = game.wishMode ?? 'lot';
+      wishBtns.forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.wishmode === wishMode));
+        // 古いサーバー（決め方を送ってこない）では切り替えられない
+        b.disabled = !canEditDurations || game.wishMode === undefined;
+      });
+      q('wishNote').textContent = wishNote(game, host);
+
+      // 配役をいじる
+      const cast = host.cast;
+      q('cast').hidden = !cast;
+      if (cast) {
+        // 試合中（時間が0になる前）は役を動かせない。印はいつでも付けられる
+        const castOpen = !(game.stage === 'timer' && !done);
+        const moving = game.stage === 'assigned';
+        const here = new Set(cast.map((c) => c.pid));
+        for (const pid of [...castSel]) if (!here.has(pid)) castSel.delete(pid);
+        const key = JSON.stringify([cast, [...castSel], castSort, game.stage, castOpen, game.ratio]);
+        if (key !== lastCastKey) {
+          lastCastKey = key;
+          const order = sortCast(cast, castSort);
+          castOrder = order.map((c) => c.pid);
+          castTagsOf = new Map(cast.map((c) => [c.pid, c.tags ?? []]));
+          sortBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.sort === castSort)));
+          const pinOni = cast.filter((c) => c.pin === 'oni').length;
+          const pinRunner = cast.filter((c) => c.pin === 'runner').length;
+          const ratioNow = game.ratio ?? DEFAULT_RATIO;
+          const plan = castCounts(cast.length, ROLES.map((x) => ({ ...x, weight: ratioNow[x.id] })), ROLES.map((x) => (x.id === 'oni' ? pinOni : pinRunner)));
+          q('castNow').textContent =
+            (pinOni + pinRunner > 0 ? `指名 鬼${pinOni}・逃走者${pinRunner}` : '指名なし') +
+            (moving || !castOpen ? '' : plan ? `　配役すると 鬼${plan[0]}・逃走者${plan[1]}` : '　このままだと片方が0人（配役できない）');
+          q('castNote').textContent = !castOpen
+            ? '試合中は役を動かせない。印は付けられる。'
+            : moving
+              ? '選んで「動かす」を押すと、その場で役が変わる（本人の画面もすぐ変わる）。希望とちがう役に動かした人は、次の配役で優先される。'
+              : '並べて、選んで、指名する。指名した人は、希望やくじより先にその役になる（残りは希望とくじ）。割合の枠より多く指名したら、指名のとおりの人数になる。希望とちがう役に指名した人は、次の配役で優先される。指名は「開始」で消える。';
+          q('castList').replaceChildren(
+            ...order.map((c) => {
+              const b = document.createElement('button');
+              b.type = 'button';
+              b.className = 'cast-row';
+              b.dataset.pid = c.pid;
+              b.dataset.on = c.on ? '1' : '0';
+              b.setAttribute('aria-pressed', String(castSel.has(c.pid)));
+              const head = document.createElement('span');
+              head.className = 'cast-name';
+              head.textContent = `${c.num} ${c.name}${c.on ? '' : '（切断中）'}`;
+              const marks = document.createElement('span');
+              marks.className = 'cast-marks';
+              const mark = (text: string, kind: string) => {
+                const m = document.createElement('i');
+                m.dataset.kind = kind;
+                m.textContent = text;
+                marks.append(m);
+              };
+              // 配役済みなら「いま」の役。次の配役の前なら、前のラウンドの役
+              if (c.role) mark(moving ? `いま ${ROLE_LABEL[c.role]}` : `前回 ${ROLE_LABEL[c.role]}`, moving ? 'role' : 'last');
+              if (c.pin) mark(`指名 ${ROLE_LABEL[c.pin]}`, 'pin');
+              if (c.wish) mark(`希望 ${ROLE_LABEL[c.wish]}`, 'wish');
+              if (c.prio) mark('優先', 'prio');
+              for (const t of c.tags ?? []) mark(t, 'tag');
+              b.append(head, marks);
+              const st = castStatText(c.stat);
+              if (st) {
+                const line = document.createElement('span');
+                line.className = 'cast-stat';
+                line.textContent = st;
+                b.append(line);
+              }
+              return b;
+            }),
+          );
+          const n = castSel.size;
+          q('castAct').hidden = n === 0;
+          q('castSel').textContent = `${n}人を選んでいる`;
+          const roleBtns = [...q('castAct').querySelectorAll('.cast-roles button')] as HTMLButtonElement[];
+          for (const rb of roleBtns) {
+            rb.disabled = !castOpen;
+            if (rb.dataset.cast === 'oni') rb.textContent = moving ? '鬼へ動かす' : '鬼に指名';
+            if (rb.dataset.cast === 'runner') rb.textContent = moving ? '逃走者へ動かす' : '逃走者に指名';
+          }
+          // 印：はじめからある印＋誰かに付いている印。選んだ全員に付いていれば「外す」
+          const known = [...new Set([...DEFAULT_TAGS, ...cast.flatMap((c) => c.tags ?? [])])];
+          const picked = cast.filter((c) => castSel.has(c.pid));
+          q('castTags').replaceChildren(
+            ...known.map((t) => {
+              const tb = document.createElement('button');
+              tb.type = 'button';
+              tb.dataset.tag = t;
+              const all = picked.length > 0 && picked.every((c) => c.tags?.includes(t));
+              tb.setAttribute('aria-pressed', String(all));
+              tb.textContent = all ? `${t} を外す` : `${t} を付ける`;
+              return tb;
+            }),
+          );
+        }
+      }
+
       const canEditRatio = canEditDurations;
       const ratio = game.ratio ?? DEFAULT_RATIO;
       totalNow = host.total;
@@ -751,7 +1457,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         const litNow = (input.glow?.runs ?? []).filter((r) => serverNow - r.at <= RUN_STALE_MS).length;
         const onMap = (input.mates?.people ?? []).filter((m) => serverNow - m.at <= MATES_STALE_MS);
         const oniOn = onMap.filter((m) => m.role === 'oni').length;
-        const areaPts = game.area?.pts ?? null;
+        const areaPts = zoneAt(game.area, game.shrink, game.timer, serverNow);
         const outside = areaPts ? onMap.filter((m) => isFarOutside(areaPts, m)) : [];
         q('glowCount').textContent =
           gp === 'live'
@@ -778,6 +1484,8 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
             meAcc: pos?.acc ?? null,
             myKind: 'unknown',
             area: areaPts,
+            jail: game.jail?.pts ?? null,
+            mzone: openZone(game),
           });
         }
       }
@@ -790,14 +1498,69 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       const photos = roundPhotos.filter((ph) => ph.missionId === mission?.id);
       const okCount = photos.filter((ph) => ph.status === 'ok').length;
       const waitingCount = photos.filter((ph) => ph.status === 'pending').length;
-      q('missionNow').textContent = mission
-        ? `「${mission.title}」${mission.open ? '受け付け中' : '締め切った'}・届いた ${photos.length}枚・成功 ${okCount}枚${waitingCount ? `・見ていない ${waitingCount}枚` : ''}`
-        : 'まだ出していない';
-      const canIssue = game.stage !== 'ended';
-      missionTitle.disabled = !canIssue;
+      const curKind: MissionKind = mission?.kind ?? 'photo';
+      const left = mission?.open && mission.until ? (game.timer?.status === 'paused' ? '止めている' : `残り ${formatClock(mission.until - serverNow)}`) : '';
+      const openWord = mission?.open ? '受け付け中' : '締め切った';
+      q('missionNow').textContent = !mission
+        ? 'まだ出していない'
+        : curKind === 'meet'
+          ? `合流「${mission.title}」${openWord}・合流した組 ${mission.meet?.ok ?? 0}/${mission.meet?.groups ?? 0}${left ? `・${left}` : ''}`
+          : curKind === 'zone'
+            ? `範囲「${mission.title}」${openWord}${mission.open ? `・いま中に ${mission.zone?.now ?? 0}/${mission.zone?.need ?? 0}人` : ''}${left ? `・${left}` : ''}`
+            : `「${mission.title}」${openWord}・届いた ${photos.length}枚・成功 ${okCount}枚${waitingCount ? `・見ていない ${waitingCount}枚` : ''}`;
+      // 合流・範囲は、役が決まっている間だけ出せる（範囲は、位置が届くゲームの段階だけ）
+      const mClock = missionClock(game, serverNow, CAPTURE_PHASE_INDEX);
+      const kindReady = missionKind === 'photo' ? true : missionKind === 'meet' ? mClock === 'live' : captureOpenAt(game.timer, serverNow) && game.stage === 'timer';
+      const canIssue = game.stage !== 'ended' && kindReady;
+      missionTitle.disabled = game.stage === 'ended';
       const go = q('missionGo') as HTMLButtonElement;
       go.disabled = !canIssue;
-      go.textContent = mission?.open ? '次のミッションを出す' : 'ミッションを出す';
+      go.textContent = mission?.open ? '次に出す' : '出す';
+      go.setAttribute('aria-label', `${MISSION_KIND_NAME[missionKind]}のミッションを${mission?.open ? '次に出す' : '出す'}`);
+      const kindNote =
+        missionKind === 'meet'
+          ? kindReady
+            ? meetScope === 'all'
+              ? '捕まっていない逃走者を、アプリが無作為に2人組にする（奇数なら最後の組だけ3人で、そのうち2人が合えば成功）。それぞれの画面に相手の名前が出て、会って2人で同時に長押しすると成功。1組が成功するたびに、上で選んだ人数を牢屋から出す。組は鬼にも見える。'
+              : '捕まっていない逃走者から、アプリが無作為に2人を選ぶ。誰と誰かは全員（鬼にも）に出る。2人が会って同時に長押しすると成功し、上で選んだ人数を牢屋から出す。'
+            : '合流は、配役のあと〜ゲームの段階の間に出せる。'
+          : missionKind === 'zone'
+            ? kindReady
+              ? '締め切りの瞬間に、範囲の中にいる逃走者（牢屋の外）が決めた人数以上なら成功し、上で選んだ人数を牢屋から出す。範囲と残り時間と「いま何人」は、鬼にも見える。'
+              : '範囲は、追跡が始まってからゲームの段階の間に出せる（位置が届くのがその間だけ）。範囲は先に描いておける。'
+            : '';
+      if (lastKindNote !== kindNote && lastKindNote !== 'x') {
+        lastKindNote = kindNote;
+        q('kindNote').textContent = kindNote;
+      } else if (lastKindNote === 'x' && kindNote !== '' && !kindReady) {
+        lastKindNote = '';
+      }
+      // いまの合流・範囲のミッションのようす
+      const live = q('missionLive');
+      const liveKey = JSON.stringify([mission, host.meets ?? null, host.zoneIn ?? null, curKind === 'photo' ? null : left]);
+      if (liveKey !== lastLiveKey) {
+        lastLiveKey = liveKey;
+        live.hidden = !mission || curKind === 'photo';
+        if (mission && curKind === 'meet') {
+          const done = mission.done ?? null;
+          live.innerHTML =
+            `<b>合流の組</b>` +
+            (host.meets ?? [])
+              .map((x) => {
+                const jailed = x.jailed.length ? `（牢屋：${esc(x.jailed.join('・'))}）` : '';
+                return `<div class="mission-live-row${x.okAt !== null ? ' is-ok' : ''}"><span>${esc(x.names.join(' × '))}</span><em>${x.okAt !== null ? `合流した ${clock(x.okAt)}` : `まだ${jailed}`}</em></div>`;
+              })
+              .join('') +
+            (done ? `<p class="note">${done.ok ? `成功 ${done.count}組` : '成功した組なし'}${done.freed ? `・牢屋から${done.freed}人出た` : ''}</p>` : '');
+        } else if (mission && curKind === 'zone' && mission.zone) {
+          const done = mission.done ?? null;
+          live.innerHTML = mission.open
+            ? `<b>いま中に ${mission.zone.now ?? 0}/${mission.zone.need}人</b><p class="note">${esc((host.zoneIn ?? []).join('・') || 'まだ誰もいない')}</p>`
+            : done
+              ? `<b>${done.ok ? '成功' : '失敗'}：締め切りの瞬間に ${done.count}/${mission.zone.need}人</b>${done.freed ? `<p class="note">牢屋から${done.freed}人出た</p>` : ''}`
+              : `<b>締め切った（判定なし）</b>`;
+        }
+      }
       q('missionClose').hidden = !mission?.open;
       const photoKey = JSON.stringify(roundPhotos.map((ph) => [ph.id, ph.status, ph.freed ?? 0]));
       if (photoKey !== lastPhotoKey) {
@@ -818,6 +1581,32 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         if (album.open) void showAlbum();
       }
 
+      const namesKey = JSON.stringify([host.names ?? null, host.bans ?? null]);
+      if (namesKey !== lastNamesKey) {
+        lastNamesKey = namesKey;
+        const names = host.names ?? [];
+        q('names').hidden = !host.names;
+        const flagged = names.filter((n) => n.hit || n.state !== 'ok');
+        q('namesNow').textContent = flagged.length ? `気になる名前 ${flagged.length}` : '';
+        const STATE: Record<string, string> = { due: '付け直し待ち', shamed: '切り替えた' };
+        q('nameList').innerHTML = names.length
+          ? names
+              .map((n) => {
+                const tag = n.hit ? `<em class="names-hit">「${esc(n.hit)}」に引っかかる</em>` : n.state !== 'ok' ? `<em>${STATE[n.state]}</em>` : '';
+                const where = n.tonight ? '' : '<small>今夜いない</small>';
+                const d = `data-pid="${esc(n.pid)}" data-name="${esc(n.name)}"`;
+                const redo = n.state === 'due' ? '' : `<button type="button" ${d} data-nop="redo">付け直させる</button>`;
+                const shame = n.state === 'shamed' ? '' : `<button type="button" ${d} data-nop="shame">切り替える</button>`;
+                return `<div class="names-row${n.hit ? ' is-hit' : ''}"><span class="names-name">${esc(n.name)}${tag}${where}</span>${redo}${shame}</div>`;
+              })
+              .join('')
+          : '<p class="note">今夜の人はまだいない</p>';
+        const bans = host.bans ?? { custom: [], builtin: 0 };
+        q('banSum').textContent = `名前に使えない言葉（最初から ${bans.builtin}・足した ${bans.custom.length}）`;
+        q('banList').innerHTML = bans.custom
+          .map((w) => `<button type="button" class="names-chip" data-word="${esc(w)}" aria-label="${esc(w)} を外す">${esc(w)} ×</button>`)
+          .join('');
+      }
       const dupKey = JSON.stringify(host.dupNames);
       if (dupKey !== lastDupKey) {
         lastDupKey = dupKey;
@@ -844,6 +1633,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       }
     },
   };
+  return screen;
 }
 
 function mb(bytes: number): string {

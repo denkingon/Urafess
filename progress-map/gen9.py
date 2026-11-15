@@ -39,7 +39,7 @@ def relayout():
     for it in D.ITEMS:
         if "merge" in it:
             nsat[it["merge"][0]] = nsat.get(it["merge"][0], 0) + 1
-    STW = {None: 0.75, "u": 0.8, 0: 0.75, 1: 0.85, 2: 1.0, 3: 1.8, 4: 2.3, 5: 2.0}
+    STW = {None: 0.75, "u": 0.8, 0: 0.75, 1: 0.85, 2: 1.0, 3: 2.15, 4: 2.6, 5: 2.0}
     TW_ = {0: 1.15, 1: 1.0, 2: 0.8}
 
     def iw(it):
@@ -241,10 +241,11 @@ COLORS_JS = r"""
 
 # ===================== B' =====================
 B_JS = HEAD_JS + r"""  // 字を中心からの光線に沿って並べる（読む向きにそろえる）。返す並びは語の中の字の順
-  needle(word, angDeg, r0, fs) {
+  needle(word, angDeg, r0, fs, dirDeg) {
     var a = angDeg * Math.PI / 180, ux = Math.cos(a), uy = Math.sin(a);
     var chars = Array.from(word), L = chars.length;
-    var fwd = Math.abs(ux) > Math.abs(uy) ? ux > 0 : uy > 0;
+    var da = (dirDeg === undefined ? angDeg : dirDeg) * Math.PI / 180, dx = Math.cos(da), dy = Math.sin(da);
+    var fwd = Math.abs(dx) > Math.abs(dy) ? dx > 0 : dy > 0;
     var out = new Array(L), acc = r0 + 4;
     for (var q = 0; q < L; q++) {
       var i = fwd ? q : L - 1 - q, c = chars[i], w = fs, h = fs;
@@ -259,6 +260,25 @@ B_JS = HEAD_JS + r"""  // 字を中心からの光線に沿って並べる（読
     }
     return out;
   }
+  // 字を輪に沿って並べる（字は立てたまま、読む向きにそろえる）。中心は (840, 780)
+  arcText(word, thetaDeg, R, fs) {
+    var th = thetaDeg * Math.PI / 180, tx = -Math.sin(th), ty = Math.cos(th);
+    var fwd = Math.abs(tx) > Math.abs(ty) ? tx > 0 : ty > 0;
+    var seq = Array.from(word); if (!fwd) seq.reverse();
+    var steps = seq.map(function (c) {
+      var w = fs, h = fs;
+      if (c === ' ') { w = 0.35 * fs; h = 0.35 * fs; } else if (c.charCodeAt(0) < 128) { w = 0.62 * fs; h = 0.8 * fs; }
+      var cand = [];
+      if (Math.abs(tx) > 1e-6) cand.push(w / Math.abs(tx));
+      if (Math.abs(ty) > 1e-6) cand.push(h / Math.abs(ty));
+      return Math.min.apply(null, cand) + 0.06 * fs;
+    });
+    var total = steps.reduce(function (p, q) { return p + q; }, 0), acc = -total / 2;
+    return seq.map(function (c, i) {
+      var a = th + (acc + steps[i] / 2) / R; acc += steps[i];
+      return { c: c, x: (840 + R * Math.cos(a)).toFixed(1), y: (780 + R * Math.sin(a)).toFixed(1) };
+    });
+  }
   renderVals() {
     var self = this;
     var D = this.data();
@@ -270,7 +290,17 @@ B_JS = HEAD_JS + r"""  // 字を中心からの光線に沿って並べる（読
 """ + COLORS_JS + r"""
     var CX = 840, CY = 780, RING = [340, 275, 210, 145, 85, 30], RU = 380, OUT = RU + 110, FS = [28, 24, 17], FSAT = 13;
     var rOf = function (s) { return s === 'u' ? RU : RING[s]; };
-    var pt = function (a, r) { var q = a * Math.PI / 180; return [CX + Math.cos(q) * r, CY + Math.sin(q) * r]; };
+    // ねじり：銀河のように、中心へ行くほど角度を回す（縁 R0 で 0）。K＝半径が e 分の1 になるごとに回る rad
+    var kp = parseFloat(this.props.twist), K = isNaN(kp) ? D.twist : kp, R0 = 650, PITCH = Math.atan(K) * 180 / Math.PI;
+    var twd = function (r) { return K * Math.log(R0 / Math.max(30, Math.min(r, R0))) * 180 / Math.PI; };
+    var pt0 = function (a, r) { var q = a * Math.PI / 180; return [CX + Math.cos(q) * r, CY + Math.sin(q) * r]; };
+    var pt = function (a, r) { return pt0(a + twd(r), r); };
+    var W = function (p) {  // ねじる前の点を、ねじった場所へ
+      var dx = p[0] - CX, dy = p[1] - CY, r = Math.sqrt(dx * dx + dy * dy), q = Math.atan2(dy, dx) + twd(r) * Math.PI / 180;
+      return [CX + Math.cos(q) * r, CY + Math.sin(q) * r];
+    };
+    // ねじったあと、字の列が向く方角（読む向きを決めるのに使う）
+    var dirOf = function (a, r0, word, fs) { return a + twd(r0 + Array.from(word).length * fs * 0.55) - PITCH; };
 """ + TIME_JS + r"""
     var lineOf = function (p0, p1, c, op) {
       var dx = p1[0] - p0[0], dy = p1[1] - p0[1];
@@ -325,22 +355,24 @@ B_JS = HEAD_JS + r"""  // 字を中心からの光線に沿って並べる（読
       var fw = it.t === 0 ? 900 : 700, gl = glowOf(o.g);
       o.trails.forEach(function (p) { trails.push({ x: p[0].toFixed(1), y: p[1].toFixed(1), col: o.c, op: keep.toFixed(2) }); });
       o.segs.forEach(function (sg) { sg.op = (parseFloat(sg.op) * keep).toFixed(2); segs.push(sg); });
-      var own = self.needle(it.n, it.a, o.r, o.fs), tipOwn = pt(it.a, o.r);
+      var own = self.needle(it.n, it.a, o.r, o.fs, dirOf(it.a, o.r, it.n, o.fs)), tipOwn = pt(it.a, o.r);
       if (P && f > 0) {
-        var nv = beside(it.m, P), sat = self.needle(it.n, P.a, P.r, FSAT);
+        var nv = beside(it.m, P), sat = self.needle(it.n, P.a, P.r, FSAT, dirOf(P.a, P.r, it.n, FSAT));
         var fsx = o.fs + (FSAT - o.fs) * f;
         var opS = P.alive * (P.unknown ? 0.42 : 0.5 + 0.45 * o.g);
         var op = o.op + (opS - o.op) * f;
         own.forEach(function (p, j) {
           var s = sat[j];
-          chars.push({ c: p.c, w: i, x: (CX + p.x + (s.x + nv[0] - p.x) * f).toFixed(1), y: (CY + p.y + (s.y + nv[1] - p.y) * f).toFixed(1), fs: fsx.toFixed(1), col: o.c, op: op.toFixed(3), glow: gl, fw: fw });
+          var wp = W([CX + p.x + (s.x + nv[0] - p.x) * f, CY + p.y + (s.y + nv[1] - p.y) * f]);
+          chars.push({ c: p.c, w: i, x: wp[0].toFixed(1), y: wp[1].toFixed(1), fs: fsx.toFixed(1), col: o.c, op: op.toFixed(3), glow: gl, fw: fw });
         });
         // 来た道：動いている間だけ、元の場所から合流先の脇の付け根まで薄く引く（合流し終えたら消える）
-        var pa = pt(P.a, P.r), anc = [pa[0] + nv[0], pa[1] + nv[1]], trOp = 0.5 * Math.sin(Math.PI * f) * o.alive;
+        var pa = pt0(P.a, P.r), anc = W([pa[0] + nv[0], pa[1] + nv[1]]), trOp = 0.5 * Math.sin(Math.PI * f) * o.alive;
         if (trOp > 0.01) tribs.push(lineOf(tipOwn, [tipOwn[0] + (anc[0] - tipOwn[0]) * f, tipOwn[1] + (anc[1] - tipOwn[1]) * f], o.c, trOp));
       } else {
         own.forEach(function (p) {
-          chars.push({ c: p.c, w: i, x: (CX + p.x).toFixed(1), y: (CY + p.y).toFixed(1), fs: o.fs, col: o.c, op: o.op.toFixed(3), glow: gl, fw: fw });
+          var wq = W([CX + p.x, CY + p.y]);
+          chars.push({ c: p.c, w: i, x: wq[0].toFixed(1), y: wq[1].toFixed(1), fs: o.fs, col: o.c, op: o.op.toFixed(3), glow: gl, fw: fw });
         });
       }
       tips.push({ x: tipOwn[0].toFixed(1), y: tipOwn[1].toFixed(1), bg: o.g >= 0.5 ? '#FFFFFF' : o.c, op: (o.alive * (o.unknown ? 0.45 : 1) * keep).toFixed(3), cls: o.g >= 0.5 && keep > 0.5 ? 'now-ring' : '' });
@@ -348,7 +380,7 @@ B_JS = HEAD_JS + r"""  // 字を中心からの光線に沿って並べる（読
       if (o.alive >= 1 && t > TODAY - 1 && t < E[NE - 1].day) {
         var fade = Math.min(cl(t - (TODAY - 1)), 1 - prog(NE - 1));
         if (it.m && E[it.m.at].future) {
-          var rP = rOf(IT[it.m.into].s[NE - 1]), nv2 = beside(it.m, P), pp = pt(P.a, rP), gq = [pp[0] + nv2[0], pp[1] + nv2[1]];
+          var rP = rOf(IT[it.m.into].s[NE - 1]), nv2 = beside(it.m, P), pp = pt0(P.a, rP), gq = W([pp[0] + nv2[0], pp[1] + nv2[1]]);
           ghosts.push({ x: gq[0].toFixed(1), y: gq[1].toFixed(1), col: o.c, op: (0.95 * fade).toFixed(2) });
           gsegs.push(lineOf(tipOwn, gq, o.c, 0.45 * fade));
         } else if (!it.m) {
@@ -389,8 +421,24 @@ B_JS = HEAD_JS + r"""  // 字を中心からの光線に沿って並べる（読
     }
     shapeD += ' Z';
 """ + LOG_JS.replace("__BORN__", "生まれた").replace("__MOVED_F__", "進めたい").replace("__MOVED__", "進んだ") + r"""
+    // 時間帯の境目（渦の腕）。裏は鏡うつしなので逆に巻く
+    var arm = function (a0, sign) {
+      var d = '';
+      for (var r = 34; r <= 628; r += 18) { var p = pt0(a0 + sign * twd(r), r); d += (r === 34 ? 'M ' : ' L ') + p[0].toFixed(1) + ' ' + p[1].toFixed(1); }
+      var pe = pt0(a0 + sign * twd(628), 628);
+      return d + ' L ' + pe[0].toFixed(1) + ' ' + pe[1].toFixed(1) + ' ';
+    };
+    var armsD = D.secs.map(function (a0) { return arm(a0, 1); }).join('');
+    var armsUraD = D.secs.map(function (a0) { return arm(180 - a0, -1); }).join('');
+    var arcOf = function (u, sign) {
+      var c = col[u.col] || u.col;
+      return self.arcText(u.txt, u.a + sign * twd(u.R), u.R, u.fs).map(function (g) { return { c: g.c, x: g.x, y: g.y, fs: u.fs, col: c, fw: u.fw, op: u.op }; });
+    };
+    var cat = function (list, sign) { var out = []; list.forEach(function (u) { arcOf(u, sign).forEach(function (g) { out.push(g); }); }); return out; };
+    var stageChars = cat(D.stages, 1), uraChars = cat(D.ura, -1), uraNames = cat(D.uraNames, -1);
     return {
       kabe: col.kabe, hako: col.hako, yume: col.yume, gu: col.gu,
+      armsD: armsD, armsUraD: armsUraD, stageChars: stageChars, uraChars: uraChars, uraNames: uraNames,
       flipDeg: side === 'ura' ? 180 : 0, omotePE: side === 'ura' ? 'none' : 'auto', uraPE: side === 'ura' ? 'auto' : 'none',
       isOmote: side !== 'ura', isUra: side === 'ura',
       omoteBtn: side !== 'ura' ? '#ECECEA' : '#8E8E8A', uraBtn: side === 'ura' ? '#ECECEA' : '#8E8E8A',
@@ -411,7 +459,9 @@ def b_data():
         if i in M:
             d["m"] = M[i]
         items.append(d)
-    return {"end": D.END, "today": D.TODAY, "events": D.EVENTS, "stageName": STAGE, "items": items}
+    stages = [{"txt": n, "a": round(g7.STAGE_RAY, 2), "R": r, "fs": 13, "col": "#7A7D83", "fw": 400, "op": 1} for n, r in g7.STAGE_LABELS]
+    return {"end": D.END, "today": D.TODAY, "events": D.EVENTS, "stageName": STAGE, "items": items, "twist": D.TWIST,
+            "secs": [round(g7.SEC[s][0], 2) for s in D.SECTORS], "stages": stages, "ura": g7.ura_entries(), "uraNames": g7.ura_names()}
 
 
 TRIB_LAYER = ('<sc-for list="{{tribs}}" as="tb" hint-placeholder-count="5"><span style="position: absolute; left: 0px; top: 0px; width: {{tb.len}}px; height: 0px; '
@@ -653,7 +703,7 @@ def static_boxes():
     for sname in D.SECTORS:
         out.append({"n": "縁:" + sname, "b": g7.arc_boxes(sname, (g7.SEC[sname][0] + g7.SEC[sname][1]) / 2, g7.RIM, 20)})
     for nm, r in [("妄想", 340), ("問い", 275), ("決定", 210), ("試作", 145), ("実地", 85), ("段階不明", g7.RU)]:
-        out.append({"n": "段階:" + nm, "b": g7.arc_boxes(nm, g7.STAGE_RAY, r, 13)})
+        out.append({"n": "段階:" + nm, "r": r, "b": g7.arc_boxes(nm, g7.STAGE_RAY, r, 13)})
     return out
 
 
