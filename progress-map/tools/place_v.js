@@ -10,7 +10,7 @@ function ov(a, b, pad) { const dx = Math.min(a[2], b[2]) - Math.max(a[0], b[0]) 
 function labelBox(fl) { const fsz = +fl.fs, lh = +fl.lh; let w = 0; for (const ch of Array.from(fl.n)) w += ch.charCodeAt(0) < 128 ? 0.6 * fsz : fsz; return [+fl.x - 3, +fl.y - lh / 2 - 2, +fl.x + w + 3, +fl.y + lh / 2 + 2]; }
 const V = load(__dirname + '/../project/Vision.dc.html');
 const cv = new V(); const D2 = JSON.parse(JSON.stringify(cv.data())); cv.data = () => D2;
-const T = [7, 15, 28, 29, 30, 31, 33, 35, 36, 38, 40, 42];
+const T = [7, 15, 28, 29, 30, 31, 33, 35, 36, 37, 38, 39, 41, 43, 45];
 function score(wi) {
   let tot = 0;
   for (const t of T) {
