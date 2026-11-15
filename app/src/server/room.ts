@@ -80,6 +80,7 @@ import {
   DEFAULT_DURATIONS_MS,
   DEFAULT_MIC_MODE,
   DEFAULT_RATIO,
+  DEFAULT_REVEAL_MODE,
   DEFAULT_WISH_MODE,
   DURATION_MAX_MS,
   DURATION_MIN_MS,
@@ -90,6 +91,7 @@ import {
   HEARD_SLACK_MS,
   HOLD_UNKNOWN_END_MS,
   isMicMode,
+  isRevealMode,
   isRoleId,
   isValidRatio,
   isWishMode,
@@ -99,12 +101,15 @@ import {
   RESCUE_GAP_MS,
   RESCUE_HOLD_KEEP_MS,
   RESCUE_IMMUNE_MS,
+  REVEAL_COUNT_MS,
+  REVEAL_LEAD_MS,
   ROLES,
   RUN_STALE_MS,
   SYNC_OK_MS,
   type AnnounceSettings,
   type MicMode,
   type Ratio,
+  type RevealMode,
   type RoleId,
   type WishMode,
   WISH_MISS_MAX,
@@ -198,6 +203,13 @@ interface GameState {
   wishMode: WishMode;
   /** いまの配役を決めたときの希望の数（くじだけで決めた配役・配役前は null） */
   wishStat?: { oni: number; runner: number; none: number; missed: number } | null;
+  /** 配役の出し方の設定（主催者が切り替える。次の配役から効く）。古い保存データには無いので load で補う */
+  revealMode: RevealMode;
+  /**
+   * いまの配役の出し方（配役を押したときの設定）。at＝配役を押した時刻、hitAt＝sync のとき全員の画面で役が出る時刻。
+   * 配役前は null。古い保存データには無い（そのときは、すぐ出す）
+   */
+  reveal?: { mode: RevealMode; at: number; hitAt: number | null } | null;
   /** 司令塔：札と、いまの配役の司令塔。古い保存データには無いので load で補う */
   lead?: LeadState;
   /** チャット：仲間の回線で送れるもの・牢屋の人の決まり・場所の名前（新しい夜を始めても残る）。古い保存データには無い */
@@ -319,6 +331,8 @@ interface Participant {
   role: RoleId | null;
   assignId: number;
   ackId: number;
+  /** 役が画面に出た配役の番号（ドラムロールが止まった。0＝まだ） */
+  seenId: number;
   removed: boolean;
   joinedAt: number;
   /** その回の3桁（逃走者のスマホが音で鳴らす）。配役のたびに変わる */
@@ -432,6 +446,7 @@ type ParticipantRow = {
   wish_miss: number | null;
   wish_miss_prev: number | null;
   pin: string | null;
+  seen_id: number | null;
 };
 
 /**
@@ -577,6 +592,8 @@ export class GameRoom extends DurableObject<Env> {
       ['wish_miss_prev', 'wish_miss_prev INTEGER NOT NULL DEFAULT 0'],
       // 配役をいじる（主催者の指名）を入れたときに足した列
       ['pin', 'pin TEXT'],
+      // 配役の出し方（ドラムロール）を入れたときに足した列
+      ['seen_id', 'seen_id INTEGER NOT NULL DEFAULT 0'],
     ];
     for (const [name, ddl] of columns) {
       if (!have.has(name)) this.sql.exec(`ALTER TABLE participants ADD COLUMN ${ddl}`);
@@ -745,6 +762,8 @@ export class GameRoom extends DurableObject<Env> {
           ratio: { ...DEFAULT_RATIO },
           micMode: DEFAULT_MIC_MODE,
           wishMode: DEFAULT_WISH_MODE,
+          revealMode: DEFAULT_REVEAL_MODE,
+          reveal: null,
           nextNum: 1,
           counts: { oni: 0, runner: 0 },
           night: 1,
@@ -781,6 +800,9 @@ export class GameRoom extends DurableObject<Env> {
     // 配役の希望を入れる前の版で作った部屋には、決め方が無い
     if (!isWishMode(this.game.wishMode)) this.game.wishMode = DEFAULT_WISH_MODE;
     if (this.game.wishStat === undefined) this.game.wishStat = null;
+    // 配役の出し方を入れる前の版で作った部屋には、設定が無い。そのとき進んでいた配役は、すぐ出す（もう出ている）
+    if (!isRevealMode(this.game.revealMode)) this.game.revealMode = DEFAULT_REVEAL_MODE;
+    if (this.game.reveal === undefined) this.game.reveal = null;
     // 司令塔を入れる前の版で作った部屋には、札が無い（外してある形で補う）
     if (!this.game.lead || !isLeadRules(this.game.lead.rules)) {
       this.game.lead = { rules: { ...DEFAULT_LEAD_RULES }, assignId: 0, oni: null, runner: null, fellAt: null };
@@ -800,6 +822,7 @@ export class GameRoom extends DurableObject<Env> {
         role: (r.role as RoleId | null) ?? null,
         assignId: r.assign_id,
         ackId: r.ack_id,
+        seenId: r.seen_id ?? 0,
         removed: r.removed === 1,
         joinedAt: r.joined_at,
         code: r.code ?? null,
@@ -1168,6 +1191,9 @@ export class GameRoom extends DurableObject<Env> {
         return;
       case 'ack':
         this.onAck(att, Number(msg.assignId));
+        return;
+      case 'seen':
+        this.onSeen(att, Number(msg.assignId), now);
         return;
       case 'sync': {
         const err = Number(msg.err);
@@ -1733,6 +1759,7 @@ export class GameRoom extends DurableObject<Env> {
       role: null,
       assignId: 0,
       ackId: 0,
+      seenId: 0,
       removed: false,
       joinedAt: now,
       code: null,
@@ -1843,6 +1870,22 @@ export class GameRoom extends DurableObject<Env> {
     if (!p || assignId !== this.game.assignId || p.assignId !== assignId || p.ackId === assignId) return;
     p.ackId = assignId;
     this.sql.exec(`UPDATE participants SET ack_id = ? WHERE pid = ?`, assignId, p.pid);
+    this.scheduleHostUpdate();
+  }
+
+  /**
+   * 役が画面に出た（ドラムロールが止まった）。1つの配役で1人1回だけ数える。
+   * 記録の ms は、主催者が配役を押してから出るまでの長さ（tap では、その人がカードを止めるまで）
+   */
+  private onSeen(att: Attachment, assignId: number, now: number): void {
+    if (!att.pid) return;
+    const p = this.people.get(att.pid);
+    const g = this.game;
+    if (!p || p.removed || p.role === null || assignId !== g.assignId || p.assignId !== assignId || p.seenId === assignId) return;
+    p.seenId = assignId;
+    this.sql.exec(`UPDATE participants SET seen_id = ? WHERE pid = ?`, assignId, p.pid);
+    const rv = g.reveal ?? null;
+    this.log('seen', { p, at: now, data: { how: rv?.mode ?? 'now', ms: rv ? Math.max(0, now - rv.at) : null } });
     this.scheduleHostUpdate();
   }
 
@@ -3145,12 +3188,14 @@ export class GameRoom extends DurableObject<Env> {
           news: null,
           wishStat,
           shrink: null,
+          // 出し方は配役を押したときの設定で決まる（あとで切り替えても、いまの配役は変わらない）
+          reveal: { mode: g.revealMode, at: now, hitAt: g.revealMode === 'sync' ? now + REVEAL_LEAD_MS + REVEAL_COUNT_MS : null },
           ...this.missionReset(now, 'assign'),
         };
         this.ctx.storage.transactionSync(() => {
           for (const [pid, role] of roles) {
             this.sql.exec(
-              `UPDATE participants SET role = ?, assign_id = ?, ack_id = 0, code = ?, rcode = ?, free_until = NULL, wish_miss = ?, wish_miss_prev = ? WHERE pid = ?`,
+              `UPDATE participants SET role = ?, assign_id = ?, ack_id = 0, seen_id = 0, code = ?, rcode = ?, free_until = NULL, wish_miss = ?, wish_miss_prev = ? WHERE pid = ?`,
               role,
               nextAssignId,
               codeOf.get(pid) ?? null,
@@ -3176,7 +3221,7 @@ export class GameRoom extends DurableObject<Env> {
             this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid), ...wishData, ...pinData } });
           }
           const pins = active.filter((p) => p.pin !== null).length;
-          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll, how: g.wishMode, ...(wishStat ? { wish: wishStat } : {}), ...(pins ? { pins } : {}) } });
+          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll, how: g.wishMode, reveal: g.revealMode, ...(wishStat ? { wish: wishStat } : {}), ...(pins ? { pins } : {}) } });
         });
         this.photos.clear();
         for (const [pid, role] of roles) {
@@ -3184,6 +3229,7 @@ export class GameRoom extends DurableObject<Env> {
           p.role = role;
           p.assignId = nextAssignId;
           p.ackId = 0;
+          p.seenId = 0;
           p.code = codeOf.get(pid) ?? null;
           p.rcode = rcodeOf.get(pid) ?? null;
           p.freeUntil = null;
@@ -3463,6 +3509,14 @@ export class GameRoom extends DurableObject<Env> {
         this.commit({});
         break;
       }
+      case 'reveal': {
+        // いつでも切り替えられる。効くのは次の配役から（いま流れているドラムロールは変えない）
+        if (!isRevealMode(msg.reveal)) return this.reject(ws, att, op, 'bad-input');
+        if (msg.reveal === g.revealMode) break;
+        this.commit({ revealMode: msg.reveal });
+        this.log('reveal', { at: now, data: { reveal: msg.reveal } });
+        break;
+      }
       case 'mic': {
         // いつでも切り替えられる（どちらがいいか試すため）。試合中に変えても、そのときから全員のスマホに効く
         if (!isMicMode(msg.mic)) return this.reject(ws, att, op, 'bad-input');
@@ -3521,6 +3575,7 @@ export class GameRoom extends DurableObject<Env> {
           allCaughtAt: null,
           counts: { oni: 0, runner: 0 },
           wishStat: null,
+          reveal: null,
           lead: { ...this.lead(), assignId: 0, oni: null, runner: null, fellAt: null },
           night: g.night + 1,
           nightAt: now,
@@ -4353,6 +4408,8 @@ export class GameRoom extends DurableObject<Env> {
       jail: g.jail ?? null,
       wishMode: g.wishMode,
       ...this.wishCounts(),
+      revealMode: g.revealMode,
+      reveal: g.stage === 'lobby' || !g.reveal ? null : { mode: g.reveal.mode, hitAt: g.reveal.hitAt },
       lead: this.lead().rules,
       chat: { mode: g.chatMode ?? DEFAULT_CHAT_MODE, jail: g.chatJail ?? DEFAULT_CHAT_JAIL, places: g.chatPlaces ?? [...DEFAULT_PLACES] },
     };
@@ -4576,6 +4633,7 @@ export class GameRoom extends DurableObject<Env> {
         ),
       names: this.watchNames(active),
       bans: { custom: [...this.bans], builtin: DEFAULT_BANNED.length },
+      seen: inAssign.filter((p) => p.seenId === g.assignId).length,
       lead: this.hostLead(),
     };
   }

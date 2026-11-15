@@ -331,3 +331,29 @@ describe('配役の希望（逃走者／鬼の板）', () => {
     expect(same.note).toEqual(['主催者が決めた', 'Host’s pick']);
   });
 });
+
+describe('配役のドラムロール（drum）', () => {
+  const reveal = (mode: 'sync' | 'tap' | 'now', hitAt: number | null) => game({ reveal: { mode, hitAt } });
+  it('全員同時：止まる時刻までは役を隠し、最後の3秒で 3・2・1。時刻を過ぎたら役が出る', () => {
+    const g = reveal('sync', 10_000);
+    expect(participantView(g, oni, 4_000, true)).toMatchObject({ role: 'なし', drum: { mode: 'sync', count: null }, counts: null });
+    expect(participantView(g, oni, 7_500, true).drum).toEqual({ mode: 'sync', count: 3 });
+    expect(participantView(g, oni, 9_200, true).drum).toEqual({ mode: 'sync', count: 1 });
+    expect(participantView(g, oni, 10_000, true).role).toBe('鬼');
+    expect(participantView(g, oni, 10_000, true).drum).toBeUndefined();
+  });
+  it('全員同時：時計が大きくずれて止まる時刻がずっと先に見えるスマホは、流さずにすぐ出す', () => {
+    expect(participantView(reveal('sync', 60_000), oni, 0, true).role).toBe('鬼');
+  });
+  it('タップ：止めるまで流れ、止めたら役が出る。開始のあとは出る', () => {
+    const g = reveal('tap', null);
+    expect(participantView(g, runner, 99_000, true)).toMatchObject({ role: 'なし', drum: { mode: 'tap', count: null } });
+    expect(participantView(g, runner, 99_000, true, true).role).toBe('逃走者');
+    expect(participantView({ ...g, stage: 'timer', timer: startTimer(D, 0) }, runner, 0, true).drum).toBeUndefined();
+  });
+  it('すぐ出す・古いサーバー（reveal なし）・役のない人は流さない', () => {
+    expect(participantView(reveal('now', null), oni, 0, true).role).toBe('鬼');
+    expect(participantView(game({}), oni, 0, true).role).toBe('鬼');
+    expect(participantView(reveal('tap', null), { ...oni, role: null, assignId: 0 }, 0, true).drum).toBeUndefined();
+  });
+});

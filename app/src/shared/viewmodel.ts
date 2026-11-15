@@ -2,7 +2,7 @@ import { allocateCounts } from './allocate';
 import { CAPTURE_PHASE_INDEX, captureOpenAt } from './capture';
 import { decideWinner, endReason, everyoneJailed } from './jail';
 import type { GameView, HostSummary, MeView, Winner } from './protocol';
-import { CLAIM_GRACE_MS, DEFAULT_RATIO, PHASES, ROLE_NAME, ROLES, type RoleId } from './rules';
+import { CLAIM_GRACE_MS, DEFAULT_RATIO, PHASES, REVEAL_AHEAD_MAX_MS, REVEAL_COUNT_MS, ROLE_NAME, ROLES, type RoleId } from './rules';
 import { formatClock, positionAt } from './schedule';
 
 /**
@@ -64,6 +64,27 @@ export interface PhoneView {
    * 出さないとき（役が決まってからゲームの終わりまで・くじだけの決め方・古いサーバー）は null。古い呼び出し側は省略できる
    */
   wish?: WishView | null;
+  /**
+   * 配役のドラムロール：役が出る前（逃走者と鬼のカードが流れている間）。sync＝全員同時に止まる（count は 3・2・1。数え始める前は null）、
+   * tap＝タップで止める。出ている間は、役で変わる所を全部隠す（role は「なし」。絵・人数の印・走ると光るは出さない）。
+   * 流れていないときは null。古い呼び出し側は省略できる
+   */
+  drum?: { mode: 'sync' | 'tap'; count: number | null } | null;
+}
+
+/**
+ * 配役のドラムロールが流れているか（＝まだ役を出していないか）。
+ * seen＝このスマホが、いまの配役の役をもう出した（tap で止めた・開き直した）。
+ * sync は時計だけで決まる：止まる時刻を過ぎていれば、いつ開いても役が出ている
+ */
+export function drumOf(game: GameView, me: MeView, serverNow: number, seen: boolean): NonNullable<PhoneView['drum']> | null {
+  if (game.stage !== 'assigned' || seen || !game.reveal) return null;
+  if (me.removed || me.role === null || me.assignId !== game.assignId) return null;
+  if (game.reveal.mode === 'tap') return { mode: 'tap', count: null };
+  if (game.reveal.mode !== 'sync' || game.reveal.hitAt == null) return null;
+  const left = game.reveal.hitAt - serverNow;
+  if (left <= 0 || left > REVEAL_AHEAD_MAX_MS) return null;
+  return { mode: 'sync', count: left <= REVEAL_COUNT_MS ? Math.ceil(left / 1000) : null };
 }
 
 /** 配役の希望の板に渡す中身 */
@@ -145,6 +166,8 @@ export function participantView(
   me: MeView,
   serverNow: number,
   online: boolean,
+  /** このスマホが、いまの配役の役をもう出した（ドラムロールを止めた）。省くと「まだ」 */
+  seen = false,
 ): PhoneView {
   const inRound = me.role !== null && me.assignId === game.assignId && !me.removed;
   const roleName = inRound && me.role ? (ROLE_NAME[me.role] as '鬼' | '逃走者') : 'なし';
@@ -233,6 +256,17 @@ export function participantView(
   const role = me.role as 'oni' | 'runner';
 
   if (game.stage === 'assigned') {
+    // 役が出る前（カードが流れている間）：役で変わる所を全部隠す。数字は 3・2・1、タップのときは「タップ」
+    const drum = drumOf(game, me, serverNow, seen);
+    if (drum) {
+      return {
+        ...base, role: 'なし', step: 1, label: '配役', big: drum.count !== null ? String(drum.count) : '…',
+        message: drum.mode === 'tap' ? '流れているカードをタップすると、自分の役が出る。' : '全員同時に、自分の役が出る。',
+        scene: 'assign', word: drum.mode === 'tap' ? ['タップ', 'TAP'] : null,
+        time: drum.count !== null ? String(drum.count) : null,
+        counts: null, drum,
+      };
+    }
     // 希望が枠より多くて通らなかった人には、次は先に通ることを伝える
     const missed = me.wishMissed === true;
     // 主催者が決めた・動かした役：そう伝える（希望とちがえば、次は優先）

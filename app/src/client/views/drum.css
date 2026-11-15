@@ -1,0 +1,93 @@
+/*
+ * 配役のドラムロール（views/drum.ts）。参加者の画面（.player）の中に置き、画面全体を覆う。
+ * 値はデザインのキャンバス「Urafess 配役のドラムロール」の試作と同じ。
+ */
+.player .drum {
+  --rc: var(--tsuki);
+  --dground: var(--yami);
+  position: fixed; inset: 0; z-index: 50;
+  background: var(--dground);
+  color: var(--tsuki);
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+.player .drum[hidden] { display: none; }
+.player .drum[data-role="oni"] { --rc: var(--shu); }
+.player .drum.is-hit[data-role="runner"] { --dground: #272729; }
+.player .drum.is-hit[data-role="oni"] { --dground: #281715; }
+
+.drum .dr-shk {
+  position: absolute; inset: 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center;
+  padding: calc(16px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+}
+.drum .dr-top { color: var(--rc); font-weight: 700; font-size: var(--min); line-height: 1.15; text-align: center; }
+.drum .dr-top .en { font-size: calc(var(--min) * 1.2); }
+.drum .dr-mid { position: relative; flex: 1 1 0; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center; }
+.drum .dr-low { position: relative; flex: 0 0 auto; height: min(236px, 30dvh); width: 100%; display: flex; align-items: center; justify-content: center; text-align: center; }
+
+/* 下の段：流れている間は 3・2・1 か「タップ」、ドンのあとは役の名前 */
+.drum .dr-count, .drum .dr-tap, .drum .dr-sync, .drum .dr-role { display: none; }
+.drum[data-phase="roll"][data-mode="sync"] .dr-count:not(:empty) { display: block; }
+.drum[data-phase="roll"][data-mode="sync"] .dr-count:empty + .dr-tap + .dr-sync { display: block; }
+.drum[data-phase="roll"][data-mode="tap"] .dr-tap { display: flex; flex-direction: column; align-items: center; }
+.drum[data-phase="hit"] .dr-role { display: block; }
+.drum .dr-count { font-size: min(150px, 18dvh); line-height: 1; }
+.drum .dr-count.tick { animation: dr-digit 1s linear both; }
+@keyframes dr-digit { 0% { opacity: 0; transform: scale(1.6); } 12% { opacity: 1; transform: scale(1); } 82% { opacity: 1; } 100% { opacity: .2; transform: scale(.86); } }
+.drum .dr-sync, .drum .dr-word { font-size: 26px; line-height: 1.3; font-weight: 700; }
+.drum .dr-sync .en, .drum .dr-word .en { font-size: 20.8px; }
+.drum .dr-sync { color: var(--tsuki-muted); }
+.drum .dr-rip { position: relative; width: 76px; height: 76px; margin-bottom: 6px; }
+.drum .dr-rip i { position: absolute; box-sizing: border-box; border-radius: 50%; }
+.drum .dr-rip .r0 { inset: 26px; background: var(--chikko); }
+.drum .dr-rip .r1 { inset: 13px; border: 5px solid var(--chikko); animation: dr-rip 1s ease-out infinite; }
+.drum .dr-rip .r2 { inset: 0; border: 5px solid var(--chikko); animation: dr-rip 1s ease-out .2s infinite; }
+@keyframes dr-rip { 0% { opacity: 0; } 40% { opacity: 1; } 100% { opacity: 0; } }
+.drum .dr-rw { color: var(--rc); animation: dr-rise .34s cubic-bezier(.2,.8,.3,1) .1s both; }
+.drum .dr-rw .ja { font-size: 30px; line-height: 1.3; font-weight: 700; }
+.drum .dr-rw .en { font-size: 62px; line-height: 1; opacity: 1; }
+.drum .dr-mark { margin-top: 12px; display: flex; justify-content: center; color: var(--rc); animation: dr-rise .3s ease-out .45s both; }
+.drum .dr-mark .gl { width: 28px; height: 28px; }
+.drum .dr-mark .dot { width: 18px; height: 18px; border-radius: 50%; background: var(--tsuki); display: block; }
+@keyframes dr-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+/* 流れるカード：逃走者（月白の枠）と鬼（朱の枠）が交互に、上から下へ */
+.drum .dr-reel { position: absolute; inset: 0; overflow: hidden; -webkit-mask-image: linear-gradient(#0000, #000 20%, #000 80%, #0000); mask-image: linear-gradient(#0000, #000 20%, #000 80%, #0000); }
+.drum[data-phase="hit"] .dr-reel, .drum[data-phase="hit"] .dr-gate { display: none; }
+.drum .dr-strip {
+  --cs: min(290px, 34dvh, calc(100vw - 80px));
+  --gap: calc(var(--cs) * .1);
+  position: absolute; left: 50%; top: 50%; width: var(--cs);
+  margin: calc(var(--cs) * -2.5 - var(--gap) * 2) 0 0 calc(var(--cs) / -2);
+  display: flex; flex-direction: column; gap: var(--gap); will-change: transform;
+  animation-name: dr-in, dr-loop; animation-timing-function: cubic-bezier(.4,0,.8,.6), linear; animation-iteration-count: 1, infinite; animation-fill-mode: both, none;
+}
+@keyframes dr-in { from { transform: translateY(calc(-2 * (var(--cs) + var(--gap)))); } to { transform: translateY(0); } }
+@keyframes dr-loop { from { transform: translateY(calc(-2 * (var(--cs) + var(--gap)))); } to { transform: translateY(0); } }
+.drum .dc { position: relative; flex: 0 0 auto; box-sizing: border-box; width: var(--cs); height: var(--cs); border-radius: 16px; border: 3px solid var(--tsuki); background: var(--yami); --picto-ground: var(--yami); }
+.drum .dc.on { border-color: var(--shu); }
+.drum .dc svg { display: block; width: 100%; height: 100%; }
+.drum .dr-gate { position: absolute; left: 50%; top: 50%; --g: calc(min(290px, 34dvh, calc(100vw - 80px)) + 16px); width: var(--g); height: var(--g); margin: calc(var(--g) / -2) 0 0 calc(var(--g) / -2); box-sizing: border-box; border-radius: 20px; border: 2px solid var(--tsuki-muted); pointer-events: none; }
+.drum[data-mode="tap"] .dr-gate { border: 3px dashed var(--chikko); animation: dr-pulse 1s ease-in-out infinite; }
+@keyframes dr-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(184,255,90,.5); } 50% { box-shadow: 0 0 0 12px rgba(184,255,90,0); } }
+
+/* ドン：役の色で1回だけ光る → 絵が叩きつけられる → 枠が外へ弾ける → 画面が揺れる */
+.drum .dr-flash { position: absolute; inset: 0; pointer-events: none; background: var(--rc); opacity: 0; }
+.drum .dr-card, .drum .dr-burst { display: none; }
+.drum.is-hit .dr-card { display: block; width: min(336px, 40dvh, calc(100vw - 40px)); aspect-ratio: 1; --picto-ground: var(--dground); animation: dr-slam .46s cubic-bezier(.2,.9,.3,1) both; }
+.drum.is-hit .dr-card svg { display: block; width: 100%; height: 100%; }
+.drum.is-hit .dr-flash { animation: dr-flash .36s ease-out both; }
+.drum.is-hit .dr-shk { animation: dr-shake .32s linear both; }
+.drum.is-hit .dr-burst { display: block; position: absolute; left: 50%; top: 50%; --g: calc(min(290px, 34dvh, calc(100vw - 80px)) + 16px); width: var(--g); height: var(--g); margin: calc(var(--g) / -2) 0 0 calc(var(--g) / -2); box-sizing: border-box; border-radius: 20px; border: 5px solid var(--rc); animation: dr-burst .7s cubic-bezier(.1,.7,.3,1) both; }
+.drum.is-hit .dr-burst.b2 { animation-delay: .11s; }
+@keyframes dr-flash { 0% { opacity: .9; } 100% { opacity: 0; } }
+@keyframes dr-shake { 0% { transform: translate(0, 14px); } 20% { transform: translate(-5px, -9px); } 40% { transform: translate(4px, 6px); } 60% { transform: translate(-3px, -3px); } 80% { transform: translate(1px, 2px); } 100% { transform: none; } }
+@keyframes dr-slam { 0% { transform: scale(1.9); opacity: 0; } 14% { opacity: 1; } 52% { transform: scale(.93); } 76% { transform: scale(1.03); } 100% { transform: scale(1); } }
+@keyframes dr-burst { 0% { transform: scale(1); opacity: 1; } 100% { transform: scale(2.1); opacity: 0; } }
+
+.drum .dr-btn { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
+
+@media (prefers-reduced-motion: reduce) {
+  .drum .dr-strip { animation: none; }
+  .drum.is-hit .dr-shk, .drum.is-hit .dr-flash, .drum.is-hit .dr-card, .drum.is-hit .dr-burst, .drum[data-mode="tap"] .dr-gate { animation: none; }
+}

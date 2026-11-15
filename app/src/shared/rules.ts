@@ -117,6 +117,31 @@ export type MicMode = 'always' | 'hold';
 export const DEFAULT_MIC_MODE: MicMode = 'always';
 export const isMicMode = (m: unknown): m is MicMode => m === 'always' || m === 'hold';
 
+// ---------- 配役の出し方（ドラムロール） ----------
+//
+// 役が決まると、参加者の画面では逃走者と鬼のカードが交互に流れ、止まった所で自分の役が出る（ドン）。
+// 止め方は主催者が切り替える（次の配役から効く。どれがいいか本番で比べるため、記録にも残す）。
+//   sync：全員同時。配役を押した REVEAL_LEAD_MS ＋ REVEAL_COUNT_MS 後に、全員の画面が同じ瞬間に止まる（3・2・1 を数える）
+//   tap ：自分で。流れているカードをタップした人から止まる。押さない人は、主催者が「開始」を押したときに出る
+//   now ：ドラムロールなし。配役と同時に出る（前の版と同じ）
+// 役そのものは配役と同時にスマホへ届いている（そのあと切れても止まれるように）。止まるまで、画面は役で変わる所を全部隠す。
+
+export type RevealMode = 'sync' | 'tap' | 'now';
+export const DEFAULT_REVEAL_MODE: RevealMode = 'sync';
+export const isRevealMode = (m: unknown): m is RevealMode => m === 'sync' || m === 'tap' || m === 'now';
+
+/** sync：配役を押してから数え始めるまで（その間に全員へ届く。カードはもう流れている） */
+export const REVEAL_LEAD_MS = 2_000;
+
+/** sync：3・2・1 を数える長さ */
+export const REVEAL_COUNT_MS = 3_000;
+
+/** sync：止まる時刻がこれより先に見えるスマホ（時計が大きくずれている）は、流さずにすぐ出す */
+export const REVEAL_AHEAD_MAX_MS = REVEAL_LEAD_MS + REVEAL_COUNT_MS + 5_000;
+
+/** tap：カードが流れはじめてから、この間のタップは数えない（ほかのボタンを押していた指で止まらないように） */
+export const REVEAL_TAP_GUARD_MS = 600;
+
 /** 長押しの長さの上限。押しっぱなしのまま「離した」が届かない長押しも、ここで離したとみなす */
 export const HOLD_MAX_MS = 30_000;
 

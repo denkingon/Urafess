@@ -43,6 +43,8 @@ const KIND_NAME: Record<string, string> = {
   'wish-mode': '配役の決め方',
   cast: '主催者の指名',
   recast: '主催者が役を動かした',
+  reveal: '配役の出し方',
+  seen: '役が出た',
   area: '遊ぶ範囲',
   dq: '範囲の外で失格',
   'dq-ok': '失格のあと牢屋に出頭した',
