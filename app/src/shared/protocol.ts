@@ -1,6 +1,7 @@
 import type { Area } from './area';
 import type { ShrinkLive, ShrinkPlan } from './shrink';
 import type { Candidate, CaptureVia } from './capture';
+import type { ChatCh, ChatJail, ChatMode, ChatMsg } from './chat';
 import type { CastStat } from './cast';
 import type { MeetScope, MissionKind, PhotoStatus } from './mission';
 
@@ -70,6 +71,8 @@ export interface GameView {
    * 主催者が指名した人は数えない（その人の役は希望と関係なく決まるため）。古いサーバーからは来ない
    */
   wishes?: { oni: number; runner: number };
+  /** チャット：仲間の回線で送れるもの・牢屋の人の決まり・場所の名前。古いサーバーからは来ない（そのときはチャットを出さない） */
+  chat?: { mode: ChatMode; jail: ChatJail; places: string[] };
   /**
    * 配役の希望：いまの人数と割合での、それぞれの役の「開いている枠」（主催者の指名の分を引いたあと）。
    * 古いサーバーからは来ない（そのときは、人数と割合からスマホが出す）
@@ -370,6 +373,10 @@ export type HostOp =
   | 'skip'
   /** 夜を終える：全員の画面を SEE YOU AGAIN にする。試合中（時間が0になる前）はできない */
   | 'end'
+  /** チャット：仲間の回線で送れるもの（chatMode）・牢屋の人の決まり（chatJail）を切り替える。いつでも */
+  | 'chat-mode'
+  /** チャット：札に代入する場所の名前を変える（places） */
+  | 'chat-places'
   /**
    * ミッションを出す（title＝題。空なら種類ごとの既定の題）。前のミッションが開いていれば締め切ってから出す。
    * kind＝種類（省くと集合写真）。合流は scope（all＝全員を2人組／one＝1組だけ）、範囲は zone（頂点）と need（人数）と secs（締め切りまでの秒）。
@@ -442,6 +449,9 @@ export type ClientMsg =
       free?: boolean;
       /** ミッション成功で出す人数（省くと全員） */
       n?: number;
+      chatMode?: ChatMode;
+      chatJail?: ChatJail;
+      places?: string[];
       /** ミッションの種類（省くと集合写真） */
       kind?: MissionKind;
       /** 合流：組の作り方 */
@@ -504,7 +514,26 @@ export type ClientMsg =
    * 配役の希望：次の配役でなりたい役（null＝どちらでも）。配役の前（待合室・結果発表）と、見学の人だけ変えられる。
    * 役が決まってからゲームが終わるまでの分は、サーバーが捨てて今の状態を送り直す
    */
-  | { t: 'wish'; role: RoleId | null };
+  | { t: 'wish'; role: RoleId | null }
+  /**
+   * チャットを送る。参加者：card＝札の id（person＝仲間の番号、place＝場所の名前、位置は取れていれば付ける）、
+   * emoji＝絵文字の札の番号の並び、digit＝数字。どれを送れるかはサーバーが決め、合わない分は捨てる。
+   * 主催者：ch は hq、text＝文、to＝all（全員）・oni・runner・pid:<その人>（1人への返事）
+   */
+  | {
+      t: 'chat';
+      ch: ChatCh;
+      card?: string;
+      person?: number;
+      place?: string;
+      emoji?: number[];
+      digit?: string;
+      text?: string;
+      to?: string;
+      lat?: number;
+      lon?: number;
+      acc?: number;
+    };
 
 /**
  * 本人だけに出す短い知らせ（画面の帯・振動）。状態そのものは snap の me で届く。
@@ -547,4 +576,9 @@ export type ServerMsg =
   /** 走ると光る：いま光っている全員（全員に同じものを送る。変わるたびに、まとめて）。s はサーバーの時刻 */
   | { t: 'glow'; s: number; runs: GlowEntry[] }
   /** 全体の地図：見えてよい人の位置（その人の役で中身が変わる）。s はサーバーの時刻 */
-  | { t: 'mates'; s: number; scope: MatesScope; people: MateEntry[] };
+  | { t: 'mates'; s: number; scope: MatesScope; people: MateEntry[] }
+  /**
+   * チャット。reset＝true は「いま見えてよい全部」（つないだとき・配役が変わったとき。手元の分を入れ替える）、無ければ足す分。
+   * team は同じ役の仲間（「◯◯、一緒に来て！」で選ぶ相手。自分は入らない）。reset のときだけ付く
+   */
+  | { t: 'chat'; s: number; reset?: boolean; msgs: ChatMsg[]; team?: { num: number; name: string }[] };
