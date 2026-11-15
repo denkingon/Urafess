@@ -1,0 +1,170 @@
+/*
+ * チャットの見た目。上＝参加者の画面（.player の中。帯と板）、下＝本部・主催者の画面（.chat-host）。
+ * 決まりは参加者の画面と同じ：字は --min（16px）より小さくしない。押す場所は 44px 以上。色は人と出来事にだけ
+ */
+
+/* ---------- 参加者：1行の帯（長押しの板のすぐ上） ---------- */
+.player .chat-strip {
+  flex: 0 0 auto; margin-top: 10px; min-height: 48px; width: 100%; padding: 0 12px;
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  border: 1px solid var(--sen); border-radius: 12px; background: var(--raised); color: var(--tsuki);
+  font-size: max(var(--min), 16px); font-weight: 700;
+}
+.player .chat-strip[hidden] { display: none; }
+.player .chat-ico { flex: none; width: 22px; height: 22px; color: var(--tsuki-muted); }
+.player .chat-ico .gl { width: 100%; height: 100%; }
+.player .chat-last { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.player .chat-last .ja { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player .chat-last .en { flex: none; }
+.player .chat-n {
+  flex: none; min-width: 28px; height: 28px; padding: 0 8px; border-radius: 14px; background: var(--tsuki); color: var(--yami);
+  display: inline-flex; align-items: center; justify-content: center; font-size: max(calc(var(--min) * 1.2), 19px); line-height: 1;
+}
+.player .chat-n[hidden] { display: none; }
+.player .chat-strip.is-new { border-color: var(--tsuki); }
+.player .chat-strip.is-new .chat-ico { color: var(--tsuki); }
+@media (prefers-reduced-motion: no-preference) {
+  .player .chat-strip.is-new { animation: chat-new 1s ease-in-out 4; }
+}
+@keyframes chat-new { 50% { background: color-mix(in srgb, var(--tsuki) 22%, var(--raised)); } }
+/* 「捕まえたのは？」が出ている間は、候補が親指の届く所に収まるよう帯をしまう */
+.player:has(.cap-cands:not([hidden])) .chat-strip { display: none; }
+.player.is-ended .chat-strip, .player.is-ended .chat { display: none; }
+
+/* ---------- 参加者：開いた板（真ん中の絵の場所） ---------- */
+.player.is-chat .p-pic, .player.is-chat .stage, .player.is-chat .p-counts, .player.is-chat .p-word,
+.player.is-chat .p-lit, .player.is-chat .p-note, .player.is-chat .mission-card, .player.is-chat .wish { display: none; }
+.player.is-chat .p-time { margin-top: 8px; font-size: clamp(calc(var(--min) * 1.2), 5dvh, 40px); }
+.player .chat { flex: 1 1 0; min-height: 0; margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+/* 開いている間は、下の長押しの板を低くして場所を空ける（押せるまま）。マイクの板と手動の行は、閉じると戻る */
+.phone.player.is-chat .hold, .phone.player.is-chat.is-glow .hold, .phone.player.is-chat .jail .hold { min-height: 72px; }
+.player.is-chat .hold .hold-icon .gl { width: 40px; height: 40px; }
+.player.is-chat .cap-mic, .player.is-chat .cap-prep, .player.is-chat .cap-foot { display: none; }
+/* 背の低いスマホ：札は日本語だけにして、4段が入るようにする */
+@media (max-height: 740px) {
+  .player .chat-card .en { display: none; }
+  .player .chat-pad button { min-height: 44px; }
+}
+.player .chat[hidden] { display: none; }
+
+.player .chat-head { flex: none; display: flex; align-items: stretch; gap: 8px; }
+.player .chat-tabs { flex: 1 1 auto; display: flex; gap: 8px; }
+.player .chat-tabs button {
+  flex: 1 1 0; min-height: 48px; padding: 0 12px; display: flex; align-items: center; justify-content: center; gap: 8px;
+  border: 1px solid var(--sen); border-radius: 12px; background: transparent; color: var(--tsuki-muted); font-size: max(var(--min), 18px); font-weight: 900;
+}
+.player .chat-tabs button[hidden] { display: none; }
+.player .chat-tabs button .ja, .player .chat-tabs button .en { display: inline; }
+.player .chat-tabs button[aria-selected="true"] { border-color: var(--tsuki); color: var(--tsuki); background: var(--raised); }
+.player .chat-tabs i {
+  font-style: normal; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 12px; background: var(--tsuki); color: var(--yami);
+  display: inline-flex; align-items: center; justify-content: center; font-size: max(var(--min), 16px); font-weight: 900;
+}
+.player .chat-tabs i[hidden] { display: none; }
+.player .chat-close {
+  flex: none; width: 48px; min-height: 48px; padding: 0; border: 1px solid var(--sen); border-radius: 12px; background: transparent;
+  color: var(--tsuki); font-size: 28px; line-height: 1; font-weight: 400;
+}
+
+.player .chat-list {
+  flex: 1 1 0; min-height: 56px; margin: 0; padding: 0; list-style: none; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.player .chat-list li {
+  align-self: flex-start; max-width: 92%; padding: 6px 12px; border-radius: 12px; background: var(--raised);
+  display: flex; flex-direction: column; gap: 0; font-size: max(var(--min), 16px); line-height: 1.35;
+}
+.player .chat-list li.is-mine { align-self: flex-end; background: transparent; border: 1px solid var(--sen); }
+.player .chat-list li.is-hq { align-self: stretch; max-width: none; border: 1px solid var(--tsuki); background: transparent; }
+.player .chat-list li.chat-empty { align-self: center; margin: auto 0; background: transparent; color: var(--tsuki-muted); text-align: center; font-weight: 700; }
+.player .chat-who { display: flex; align-items: baseline; gap: 8px; color: var(--tsuki-muted); font-weight: 700; }
+.player .chat-who small { font-size: inherit; }
+.player .chat-who time { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 500; }
+.player .chat-what { font-size: max(var(--min), 20px); font-weight: 900; overflow-wrap: anywhere; }
+.player .chat-what small { margin-left: 8px; font-size: max(calc(var(--min) * 1.2), 19px); font-weight: 900; opacity: .7; }
+.player .chat-list li.is-big .chat-what { font-size: 32px; line-height: 1.2; letter-spacing: .04em; }
+.player .chat-list li.is-jail { opacity: .8; }
+.player .chat-where { font-size: max(calc(var(--min) * 1.2), 20px); color: var(--chikko); }
+
+.player .chat-rule { flex: none; margin: 0; text-align: center; color: var(--tsuki-muted); font-size: max(var(--min), 16px); font-weight: 700; line-height: 1.3; }
+.player .chat-rule .ja, .player .chat-rule .en { display: inline; }
+.player .chat-rule .en { margin-left: 8px; }
+
+/* 入りきらないときは、札の側を送って見る（流れは 56px より低くしない） */
+.player .chat-pad { flex: 0 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 8px; }
+.player .chat-pad:empty { display: none; }
+.player .chat-pad button {
+  min-height: 48px; padding: 4px 10px; border: 1px solid var(--tsuki-muted); border-radius: 12px; background: var(--raised); color: var(--tsuki);
+  font-size: max(var(--min), 18px); line-height: 1.2; font-weight: 900;
+}
+.player .chat-pad button:disabled { opacity: .4; }
+.player .chat-cards { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.player .chat-pad .chat-card { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; padding: 4px 8px; font-size: clamp(var(--min), 4.3vw, 18px); }
+.player .chat-card .en.u { font-size: max(calc(var(--min) * 1.2), 19px); opacity: .7; }
+/* 選んでから送る札（○○ のある札）は点線 */
+.player .chat-card[data-pick] { border-style: dashed; }
+.player .chat-ask { margin: 0; text-align: center; font-size: max(var(--min), 20px); font-weight: 900; }
+.player .chat-ask .ja, .player .chat-ask .en { display: inline; }
+.player .chat-ask .en { margin-left: 8px; }
+.player .chat-opts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-height: 30dvh; overflow-y: auto; }
+.player .chat-opt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player .chat-none { grid-column: 1 / -1; margin: 0; text-align: center; color: var(--tsuki-muted); font-size: max(var(--min), 16px); font-weight: 700; }
+.player .chat-pad .chat-back { background: transparent; border-color: var(--sen); color: var(--tsuki-muted); }
+.player .chat-back .ja, .player .chat-back .en, .player .chat-send .ja, .player .chat-send .en { display: inline; }
+.player .chat-back .en, .player .chat-send .en { margin-left: 8px; }
+.player .chat-draft {
+  min-width: 0; min-height: 48px; padding: 0 4px; border-bottom: 2px solid var(--tsuki); display: flex; align-items: center; justify-content: center;
+  font-size: 26px; line-height: 1; letter-spacing: .04em; white-space: nowrap; overflow: hidden;
+}
+.player .chat-ph { color: var(--tsuki-muted); }
+.player .chat-emoji { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
+.player .chat-pad .chat-emoji button { min-height: 44px; padding: 0; border-color: var(--sen); font-size: 24px; font-weight: 400; }
+.player .chat-digits { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.player .chat-pad .chat-digits button { font-size: 28px; }
+.player .chat-go { display: grid; grid-template-columns: minmax(0, 1fr) 56px auto; gap: 8px; }
+.player .chat-pad .chat-go button { padding: 4px 14px; }
+.player .chat-pad .chat-send { background: var(--tsuki); color: var(--yami); border-color: var(--tsuki); }
+/* 送った直後（続けては送れない）・通信が切れている間 */
+.player .chat.is-cool .chat-pad, .player .chat.is-offline .chat-pad { opacity: .4; pointer-events: none; }
+
+/* ---------- 本部・主催者 ---------- */
+.chat-host[hidden] { display: none; }
+.chat-host .seg { display: flex; }
+.chat-host .seg button { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 0 4px; font-size: 16px; border-radius: 0; white-space: nowrap; }
+.chat-host .seg button + button { border-left: none; }
+.chat-host .seg button:first-child { border-radius: 10px 0 0 10px; }
+.chat-host .seg button:last-child, .chat-host .seg button:nth-last-child(2):has(+ [hidden]) { border-radius: 0 10px 10px 0; }
+.chat-host .seg button[hidden] { display: none; }
+.chat-host .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.chat-host .chat-feed {
+  margin: 0; padding: 0; list-style: none; max-height: 44dvh; min-height: 96px; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px;
+}
+.chat-host .chat-feed li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 16px; line-height: 1.4; }
+.chat-host .chat-feed li:last-child { border-bottom: none; }
+.chat-host .chat-feed li.chat-empty { justify-content: center; color: var(--quiet); padding: 24px 10px; }
+.chat-host .chat-feed li.is-pending { background: color-mix(in srgb, var(--ink) 14%, transparent); }
+.chat-host .chat-mark {
+  flex: none; min-width: 40px; height: 28px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--line-strong);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900;
+}
+.chat-host li[data-line="oni"] .chat-mark { color: #ff6a3d; border-color: #ff6a3d; }
+.chat-host li[data-line="hq"] .chat-mark { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.chat-host .chat-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.chat-host .chat-who { display: flex; gap: 8px; color: var(--quiet); font-size: 16px; }
+.chat-host .chat-who time { margin-left: auto; font-variant-numeric: tabular-nums; }
+.chat-host .chat-what { font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+.chat-host .chat-what small { margin-left: 8px; font-size: 16px; font-weight: 500; color: var(--quiet); }
+.chat-host .chat-feed button.ghost { flex: none; min-height: 44px; font-size: 16px; }
+.chat-host form { display: flex; flex-direction: column; gap: 8px; }
+.chat-host .chat-line { display: flex; gap: 8px; }
+.chat-host .chat-line input { flex: 1 1 auto; min-width: 0; font-size: 16px; }
+.chat-host .chat-line button { flex: none; min-height: 48px; padding: 0 20px; font-size: 16px; }
+.chat-host .chat-jail { display: flex; align-items: center; gap: 12px; font-size: 16px; }
+.chat-host .chat-jail .seg { flex: 1 1 auto; }
+.chat-host label { font-size: 16px; color: var(--quiet); line-height: 1.5; }
+.chat-host textarea {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--field); color: var(--ink);
+  font: inherit; font-size: 16px; line-height: 1.5; resize: vertical;
+}
+.chat-host form > button[type="submit"] { min-height: 48px; font-size: 16px; }

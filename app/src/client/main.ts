@@ -11,6 +11,7 @@ import { SoundListener } from './sound/listener';
 import { Sensors } from './sense';
 import { callAccount, createAccount, errorText } from './views/account';
 import { createCapture } from './views/capture';
+import { createChat } from './views/chat';
 import { createGlow } from './views/glow';
 import { createHost, type HostActions } from './views/host';
 import { createHQ } from './views/hq';
@@ -232,6 +233,9 @@ function startPlayer(): void {
   // 走ると光る：走っているかはこのスマホが決め、光っている間だけ位置を送る
   const glow = createGlow({ sensors, root: phone.el, onDisqualified: () => client.disqualified(), onReported: () => client.reportedToJail() });
   phone.stage.append(glow.el);
+  // チャット：1行の帯は長押しの板のすぐ上、開いた板は真ん中の絵の場所（長押しの板は出したまま）
+  const chat = createChat({ client, sensors, root: phone.el });
+  phone.slot.before(chat.panel, chat.strip);
   const reporter = new RunReporter();
   let lastView: PhoneView | null = null;
   let lastMatePos = 0;
@@ -339,6 +343,7 @@ function startPlayer(): void {
       mission.update(null, null);
       wish.update(waiting, s);
       glow.update(waiting, s, client.serverNow());
+      chat.update(null, s, Date.now());
       return;
     }
     show(phone.el);
@@ -351,6 +356,7 @@ function startPlayer(): void {
     jail.update(view, s);
     wish.update(view, s);
     glow.update(view, s, client.serverNow());
+    chat.update(view, s, client.serverNow() ?? Date.now());
     // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）
     if (s.me.code && s.me.code !== preparedCode) {
       preparedCode = s.me.code;
@@ -411,6 +417,7 @@ function startHost(token: string): void {
   const sensors = new Sensors();
   const hostActions: HostActions = {
     command: (op, extra) => client.command(op, extra),
+    chat: (to, text) => client.hostChat(to, text),
     downloadLog: async () => {
       const res = await fetch(`/api/game/${gameId}/log`, { headers: hostHeaders, cache: 'no-store' });
       if (!res.ok) throw new Error(`log ${res.status}`);
@@ -487,6 +494,7 @@ function startHost(token: string): void {
       lastReject: s.lastReject,
       glow: s.glow,
       mates: s.mates,
+      chat: s.chat,
     });
   });
 }
