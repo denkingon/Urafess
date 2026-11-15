@@ -3,7 +3,7 @@ import type { CaptureVia } from '../../shared/capture';
 import { CHAT_KEEP, type ChatCh, type ChatJail, type ChatMode, type ChatMsg } from '../../shared/chat';
 import type { MeetScope, MissionKind } from '../../shared/mission';
 import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
-import { SILENCE_LIMIT_MS, type RoleId, type WishMode } from '../../shared/rules';
+import { SILENCE_LIMIT_MS, type AnnounceSettings, type RoleId, type WishMode } from '../../shared/rules';
 
 /**
  * しくみの層。接続・時計合わせ・状態だけを持ち、見た目は一切知らない。
@@ -481,6 +481,7 @@ export class GameClient {
       durations?: number[];
       ratio?: { oni: number; runner: number };
       mic?: 'always' | 'hold';
+      announce?: AnnounceSettings;
       wishMode?: WishMode;
       pids?: string[];
       role?: RoleId | null;
