@@ -19,7 +19,7 @@ spec.loader.exec_module(g3)
 PROJ = g3.PROJ
 W, H = 1720, 1700
 CX, CY = 840, 780
-RING = [340, 275, 210, 145, 85, 30]
+RING = [340, 300, 255, 205, 130, 30]
 RU = 380
 RIM = 650
 SEAM = 628
@@ -59,6 +59,7 @@ for s in D.SECTORS:
     for i, it in enumerate(ids):
         ANG[it["k"]] = a0 + (a1 - a0) * (i + 0.5) / len(ids)
 STAGE_RAY = SEC["最後の発表"][0]
+RIMA = {s: (SEC[s][0] + SEC[s][1]) / 2 for s in D.SECTORS}  # 縁の名前の角度（gen9 の relayout() が置き直す）
 
 
 def ura_angle(u):
@@ -120,8 +121,8 @@ def r_of(s):
 
 def check():
     problems = []
-    rim = [arc_boxes(s, (SEC[s][0] + SEC[s][1]) / 2, RIM, 20) for s in D.SECTORS]
-    stage_lbl = [arc_boxes(n, STAGE_RAY, r, 13) for n, r in [("妄想", 340), ("問い", 275), ("決定", 210), ("試作", 145), ("実地", 85), ("段階不明", RU)]]
+    rim = [arc_boxes(s, RIMA[s], RIM, 20) for s in D.SECTORS]
+    stage_lbl = [arc_boxes(n, STAGE_RAY, r, 13) for n, r in [("妄想", 340), ("問い", 300), ("決定", 255), ("試作", 205), ("実地", 130), ("段階不明", RU)]]
     for k in range(len(D.EVENTS)):
         words = []
         for it in D.ITEMS:
@@ -200,7 +201,7 @@ JS = r"""class Component extends DCLogic {
       kabe: this.props.kabe ?? '#FF8A3D', hako: this.props.hako ?? '#3FD0A0',
       yume: this.props.yume ?? '#A98BFF', gu: this.props.gu ?? '#F2D74B', none: '#A6A8AD'
     };
-    var CX = 840, CY = 780, RING = [340, 275, 210, 145, 85, 30], RU = 380, OUT = RU + 110, FS = [28, 24, 17];
+    var CX = 840, CY = 780, RING = [340, 300, 255, 205, 130, 30], RU = 380, OUT = RU + 110, FS = [28, 24, 17];
     var rOf = function (s) { return s === 'u' ? RU : RING[s]; };
     var pt = function (a, r) { var q = a * Math.PI / 180; return [CX + Math.cos(q) * r, CY + Math.sin(q) * r]; };
     var cl = this.clamp01;
@@ -396,7 +397,7 @@ def ura_names():
     return out
 
 
-STAGE_LABELS = [("妄想", 340), ("問い", 275), ("決定", 210), ("試作", 145), ("実地", 85), ("段階不明", RU)]
+STAGE_LABELS = [("妄想", 340), ("問い", 300), ("決定", 255), ("試作", 205), ("実地", 130), ("段階不明", RU)]
 
 
 def band_html():
@@ -417,7 +418,7 @@ def band_html():
         f'<sc-for list="{{{{ticks}}}}" as="tk" hint-placeholder-count="7"><span style="position: absolute; left: {{{{tk.x}}}}px; top: {{{{tk.top}}}}px; width: 3px; height: {{{{tk.h}}}}px; margin-left: -1px; background: {{{{tk.bar}}}}"></span></sc-for>'
         f'<label for="t-range" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">日付</label>'
         f'<input id="t-range" type="range" min="0" max="{{{{end}}}}" step="0.05" value="{{{{tStr}}}}" onChange="{{{{onRange}}}}" style="position: absolute; left: 0px; top: 42px; width: 780px; height: 44px; margin: 0px; accent-color: #ECECEA; cursor: pointer">'
-        f'<sc-for list="{{{{ticks}}}}" as="tk" hint-placeholder-count="7"><button type="button" onClick="{{{{tk.go}}}}" style="position: absolute; left: {{{{tk.x}}}}px; top: 86px; transform: translateX(-50%); min-width: {{{{tk.w}}}}px; min-height: 40px; padding: 0px; background: none; border: 0px; color: {{{{tk.col}}}}; font-family: {MONO}, {FONT}; font-size: 14px; font-weight: {{{{tk.fw}}}}; cursor: pointer">{{{{tk.d}}}}</button></sc-for>'
+        f'<sc-for list="{{{{ticks}}}}" as="tk" hint-placeholder-count="7"><button type="button" onClick="{{{{tk.go}}}}" style="position: absolute; left: {{{{tk.x}}}}px; top: 86px; transform: translateX(-50%); min-width: {{{{tk.w}}}}px; min-height: 40px; padding: 0px; background: none; border: 0px; color: {{{{tk.col}}}}; font-family: {MONO}, {FONT}; font-size: 12px; letter-spacing: -0.3px; font-weight: {{{{tk.fw}}}}; cursor: pointer">{{{{tk.d}}}}</button></sc-for>'
         f'<span style="position: absolute; left: 9px; top: 128px; font-size: 12px; line-height: 16px; color: #8E8E8A">10月</span>'
         f'<span style="position: absolute; left: {{{{m11X}}}}px; top: 128px; font-size: 12px; line-height: 16px; color: #8E8E8A">11月</span>'
         f'</div>'
@@ -484,7 +485,7 @@ body{{margin:0}}
         return "".join(g)
 
     def rim(front):
-        return "".join(arc(s, ((SEC[s][0] + SEC[s][1]) / 2) if front else back((SEC[s][0] + SEC[s][1]) / 2), RIM, 20, "#8A8D93", 700) + "\n" for s in D.SECTORS)
+        return "".join(arc(s, RIMA[s] if front else back(RIMA[s]), RIM, 20, "#8A8D93", 700) + "\n" for s in D.SECTORS)
 
     seg_tpl = '<span style="position: absolute; left: 0px; top: 0px; width: {{%s.len}}px; height: 0px; border-top: 1.5px dashed {{%s.col}}; opacity: {{%s.op}}; transform-origin: 0 0; transform: translate({{%s.x}}px, {{%s.y}}px) rotate({{%s.rot}}deg); pointer-events: none"></span>'
 

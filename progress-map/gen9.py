@@ -31,50 +31,179 @@ PROJ = g7.PROJ
 IDX = {it["k"]: i for i, it in enumerate(D.ITEMS)}
 
 
-def relayout():
-    """時間帯の幅と、その中の件の幅。
-    内側（仕上がった段階）ほど同じ字幅でも角度を食うので広く取り、合流先には脇の字の分を足す。
-    合流して出ていった件の元の場所は細くする（合流の前にしか使わない）"""
-    nsat = {}
-    for it in D.ITEMS:
-        if "merge" in it:
-            nsat[it["merge"][0]] = nsat.get(it["merge"][0], 0) + 1
-    STW = {None: 0.75, "u": 0.8, 0: 0.75, 1: 0.85, 2: 1.0, 3: 2.15, 4: 2.6, 5: 2.0}
-    TW_ = {0: 1.15, 1: 1.0, 2: 0.8}
+def relayout(order=None, rimq=None):
+    """時間帯の幅と、その中の件の角度。
+    となり合う字の列がぶつからない最小の角度（必要な幅）を、輪の半径・字の大きさ・脇に付く小さい字・ねじりから
+    1組ずつ出し、それを全部満たすいちばん詰めた並びを作ってから、余りを全体に同じ比で配る。
+    ・字の列は自分の輪から外へ伸びるので、2本がいちばん近づくのは内側の端（2本のうち外側の輪の半径）
+    ・ねじると列どうしの間は cos(渦の傾き) 倍に詰まる
+    ・立てたままの字（正方形）の列どうしは、列の向きが斜めなほど広く要る
+    ・合流して出ていった件の元の場所は、合流の前にしか使わないので細くする
+    ・縁の時間帯の名前どうし、段階の名前の光線も同じ決まりで空ける
+    戻り値＝いちばん詰めた並びの1周（度）。360 を超えたら入りきっていない"""
+    K = D.TWIST
+    cosp = 1.0 / math.sqrt(1.0 + K * K)
+    FSAT, PAD, MERGED = 13, 2.5, 0.6  # PAD＝字と字の間（px）。MERGED＝合流して出ていった件の元の場所は、この割合だけ空ける
 
-    def iw(it):
+    items = list(D.ITEMS) if order is None else order
+    pos = {it["k"]: i for i, it in enumerate(items)}
+    sats = {}
+    for i, it in enumerate(items):
         if "merge" in it:
-            return 0.5
-        inner = max(STW[it["s"][-2]], STW[it["s"][-1]])
-        return inner * TW_[it["t"]] + 0.62 * nsat.get(it["k"], 0)
-
-    w = {s: 1.8 + sum(iw(it) for it in D.ITEMS if it["sec"] == s) for s in D.SECTORS}
-    LEAD = {"最後の発表": 0.55}  # 段階の名前（妄想・問い…）を書く光線のための空き
-    for k_, v_ in LEAD.items():
-        w[k_] += v_
-    tot = sum(w.values())
-    a, sec, ang = -90.0, {}, {}
-    ray = 0.0
+            sats.setdefault(it["merge"][0], []).append((it["merge"][1], i, it))
+    nodes = []  # 角度の順：時間帯の境目・（光線）・件
     for s in D.SECTORS:
-        span = 360.0 * w[s] / tot
-        sec[s] = (a, a + span)
-        ids = [it for it in D.ITEMS if it["sec"] == s]
-        tw = sum(iw(it) for it in ids)
-        pad = span * 0.45 / w[s]
-        lead = span * LEAD.get(s, 0) / w[s]
+        nodes.append({"kind": "bound", "sec": s})
         if s == "最後の発表":
-            ray = a + lead * 0.5
-        b = a + pad + lead
-        for it in ids:
-            d = (span - 2 * pad - lead) * iw(it) / tw
-            ang[it["k"]] = b + d / 2
-            b += d
-        a += span
-    g7.SEC, g7.ANG, g7.STAGE_RAY = sec, ang, ray  # 段階の名前は最後の発表の側へ少し寄せる（直前の件の字とぶつけない）
-    g7.RLA = -40.0  # 裏の輪の名前を少し前へ寄せ、イータへ・アイスの裏を空ける
+            nodes.append({"kind": "ray"})
+        mine = [it for it in items if it["sec"] == s]
+        for q, it in enumerate(mine):
+            if q == (rimq or {}).get(s, len(mine) // 2):
+                nodes.append({"kind": "rim", "sec": s})
+            fs = g7.FS[it["t"]]
+            if "merge" in it:
+                r = g7.r_of(it["s"][it["merge"][1]])
+                nodes.append({"kind": "item", "k": it["k"], "r": r, "fs": fs, "len": 4 + len(it["n"]) * fs * 1.5, "f": MERGED, "sat": []})
+                continue
+            r = min(g7.r_of(x) for x in it["s"][-2:] if x is not None)
+            cnt, sat = {1: 0, -1: 0}, []
+            for at, i, c in sorted(sats.get(it["k"], []), key=lambda q: (q[0], q[1])):  # merges() と同じ順で、来た側の何列目か
+                sd = 1 if i > pos[it["k"]] else -1
+                sat.append((sd, cnt[sd], 4 + len(c["n"]) * FSAT * 1.5))
+                cnt[sd] += 1
+            nodes.append({"kind": "item", "k": it["k"], "r": r, "fs": fs, "len": 4 + len(it["n"]) * fs * 1.5, "f": 1.0, "sat": sat})
+        if (rimq or {}).get(s, len(mine) // 2) >= len(mine):
+            nodes.append({"kind": "rim", "sec": s})
+    n = len(nodes)
+    theta = [0.0] * n
+
+    def parts(nd, side, th):  # その側に出ている字の列：(合流先の列からの離れ px, 字の半分, 内側の端, 外側の端)
+        out = [(0.0, nd["fs"] / 2, nd["r"], nd["r"] + nd["len"])]
+        q = math.radians(th)
+        ex = lambda f: f * (abs(math.cos(q)) + abs(math.sin(q))) / 2  # ボードの beside() と同じ
+        for sd, slot, ln in nd["sat"]:
+            if sd == side:
+                out.append((ex(nd["fs"]) + 5 + ex(FSAT) + slot * (2 * ex(FSAT) + 3), FSAT / 2, nd["r"], nd["r"] + ln))
+        return out
+
+    def asin_deg(x):
+        return math.degrees(math.asin(min(0.95, x)))
+
+    def need(j, k, tj, tk):
+        A, B = nodes[j], nodes[k]
+        if A["kind"] == "bound" and B["kind"] == "bound":
+            return 0.0
+        if A["kind"] == "rim" or B["kind"] == "rim":  # 縁の名前（20px、円に沿う）
+            def half(nd, th):
+                q = math.radians(th)
+                return sum(g3.step_along(c, 20, -math.sin(q), math.cos(q)) for c in nd["sec"]) / 2
+            if A["kind"] == "rim" and B["kind"] == "rim":
+                return math.degrees((half(A, tj) + half(B, tk) + 12) / g7.RIM)
+            R, X, th, tx = (A, B, tj, tk) if A["kind"] == "rim" else (B, A, tk, tj)
+            if X["kind"] != "item" or X["r"] + X["len"] < g7.RIM - 16:
+                return 0.0
+            return math.degrees((half(R, th) + X["fs"] / 2 + 6) / g7.RIM) * X["f"]
+        if A["kind"] != "item" or B["kind"] != "item":
+            X, side, th = (B, -1, tk) if A["kind"] != "item" else (A, 1, tj)
+            other = B if X is A else A
+            if X["kind"] != "item":
+                return 0.4
+            best = 0.0
+            for d, e, r0, r1 in parts(X, side, th):
+                if other["kind"] == "ray":  # 段階の名前（13px・2〜4字）は輪ごとに光線の上
+                    rr = [q for q in g7.RING[:-1] + [g7.RU] if r0 - 8 <= q <= r1 + 8]
+                    if rr:
+                        best = max(best, asin_deg((d + (e + 17 + PAD) / cosp) / max(min(rr), 60)))
+                else:
+                    best = max(best, asin_deg((d + (e * 0.5 + PAD) / cosp) / max(r0, 60)))
+            return best * X["f"]
+        # 字の列が半径で重ならなくても、同じ線の上には並べない（1本の名前に見えるため）
+        best = asin_deg(((A["fs"] + B["fs"]) / 4 + PAD) / cosp / max(A["r"], B["r"], 60))
+        for da, ea, a0, a1 in parts(A, 1, tj):
+            for db, eb, b0, b1 in parts(B, -1, tk):
+                if a1 < b0 or b1 < a0:
+                    continue
+                best = max(best, asin_deg((da + db + (ea + eb + PAD) / cosp) / max(a0, b0, 60)))
+        return best * min(A["f"], B["f"])
+
+    bidx = [i for i, nd in enumerate(nodes) if nd["kind"] == "bound"]
+    WIN = 12
+    total = 360.0
+    for _ in range(8):
+        ang0 = [-90.0 + t * 360.0 / total for t in theta]
+        th = [0.0] * n
+        for k in range(1, n):
+            best = th[k - 1]
+            for j in range(max(0, k - WIN), k):
+                best = max(best, th[j] + need(j, k, ang0[j], ang0[k]))
+            th[k] = best
+        tot = th[n - 1]  # 1周：最後のほうと最初のほうの組
+        for j in range(max(0, n - WIN), n):
+            for k in range(0, min(WIN, n)):
+                if j != k:
+                    tot = max(tot, th[j] + need(j, k, ang0[j], ang0[k] + 360.0) - th[k])
+        theta, total = th, tot
+    scale = 360.0 / total
+    angs = [-90.0 + t * scale for t in theta]
+    sec, ang, ray, rima = {}, {}, 0.0, {}
+    for i, nd in enumerate(nodes):
+        if nd["kind"] == "bound":
+            bi = bidx.index(i)
+            sec[nd["sec"]] = (angs[i], angs[bidx[bi + 1]] if bi + 1 < len(bidx) else 270.0)
+        elif nd["kind"] == "ray":
+            ray = angs[i]
+        elif nd["kind"] == "rim":
+            rima[nd["sec"]] = angs[i]
+        else:
+            ang[nd["k"]] = angs[i]
+    g7.SEC, g7.ANG, g7.STAGE_RAY, g7.RIMA = sec, ang, ray, rima
+    g7.RLA = 156.0  # 裏の輪の名前（いた人・イータ・SFC・世界）の角度。裏の字がいちばん動かずに済む所（tools/ura_shifts.py の RELAX=search）
+    return total
 
 
-relayout()
+# 縁の名前を置かない角度（表の向きで）：左上の凡例の端。表の凡例と、裏（鏡うつし）の凡例
+RIM_KEEPOUT = [(203.0, 217.0), (303.0, 319.0)]
+
+
+def relayout_all():
+    """縁の名前が凡例にかかる時間帯は、名前を並びの中の別の場所へ動かして置き直す"""
+    rimq = {}
+
+    def clash():
+        out = []
+        for s in D.SECTORS:
+            c = g7.RIMA[s] % 360.0
+            q = math.radians(c)
+            h = math.degrees(sum(g3.step_along(ch, 20, -math.sin(q), math.cos(q)) for ch in s) / 2 / g7.RIM)
+            if any(c + h > a and c - h < b for a, b in RIM_KEEPOUT):
+                out.append(s)
+        return out
+
+    total = relayout(rimq=rimq)
+    for _ in range(6):
+        bad = clash()
+        if not bad:
+            break
+        s = bad[0]
+        cnt = sum(1 for it in D.ITEMS if it["sec"] == s)
+        base = cnt // 2
+        best = None
+        for q in sorted(range(cnt + 1), key=lambda x: abs(x - base)):
+            rimq[s] = q
+            total = relayout(rimq=rimq)
+            nb = clash()
+            if s not in nb:
+                best = q
+                break
+        if best is None:
+            rimq.pop(s, None)
+            total = relayout(rimq=rimq)
+            break
+    return total
+
+
+TIGHT = relayout_all()
+print("layout: いちばん詰めて %.1f 度（360 まで）" % TIGHT)
 STAGE = ["妄想", "問い", "決定", "試作", "実地", "本番"]
 
 
@@ -288,7 +417,7 @@ B_JS = HEAD_JS + r"""  // 字を中心からの光線に沿って並べる（読
     var playing = !!this._raf;
     var side = st.side === 'ura' ? 'ura' : 'omote';
 """ + COLORS_JS + r"""
-    var CX = 840, CY = 780, RING = [340, 275, 210, 145, 85, 30], RU = 380, OUT = RU + 110, FS = [28, 24, 17], FSAT = 13;
+    var CX = 840, CY = 780, RING = [340, 300, 255, 205, 130, 30], RU = 380, OUT = RU + 110, FS = [28, 24, 17], FSAT = 13;
     var rOf = function (s) { return s === 'u' ? RU : RING[s]; };
     // ねじり：銀河のように、中心へ行くほど角度を回す（縁 R0 で 0）。K＝半径が e 分の1 になるごとに回る rad
     var kp = parseFloat(this.props.twist), K = isNaN(kp) ? D.twist : kp, R0 = 650, PITCH = Math.atan(K) * 180 / Math.PI;
@@ -475,7 +604,7 @@ def plans_footer(top):
     return (f'<div data-part="plans" style="position: absolute; left: 64px; top: {top}px; width: 1592px; pointer-events: none">'
             '<div style="display: flex; align-items: baseline; gap: 14px; border-top: 1px solid #2A2C31; padding-top: 14px; margin-bottom: 14px">'
             '<span style="font-size: 20px; line-height: 24px; font-weight: 900; color: #ECECEA">これから</span>'
-            '<span style="font-size: 12px; line-height: 16px; color: #A3A3A0">会話から拾ったやりたいこと。日付と順番は未定。└ ＝合流したもの（合流先の下に並ぶ）</span></div>'
+            '<span style="font-size: 12px; line-height: 16px; color: #A3A3A0">会話から拾ったやりたいこと。本番は 11/17（火）の想定。順番は未定。└ ＝合流したもの（合流先の下に並ぶ）</span></div>'
             '<div style="display: flex; gap: 40px; align-items: flex-start">' + col("A") + col("B") + col("C") + '</div>'
             '<span data-part="plans-end" style="display: none"></span></div>')
 
@@ -497,7 +626,7 @@ B_LEGEND = ('<span style="display: flex; flex-direction: column; gap: 1px; color
             '<span style="font-size: 12px; line-height: 15px; font-weight: 700; opacity: 0.7">合流したもの＝もう単独では動かない</span></span>')
 
 
-B_H, V_H = 2160, 2130  # 11/04・11/06 の動きの一覧と、下の「これから」が切れない高さ
+B_H, V_H = 2280, 2250  # 動きの一覧と、下の「これから」（11/15 で 30 行）が切れない高さ
 B_FT, V_FT = 1800, 1770  # 下の「これから」の上端
 
 
@@ -701,7 +830,7 @@ def static_boxes():
     """B' の動かない字（縁の時間帯名・段階名）の箱。node の重なり確認で使う"""
     out = []
     for sname in D.SECTORS:
-        out.append({"n": "縁:" + sname, "b": g7.arc_boxes(sname, (g7.SEC[sname][0] + g7.SEC[sname][1]) / 2, g7.RIM, 20)})
+        out.append({"n": "縁:" + sname, "b": g7.arc_boxes(sname, g7.RIMA[sname], g7.RIM, 20)})
     for nm, r in [("妄想", 340), ("問い", 275), ("決定", 210), ("試作", 145), ("実地", 85), ("段階不明", g7.RU)]:
         out.append({"n": "段階:" + nm, "r": r, "b": g7.arc_boxes(nm, g7.STAGE_RAY, r, 13)})
     return out
