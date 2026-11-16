@@ -429,7 +429,7 @@ function startPlayer(): void {
       const freeRunner = me.role === 'runner' && me.assignId === s.game.assignId && !me.removed && me.caught == null;
       announce.update({ news, aboutMe: news !== null && me.newsAbout === news.seq, serverNow, freeRunner, busy: emitter.playing });
     }
-    voice.update(s.online && view.touch === 'oni' ? s.game.assignId : 0);
+    voice.update(s.online && view.touch === 'oni' && view.lightable ? s.game.assignId : 0);
     capture.update(view, s);
     mission.update(s.game, s.me);
     jail.update(view, s);
