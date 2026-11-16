@@ -426,6 +426,8 @@ function startPlayer(): void {
     glow.update(view, s, client.serverNow());
     chat.update(view, s, client.serverNow() ?? Date.now());
     // 許可のバナー：夜が終わったあとは出さない。許可があれば、マイクは要る場面で押さなくても開く
+    // 主催者に、まだ入っていない許可を知らせる（変わったときだけ送られる）
+    client.perm(perms.need());
     perms.tick(wantMic(view));
     perm.update(view.ended ? null : perms.banner(wantMic(view)));
     // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）

@@ -208,13 +208,15 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
 
   // 前の画面にあとから足された部品（ここがまだ知らないもの）は、迷子にしないでデッキの下へ集める
   const reject = old('[data-k="reject"]');
-  const strays = [...el.children].filter((c) => c !== reject && !c.classList.contains('hq-gone')) as HTMLElement[];
+  // スマホの許可がまだの人：上の行のすぐ下に、どの段でも見える場所に置く（迷子の箱には入れない）
+  const permBox = old('[data-k="perm"]');
+  const strays = [...el.children].filter((c) => c !== reject && c !== permBox && !c.classList.contains('hq-gone')) as HTMLElement[];
   if (strays.length) {
     const misc = make('section', 'hq-card', '<h2>そのほか</h2>');
     misc.append(...strays);
     panel.deck.append(misc);
   }
-  el.append(head, rail, now, strip, reject, body, dock, tabs);
+  el.append(head, permBox, rail, now, strip, reject, body, dock, tabs);
   // 夜の予定：スマホはデッキのいちばん上、幅の広い画面は全幅の帯（3列の上）
   const nightPal = createNightPalette((plan) => actions.command('night-plan', { night: plan }), {
     apply: (preset, durations) => actions.command('preset-apply', { preset, ...(durations ? { durations } : {}) }),

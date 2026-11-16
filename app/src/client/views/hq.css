@@ -206,3 +206,6 @@
 .hq-seat select { width: 100%; min-height: 48px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--muted); background: var(--yami); color: var(--tsuki); font-size: 16px; }
 .hq .hq-seat button { flex: none; min-height: 48px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--muted); font-size: 16px; }
 .hq .hq-seat button:disabled { border-color: var(--sen); color: var(--muted); }
+
+/* スマホの許可がまだの人（上の行のすぐ下） */
+.hq .perm-host { flex: none; margin: 10px 16px 0; border-radius: 6px; max-height: 30dvh; overflow-y: auto; }

@@ -12,7 +12,8 @@ import type { Pair } from './ui';
  * - 断られた・止まったときも、同じバナーが理由を変えて出る（別の板は出さない）
  */
 
-export type PermItem = 'motion' | 'geo' | 'mic';
+import type { PermItem } from '../shared/protocol';
+export type { PermItem };
 
 export interface PermSnapshot {
   /** バナーを一度押した（このページを開いている間） */
@@ -185,6 +186,13 @@ export class Perms {
       micSilent: listener.silent,
       wantMic,
     };
+  }
+
+  /** まだ入っていないもの（まだ聞いていない＋断られた）。空なら全部入った。主催者に知らせる */
+  need(): PermItem[] {
+    const s = this.snapshot(false);
+    const all = new Set<PermItem>([...permMissing(s), ...permDenied(s)]);
+    return (['motion', 'geo', 'mic'] as const).filter((i) => all.has(i));
   }
 
   /** いま出すバナー */
