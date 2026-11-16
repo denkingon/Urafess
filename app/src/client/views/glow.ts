@@ -135,7 +135,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
     tabs.append(b);
   }
   const radar = createRadar({ north: lang === 'ja' ? '北' : lang === 'en' ? 'N' : '北 N' });
-  const ov = createOverview();
+  const ov = createOverview({ zoomControls: opts.mapOnly });
   const wrap = document.createElement('div');
   wrap.className = 'glow-radar';
   const msg = document.createElement('p');

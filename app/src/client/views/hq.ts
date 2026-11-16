@@ -1,9 +1,9 @@
 import './hq.css';
 import { AREA_OUT_CONFIRM_MS, AREA_OUT_MARGIN_M, isFarOutside } from '../../shared/area';
 import { zoneAt } from '../../shared/shrink';
-import { HOLD_MIN_MS, MATES_SEND_EVERY_MS, MATES_STALE_MS, PHASES, RESCUE_IMMUNE_MS, RUN_STALE_MS, RUN_STOP_MS } from '../../shared/rules';
+import { HOLD_MIN_MS, MATES_SEND_EVERY_MS, MATES_STALE_MS, PHASES, RESCUE_IMMUNE_MS, RUN_STOP_MS } from '../../shared/rules';
 import { formatClock, isDone, positionAt } from '../../shared/schedule';
-import { glowPhase, hostStatus } from '../../shared/viewmodel';
+import { glowPhase } from '../../shared/viewmodel';
 import { chatText } from '../../shared/chat';
 import type { Sensors } from '../sense';
 import { setFramePad } from './overview';
@@ -18,7 +18,7 @@ import { createHost, type HostActions, type HostInput, type HostScreen } from '.
  * 本部（新しい主催者画面）。キャンバス「Urafess 本部（管理者画面）」の並びを、いまの主催者画面の上にかぶせる。
  *
  * しくみは前の主催者画面（createHost）をそのまま使う：中の部品（地図・捕獲と牢屋・ミッション・時間や割合の欄・ボタン）を
- * 地図と要約をダッシュボードにまとめ、タイムラインと進行操作を下に置く。
+ * 地図と要約をダッシュボードにまとめ、進行操作を右下に置く。
  * だから、押したときに起きることは前の画面と同じ。
  *
  * 決まり：
@@ -35,8 +35,6 @@ type DockItem = [op: string, weight: 'wait' | 'norm' | 'hold'];
 /** 下の並びでは短い名前で出す（押したときの確かめの文は前のまま） */
 const SHORT: Record<string, string> = { reset: '配役に戻す', end: '夜を終える', clear: '新しい夜', csv: '記録を保存' };
 
-const ONI = '<svg class="hq-m" viewBox="-14 -14 28 28" aria-hidden="true"><path d="M-5.5,-4 L-7.5,-12 L-1.5,-6 Z M5.5,-4 L7.5,-12 L1.5,-6 Z" fill="var(--shu)"/><circle r="6.5" fill="var(--shu)"/></svg>';
-const RUN = '<svg class="hq-m" viewBox="-14 -14 28 28" aria-hidden="true"><circle r="6.5" fill="var(--tsuki)"/></svg>';
 
 function make<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, html = ''): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -71,21 +69,10 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
     head.querySelector('.hq-head-r')!.append(openBtn);
     termEl = term.el;
   }
-  const rail = make('ol', 'hq-rail');
-  rail.setAttribute('aria-label', '段階');
-  const steps = ['配役', ...PHASES.map(() => ''), '結果'].map((t) => {
-    const li = make('li', '', `<span class="lbl">${t}</span><span class="bar"><i></i></span>`);
-    rail.append(li);
-    return { li, lbl: li.querySelector('.lbl') as HTMLElement, fill: li.querySelector('i') as HTMLElement };
-  });
-  const now = make('section', 'hq-now',
-    '<div class="hq-now-l"><span class="hq-label" data-hq="label"></span><span class="hq-big" data-hq="big"></span><span class="hq-next" data-hq="next"></span></div>'
-    + '<div class="hq-pips" data-hq="pips" role="img"></div>');
   const counts = make('ul', 'hq-counts',
     ['エントリー', '鬼', '逃走者', '捕まった人', 'スマホの許可', '戻りたい人'].map((label) => `<li><span>${label}</span><b class="u">0</b></li>`).join(''));
   counts.setAttribute('aria-label', '現在の人数（逃走者は捕まっていない人）');
   const countValues = counts.querySelectorAll('b');
-  now.setAttribute('aria-label', 'いま');
   const strip = make('section', 'hq-strip');
   strip.setAttribute('aria-label', '要対応');
   strip.hidden = true;
@@ -100,8 +87,9 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const dock = make('div', 'hq-dock');
   const side = make('div', 'hq-dashboard-side');
   const grid = make('div', 'hq-dashboard-grid');
-  grid.append(panel.map, side);
-  side.append(panel.people, panel.chat);
+  grid.append(panel.map, side, panel.mission);
+  dock.setAttribute('aria-label', '進行操作');
+  side.append(panel.people, panel.chat, dock);
   const dialogs = {
     people: make('dialog', 'hq-popover'),
     chat: make('dialog', 'hq-popover'),
@@ -133,12 +121,9 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   hide('.host-head');
   hide('.status');
   hide('.spacer');
-  const rolesBox = make('div', 'hq-roles');
-  rolesBox.hidden = true;
-  const lobbyNote = make('p', 'note hq-lobby-note');
-  panel.map.append(old('[data-k="glow"]'), panel.mission);
-  cards.people.append(old('[data-k="asklist"]'), lobbyNote, rolesBox, old('[data-k="cap"]'), old('[data-k="duplist"]'), old('[data-k="names"]'));
-  cards.mission.append(old('[data-k="missionPhoto"]'));
+  for (const selector of ['.stats', '[data-k="perm"]', '[data-k="asklist"]', '[data-k="duplist"]', '[data-k="names"]']) hide(selector);
+  panel.map.append(old('[data-k="glow"]'));
+  cards.mission.append(old('[data-k="missionPhoto"]'), old('[data-k="cap"]'));
   // チャット：流れと送る欄は「話」、制約と場所の名前はデッキの札
   cards.chat.append(old('[data-k="chatFeed"]'));
   const chatCard = make('section', 'hq-card');
@@ -218,7 +203,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
     exclusive(chatCard.querySelector('[aria-label="仲間の回線で送れるもの"]')!, 'mode', '仲間の回線で送れるもの', true),
     exclusive(chatCard.querySelector('[aria-label="牢屋の人が送れるもの"]')!, 'jail', '牢屋の人が送れるもの'),
   ];
-  const missionFree = cards.people.querySelector<HTMLElement>('[data-k="mission"]')!;
+  const missionFree = cards.mission.querySelector<HTMLElement>('[data-k="mission"]')!;
   const freeAll = missionFree.querySelector<HTMLButtonElement>('[data-mission="all"]')!;
   const freeSome = missionFree.querySelector<HTMLButtonElement>('[data-mission="n"]')!;
   const freeNumber = missionFree.querySelector<HTMLInputElement>('[data-k="missionN"]')!;
@@ -247,8 +232,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
       ['遊ぶ範囲の外', `外へ${AREA_OUT_MARGIN_M}m出て${sec(AREA_OUT_CONFIRM_MS)}で「戻れ」`],
       ['終わり方', '全員が牢屋なら鬼の勝ち。時間切れで1人でも外なら逃走者の勝ち'],
     ].map(([t, x]) => `<li><b>${t}</b><span>${x}</span></li>`).join('') + '</ul>');
-  const ready = make('section', 'hq-card', '<h2>そろい具合</h2>');
-  ready.append(old('.stats'));
   const night = make('section', 'hq-card', '<h2>夜とやり直し</h2>');
   const buttons = old('.buttons');
   night.append(old('[data-k="old"]'), buttons);
@@ -276,13 +259,10 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const area = old('[data-k="area"]');
   panel.deck.append(area);
   const reject = old('[data-k="reject"]');
-  // スマホの許可がまだの人：参加者の詳細に置く（迷子の箱には入れない）
-  const permBox = old('[data-k="perm"]');
-  const strays = [...el.children].filter((c) => c !== reject && c !== permBox && !c.classList.contains('hq-gone')) as HTMLElement[];
+  const strays = [...el.children].filter((c) => c !== reject && !c.classList.contains('hq-gone')) as HTMLElement[];
   if (strays.length) {
     panel.deck.append(group('そのほか', ...strays));
   }
-  cards.people.append(ready, permBox);
   cards.mission.append(night, rec);
   const shell = make('div', 'hq-shell');
   const menu = make('nav', 'hq-sidebar');
@@ -295,10 +275,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const title = make('h2', 'hq-page-title', 'ダッシュボード');
   const live = make('div', 'hq-live');
   panel.map.querySelector('[data-k="glowBoard"]')!.append(counts);
-  const timeline = make('section', 'hq-timeline');
-  timeline.setAttribute('aria-label', 'タイムラインと進行操作');
-  timeline.append(now, rail, dock);
-  live.append(grid, strip, timeline);
+  live.append(grid, strip);
   const locked = make('p', 'hq-rules-locked', '試合終了後に次のゲームのルールを編集できます。');
   locked.hidden = true;
   content.append(title, live, reject, locked, body);
@@ -397,60 +374,13 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
         el.toggleAttribute('data-paused', paused);
       });
 
-      // 上の行と段階の帯
+      // 上の行
       text('round', game.stage === 'lobby' ? '' : `ラウンド ${Math.max(game.round, 1)}`);
       once('conn', `${host.connected}/${host.total}/${input.online}`, () => {
         const c = hq('conn');
         c.textContent = input.online ? `つながり ${host.connected}/${host.total}` : '切断中';
         c.classList.toggle('is-bad', !input.online || host.connected < host.total);
       });
-      const cur = game.stage === 'lobby' ? -1 : game.stage === 'assigned' ? 0 : game.stage === 'result' || done ? 5 : game.stage === 'ended' ? 6 : phase ? phase.index + 1 : 0;
-      const progress = phase ? 1 - phase.remainingMs / Math.max(1, game.durations[phase.index]) : 1;
-      // 時間の段階の幅は、時間の長さの比そのまま（0:20 と 1:00 なら 1：3）。配役と結果は字の幅だけ
-      // 幅が字より狭い段階は、字を左にそろえて、続くときは上の段と下の段に互い違いに置く（重ねない）
-      // 字の形が読み終わる前に測ると幅が小さく出るので、読み終わったら測り直す
-    const railKey = `${game.durations.join(',')}|${rail.clientWidth}|${document.fonts?.status ?? ''}`;
-      once('railShape', railKey, () => {
-        const total = game.durations.reduce((a, b) => a + b, 0) || 1;
-        const inner = Math.max(0, rail.clientWidth - steps[0].li.offsetWidth - steps[steps.length - 1].li.offsetWidth - 4 * (steps.length - 1));
-        steps.forEach((s, i) => {
-          if (i < 1 || i > PHASES.length) return;
-          const d = game.durations[i - 1];
-          s.lbl.textContent = formatClock(d);
-          s.li.style.flexGrow = String(d);
-          const narrow = (inner * d) / total < s.lbl.offsetWidth + 4;
-          s.li.dataset.fit = narrow ? 'left' : 'in';
-        });
-        // 実際に置いた位置で確かめる：左の字とぶつかる字は上の段へ（上の段どうしもぶつかれば下へ戻す）
-        let lowRight = steps[0].lbl.getBoundingClientRect().right;
-        let upRight = -Infinity;
-        steps.forEach((s, i) => {
-          if (i < 1 || i > PHASES.length) return;
-          const r = s.lbl.getBoundingClientRect();
-          if (r.left >= lowRight + 8) {
-            lowRight = r.right;
-            return;
-          }
-          const upLeft = s.li.getBoundingClientRect().left;
-          if (upLeft >= upRight + 8) {
-            s.li.dataset.fit = 'up';
-            upRight = upLeft + r.width;
-          } else lowRight = r.right;
-        });
-        rail.toggleAttribute('data-two', steps.some((s) => s.li.dataset.fit === 'up'));
-      });
-      steps.forEach((s, i) => {
-        const state = i === cur ? 'now' : i < cur ? 'done' : 'later';
-        once(`rs:${i}`, state, () => {
-          s.li.dataset.state = state;
-          s.li.toggleAttribute('aria-current', state === 'now');
-        });
-        const w = state === 'now' ? Math.round(progress * 100) : state === 'done' ? 100 : 0;
-        once(`rw:${i}`, String(w), () => (s.fill.style.width = `${w}%`));
-      });
-
-      // いま
-      const st = hostStatus(game, serverNow);
       const cap = host.capture;
       const jailed = cap ? cap.runners.filter((r) => r.caught).length : 0;
       once('freeCount', String(jailed), () => {
@@ -461,21 +391,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
       });
       free.disabled = freeCount.disabled = freeAll.disabled;
       missionFree.hidden = freeAll.disabled;
-      const label =
-        game.stage === 'lobby' ? '待合室'
-        : game.stage === 'assigned' ? '配役済み'
-        : phase ? `${phase.index === 2 ? '残り時間' : PHASES[phase.index].label}${paused ? '（一時停止中）' : ''}`
-        : game.stage === 'ended' ? '夜は終わった。全員の画面に出ている'
-        : `結果発表（${game.resultAuto === false ? '主催者が決めた' : 'アプリが決めた'}）`;
-      text('label', label);
-      const big = game.stage === 'lobby' || game.stage === 'assigned' ? '' : st.big;
-      text('big', big);
-      const next =
-        game.stage === 'lobby' ? (host.registry !== undefined ? `名簿 ${host.registry}人` : '')
-        : game.stage === 'assigned' ? `役の受け取り ${host.received}/${host.assigned}`
-        : game.stage === 'result' || done || game.stage === 'ended' ? st.next
-        : game.allCaughtAt != null ? '全員が牢屋に入った' : '';
-      text('next', next);
       const assignedCapture = game.stage === 'lobby' ? null : cap;
       const liveCounts = [host.total, assignedCapture?.oni.length ?? 0, (assignedCapture?.runners.length ?? 0) - (assignedCapture ? jailed : 0), assignedCapture ? jailed : 0, host.perms ? `${host.perms.ok}/${host.perms.total}` : '—', host.reclaims?.length ?? 0];
       liveCounts.forEach((n, i) => once(`count:${i}`, String(n), () => {
@@ -492,17 +407,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
               }).join('') + '</tbody></table>'
           : '<p>エントリーした参加者はまだいません。</p>';
       });
-      const showCounts = !!cap && (game.stage === 'timer' || game.stage === 'result');
-      const lit = new Set((input.glow?.runs ?? []).filter((r) => serverNow - r.at <= RUN_STALE_MS).map((r) => r.num));
-      const pipKey = showCounts && cap!.runners.length <= 60 ? cap!.runners.map((r) => (r.caught ? 'j' : lit.has(r.num) ? 'g' : 'f')).sort().join('') : '';
-      once('pips', pipKey, () => {
-        const p = hq('pips');
-        p.hidden = !pipKey;
-        p.setAttribute('aria-label', pipKey ? `逃走者 ${pipKey.length}人のうち 牢屋に${jailed}人` : '');
-        p.innerHTML = [...pipKey].sort((a, b) => 'gfj'.indexOf(a) - 'gfj'.indexOf(b)).map((c) => `<i data-s="${c}"></i>`).join('');
-      });
-
-      // 要対応：戻りたい人 → 見ていない写真 → 範囲の外 → 同じ名前 → 前の夜のまま
+      // 要対応：戻りたい人 → 見ていない写真 → 範囲の外 → 前の夜のまま
       const items: string[] = [];
       for (const a of host.reclaims ?? []) {
         const d = `data-rid="${esc(a.rid)}" data-name="${esc(a.name)}" data-here="${a.here ? 1 : 0}"`;
@@ -518,9 +423,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
       const onMap = (input.mates?.people ?? []).filter((m) => serverNow - m.at <= MATES_STALE_MS);
       const outside = areaPts && glowPhase(game, serverNow) === 'live' ? onMap.filter((m) => isFarOutside(areaPts, m)) : [];
       if (outside.length) items.push(`<span>範囲の外：${esc(outside.map((m) => m.name).join('・'))}</span><button type="button" data-go="map">地図</button>`);
-      const badNames = (host.names ?? []).filter((n) => n.hit);
-      if (badNames.length) items.push(`<span>気になる名前：${esc(badNames.map((n) => n.name).join('・'))}</span><button type="button" data-go="people">人</button>`);
-      if (host.dupNames.length) items.push(`<span>同じ名前：${esc(host.dupNames.map((d) => d.name).join('・'))}</span><button type="button" data-go="people">人</button>`);
       if (!old('[data-k="old"]').hidden) items.push('<span>前の夜のまま。集める前に新しい夜を始める</span><button type="button" data-go="mission">運営</button>');
       once('strip', items.length ? `${items.length}|${items[0]}` : '', () => {
         strip.hidden = items.length === 0;
@@ -532,20 +434,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
       const chat = input.chat?.msgs.at(-1);
       text('chatSummary', `${asks.length ? `未対応 ${asks.length}件 · ` : ''}${chat ? `${chat.from?.name ?? '本部'}：${chatText(chat)[0]}` : 'メッセージなし'}`);
       text('missionSummary', `${old('[data-k="missionNow"]').textContent ?? ''}${pending.length ? ` ・確認待ち ${pending.length}件` : ''}`);
-
-      // 配役済み：役ごとの名前（捕獲と牢屋の一覧は、試合が始まってから出る）
-      const showRoles = game.stage === 'assigned' && !!cap;
-      once('roles', showRoles ? JSON.stringify([cap!.oni.map((o) => o.name), cap!.runners.map((r) => r.name)]) : '', () => {
-        rolesBox.hidden = !showRoles;
-        rolesBox.innerHTML = showRoles
-          ? `<h2>${ONI}鬼 <b class="u">${cap!.oni.length}</b></h2><div>${cap!.oni.map((o) => `<span data-r="oni">${esc(o.name)}</span>`).join('')}</div>`
-            + `<h2>${RUN}逃走者 <b class="u">${cap!.runners.length}</b></h2><div>${cap!.runners.map((r) => `<span>${esc(r.name)}</span>`).join('')}</div>`
-          : '';
-      });
-      once('lobbyNote', game.stage === 'lobby' ? String(host.total) : '', () => {
-        lobbyNote.hidden = game.stage !== 'lobby';
-        lobbyNote.textContent = `いま ${host.total}人が入っている。名前は配役のあとに並ぶ。`;
-      });
 
       // デッキの現在値と操作可否は既存フォームに合わせる。
       const total = game.durations.reduce((a, b) => a + b, 0);

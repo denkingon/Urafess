@@ -70,6 +70,7 @@ export interface OvInput {
 export interface OverviewOptions {
   /** 地図を押したとき（範囲を描く）。押した場所の緯度・経度 */
   onTap?: (p: LatLon) => void;
+  zoomControls?: boolean;
 }
 
 export interface Overview {
@@ -190,6 +191,8 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       opts.onTap!(fromWorld(x, y));
     });
   }
+  let zoomLevel = 0;
+  const maxZoomLevel = 6;
   let lastInput: OvInput | null = null;
   let lastKey = '';
   const measure = () => {
@@ -227,9 +230,10 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     // 上の端に重ねている物があれば、枠はその下に収める（真ん中を、その半分だけ下げる）
     // 地図がごく低いとき（140px 以下）は、重ねた物をしまうので下げない（player.css の決まりと同じ高さ）
     const inset = editing || h <= 140 ? 0 : Math.max(0, Math.min(h / 3, input.insetTop ?? 0));
-    const S = meW
+    const baseScale = meW
       ? w / ((2 * focus!) / (EARTH_CIRC_M * Math.cos((input.me!.lat * Math.PI) / 180)))
       : Math.min(w / (f.x1 - f.x0), (h - inset) / (f.y1 - f.y0)); // 画面の px ／ 世界の 1
+    const S = baseScale * 1.4 ** zoomLevel;
     const cx = meW ? meW.x : (f.x0 + f.x1) / 2;
     const cy = (meW ? meW.y : (f.y0 + f.y1) / 2) - inset / 2 / S;
     const key = JSON.stringify([
@@ -458,6 +462,35 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       `全体の地図：${counts.oni ? `鬼 ${counts.oni}人 ` : ''}${counts.runner ? `逃走者 ${counts.runner}人 ` : ''}${counts.unknown ? `光った人 ${counts.unknown}人` : ''}`.trim() || '全体の地図：まだ誰もいない',
     );
   };
+
+  if (opts.zoomControls) {
+    const controls = document.createElement('div');
+    controls.className = 'ov-zoom';
+    controls.setAttribute('role', 'group');
+    controls.setAttribute('aria-label', '地図の拡大・縮小');
+    const button = (text: string, label: string) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = text;
+      b.setAttribute('aria-label', label);
+      return b;
+    };
+    const out = button('−', '縮小');
+    const reset = button('全体', '全体表示に戻す');
+    const inButton = button('＋', '拡大');
+    const setZoom = (level: number) => {
+      zoomLevel = Math.max(0, Math.min(maxZoomLevel, level));
+      out.disabled = reset.disabled = zoomLevel === 0;
+      inButton.disabled = zoomLevel === maxZoomLevel;
+      if (lastInput) draw(lastInput, true);
+    };
+    out.addEventListener('click', () => setZoom(zoomLevel - 1));
+    reset.addEventListener('click', () => setZoom(0));
+    inButton.addEventListener('click', () => setZoom(zoomLevel + 1));
+    setZoom(0);
+    controls.append(out, reset, inButton);
+    el.append(controls);
+  }
 
   return { el, update: (input) => draw(input) };
 }
