@@ -101,7 +101,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const side = make('div', 'hq-dashboard-side');
   const grid = make('div', 'hq-dashboard-grid');
   grid.append(panel.map, side);
-  side.append(panel.people, panel.chat, panel.mission);
+  side.append(panel.people, panel.chat);
   const cards = {} as Record<'people' | 'chat' | 'mission', HTMLDetailsElement>;
   for (const [key, label] of [['people', '参加者'], ['chat', 'チャット'], ['mission', 'ミッション']] as const) {
     panel[key].append(make('h3', '', label), make('p', 'hq-summary', `<span data-hq="${key}Summary"></span>`));
@@ -116,7 +116,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const rolesBox = make('div', 'hq-roles');
   rolesBox.hidden = true;
   const lobbyNote = make('p', 'note hq-lobby-note');
-  panel.map.append(old('[data-k="glow"]'));
+  panel.map.append(old('[data-k="glow"]'), panel.mission);
   cards.people.append(old('[data-k="asklist"]'), lobbyNote, rolesBox, old('[data-k="cap"]'), old('[data-k="duplist"]'), old('[data-k="names"]'));
   cards.mission.append(old('[data-k="missionPhoto"]'));
   // チャット：流れと送る欄は「話」、制約と場所の名前はデッキの札
