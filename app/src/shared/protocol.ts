@@ -35,6 +35,18 @@ export interface CaptureNews {
   sound: AnnounceSound;
 }
 
+/**
+ * 本部の「前を向いて（LOOK UP / LISTEN）」。on のあいだ、全員のスマホで同じ瞬間（showAt）からアニメを流し、
+ * 最後は画面を暗くして止める。本部が「終わり」を押すと on=false
+ */
+export interface LookupView {
+  /** 押すたびに増える番号 */
+  seq: number;
+  on: boolean;
+  /** アニメを始める瞬間（サーバー時刻）。全員がこの瞬間から流す */
+  showAt: number;
+}
+
 /** ゲーム全体の段階（サーバーが持つ正解） */
 export type Stage =
   /** 配役前（入室を受け付けている） */
@@ -116,6 +128,8 @@ export interface GameView {
   reveal?: { mode: RevealMode; hitAt: number | null } | null;
   /** 司令塔の札（本部のデッキで入れたり外したりする）。誰が司令塔かは入れない。古いサーバーからは来ない（そのときは外してある） */
   lead?: LeadRules;
+  /** 本部の「前を向いて」。古いサーバーからは来ない */
+  lookup?: LookupView | null;
 }
 
 /**
@@ -493,7 +507,9 @@ export type HostOp =
   /** 司令塔を指名する（pid＝今の配役で役がある人。その人の側の司令塔になる） */
   | 'lead-pick'
   /** 司令塔をくじで引き直す（role＝どちらの側か） */
-  | 'lead-draw';
+  | 'lead-draw'
+  /** 前を向いて（LOOK UP / LISTEN）：on=true で全員のスマホに流す、false で終わり。いつでも。版番号を見ない */
+  | 'lookup';
 
 export type ClientMsg =
   /** 新しく名簿に入って、今夜に入る（名前が名簿にあれば taken が返る） */

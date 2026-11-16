@@ -22,6 +22,7 @@ import {
 import { isAnnounceSettings } from '../shared/announce';
 import type {
   CaptureNews,
+  LookupView,
   ClientMsg,
   GameView,
   GlowEntry,
@@ -207,6 +208,8 @@ interface GameState {
   news?: NewsState | null;
   /** 知らせの番号（増え続ける。配役をまたいでも戻さない） */
   newsSeq?: number;
+  /** 本部の「前を向いて」。古い保存データには無い */
+  lookup?: LookupView | null;
   /** 配役の決め方（主催者が切り替える）。古い保存データには無いので load で補う */
   wishMode: WishMode;
   /** 夜の予定（本部で組む。新しい夜を始めても残す）。古い保存データには無い */
@@ -808,6 +811,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!isAnnounceSettings(this.game.announce)) this.game.announce = { ...ANNOUNCE_DEFAULT };
     if (this.game.news === undefined) this.game.news = null;
     if (!Number.isInteger(this.game.newsSeq)) this.game.newsSeq = 0;
+    if (this.game.lookup === undefined) this.game.lookup = null;
     if (!isShrinkPlan(this.game.shrinkPlan)) this.game.shrinkPlan = { ...DEFAULT_SHRINK_PLAN };
     if (this.game.shrink === undefined) this.game.shrink = null;
     if (this.game.jail === undefined) this.game.jail = null;
@@ -3192,6 +3196,21 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    // 前を向いて：いつでも（試合中でも）。ほかの操作とぶつからないので版番号を見ない
+    if (op === 'lookup') {
+      const on = msg.on === true;
+      const cur = this.game.lookup ?? null;
+      if (!on && !cur?.on) return;
+      const next: LookupView = on
+        ? { seq: (cur?.seq ?? 0) + 1, on: true, showAt: now + ANNOUNCE_LEAD_MS }
+        : { ...cur!, on: false };
+      this.game = { ...this.game, lookup: next };
+      this.saveGame();
+      this.log('lookup', { at: now, data: { on } });
+      this.broadcastNow();
+      return;
+    }
+
     if (op === 'night-plan') {
       const plan = cleanNightPlan(msg.night);
       if (!plan) return this.reject(ws, att, op, 'bad-input');
@@ -4522,6 +4541,7 @@ export class GameRoom extends DurableObject<Env> {
       area: g.area ?? null,
       announce: g.announce ?? { ...ANNOUNCE_DEFAULT },
       news: g.news?.view ?? null,
+      lookup: g.lookup ?? null,
       shrinkPlan: g.shrinkPlan ?? DEFAULT_SHRINK_PLAN,
       shrink: g.shrink ?? null,
       jail: g.jail ?? null,
