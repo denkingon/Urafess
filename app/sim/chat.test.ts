@@ -265,10 +265,11 @@ describe('チャット', () => {
     expect(has(host, 'アプリが動かない')).toBe(true);
 
     // ---- 記録には全部残る ----
-    const rows = (await log()).filter((r) => r.kind === 'chat');
+    const events = await log();
+    const rows = events.filter((r) => r.kind === 'chat');
     const texts = rows.map((r) => (JSON.parse(r.data!) as { text: string }).text);
-    for (const t of ['アプリが動かない', 'いま行く。そこにいて', '10分後に始める', 'ここにいる！', '鴨池で合流しよう', '110', '助けて！', '鬼は広場に集まれ']) expect(texts).toContain(t);
-    expect(texts).not.toContain('にせもの');
+    for (const t of ['アプリが動かない', 'いま行く。そこにいて', '10分後に始める', 'ここにいる！', '鴨池で合流しよう', '次は体育館へ', '牢屋にいます', '本部に質問です', '鬼は広場に集まれ']) expect(texts).toContain(t);
+    expect(events.some((event) => event.data?.includes(sound))).toBe(false);
     expect(rows.find((r) => (JSON.parse(r.data!) as { text: string }).text === 'ここにいる！')!.name).toBe(runners[0].state.me!.name);
 
     // ---- 新しい夜：本部の回線も空になる ----
