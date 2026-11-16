@@ -1494,7 +1494,10 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       q('cap').hidden = !cap || !(game.stage === 'timer' || game.stage === 'result');
       if (cap) {
         const caught = cap.runners.filter((r) => r.caught).length;
-        q('capCount').textContent = `牢屋 ${caught}/${cap.runners.length}人${game.allCaughtAt != null ? '（全員が入った）' : ''}`;
+        q('capCount').textContent =
+          game.mode === 'fueshi'
+            ? `鬼になった ${caught}/${cap.runners.length}人${game.allCaughtAt != null ? '（全員が鬼になった）' : ''}`
+            : `牢屋 ${caught}/${cap.runners.length}人${game.allCaughtAt != null ? '（全員が入った）' : ''}`;
         // ミッション成功は、ゲームの段階の間で、牢屋に誰かいて、まだ全員は入っていないときだけ押せる
         const tm = game.stage === 'timer' && game.timer ? positionAt(game.timer, serverNow) : null;
         const missionOk = !!tm && tm.kind === 'phase' && tm.index === GAME_PHASE && caught > 0 && game.allCaughtAt == null;
