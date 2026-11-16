@@ -7,6 +7,7 @@
  * サーバーに置く（どの本部の画面でも同じ）。合言葉つきの /presets で読み書きできる（Claude と一緒に作るための口）。
  * 遊び方は、ドロケイと増やし鬼が動く（増やし鬼＝捕まった逃走者は牢屋に入らず、その場で鬼になる）。氷鬼は名前だけ先に置いてある（選んでもドロケイで動く）。
  */
+import { cleanAreaPts, isValidAreaPts } from './area';
 import { type ChatJail, type ChatMode, DEFAULT_CHAT_JAIL, DEFAULT_CHAT_MODE, isChatJail, isChatMode } from './chat';
 import { DEFAULT_LEAD_RULES, isLeadRules, type LeadRules } from './lead';
 import { defaultRound, type NightRound } from './night';
@@ -15,6 +16,7 @@ import {
   DEFAULT_RATIO,
   DEFAULT_REVEAL_MODE,
   DEFAULT_WISH_MODE,
+  CAMPUS_CENTER,
   isMicMode,
   isRevealMode,
   isValidRatio,
@@ -32,6 +34,14 @@ export const GAME_MODES: { mode: GameMode; name: string; ready: boolean }[] = [
   { mode: 'koori', name: '氷鬼', ready: false },
 ];
 
+/**
+ * プリセットが持つ遊ぶ範囲。
+ * - null＝そのまま（デッキへ入れても、いまの遊ぶ範囲に触らない）
+ * - 'none'＝範囲なし（デッキへ入れると、遊ぶ範囲が消える）
+ * - 頂点の並び＝このプリセットの範囲（デッキへ入れると、遊ぶ範囲がこの形になる）
+ */
+export type PresetArea = [number, number][] | 'none' | null;
+
 export interface Preset {
   id: string;
   name: string;
@@ -46,6 +56,8 @@ export interface Preset {
   chat: { mode: ChatMode; jail: ChatJail };
   /** 範囲の縮み方。縮む先を地図で選ぶ形（pick）は、プリセットでは持たない（範囲ごとに点がちがうため） */
   shrink: ShrinkPlan;
+  /** 遊ぶ範囲。前の版で作ったプリセットには無い（＝そのまま） */
+  area: PresetArea;
 }
 
 export const PRESETS_MAX = 24;
@@ -64,6 +76,7 @@ export function basePreset(id: string, name: string): Preset {
     lead: { ...DEFAULT_LEAD_RULES },
     chat: { mode: DEFAULT_CHAT_MODE, jail: DEFAULT_CHAT_JAIL },
     shrink: { ...DEFAULT_SHRINK_PLAN },
+    area: null,
   };
 }
 
@@ -121,6 +134,12 @@ export function cleanPreset(v: unknown): Preset | null {
   if (!chat || !isChatMode(chat.mode) || !isChatJail(chat.jail)) return null;
   const shrinkIn = o.shrink === undefined ? base.shrink : o.shrink;
   if (!isShrinkPlan(shrinkIn) || shrinkIn.to === 'pick') return null;
+  let area: PresetArea = null;
+  if (o.area === 'none') area = 'none';
+  else if (o.area !== undefined && o.area !== null) {
+    if (!isValidAreaPts(o.area, CAMPUS_CENTER)) return null;
+    area = cleanAreaPts(o.area);
+  }
   return {
     id: o.id,
     name,
@@ -133,6 +152,7 @@ export function cleanPreset(v: unknown): Preset | null {
     lead: { on: lead.on, seen: lead.seen, dark: lead.dark, expose: lead.expose, restore: lead.restore },
     chat: { mode: chat.mode, jail: chat.jail },
     shrink: cleanShrinkPlan({ ...shrinkIn, pick: null }),
+    area,
   };
 }
 
@@ -178,6 +198,7 @@ export function presetSummary(p: Preset): string {
     p.lead.on ? '司令塔' : '',
     p.shrink.times || p.shrink.mission ? `縮む${p.shrink.times ? `${p.shrink.times}回` : ''}${p.shrink.mission ? '・ミッション' : ''}` : '',
     `チャット${CHAT_NAME[p.chat.mode]}`,
+    p.area === 'none' ? '範囲なし' : p.area ? '範囲つき' : '',
   ];
   return parts.filter(Boolean).join('・');
 }

@@ -196,3 +196,12 @@ export class AreaWatch {
 
 /** 牢屋の線からこれだけの所まで来たら「牢屋に着いた」（m）。牢屋は小さいので、位置のぶれを見込んで甘くする */
 export const JAIL_ARRIVE_M = 10;
+
+/** 範囲のおおよその大きさ（東西 × 南北） */
+export function areaSize(pts: [number, number][]): string {
+  const lats = pts.map((p) => p[0]);
+  const lons = pts.map((p) => p[1]);
+  const ns = distanceM({ lat: Math.min(...lats), lon: lons[0] }, { lat: Math.max(...lats), lon: lons[0] });
+  const ew = distanceM({ lat: lats[0], lon: Math.min(...lons) }, { lat: lats[0], lon: Math.max(...lons) });
+  return `東西 約${Math.round(ew / 10) * 10}m × 南北 約${Math.round(ns / 10) * 10}m`;
+}

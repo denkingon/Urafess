@@ -22,6 +22,22 @@ describe('プリセット', () => {
     expect(cleanPresets([{ id: 'a', name: 'a' }, { id: 'a', name: 'b' }])).toBeNull();
   });
 
+  it('遊ぶ範囲：そのまま（null）・範囲なし・形。前の版のプリセット（area が無い）はそのまま', () => {
+    const sq: [number, number][] = [[35.39, 139.4253], [35.39, 139.4292], [35.3864, 139.4292], [35.3864, 139.4253]];
+    expect(cleanPreset({ id: 'x', name: 'a' })!.area).toBeNull();
+    expect(cleanPreset({ id: 'x', name: 'a', area: null })!.area).toBeNull();
+    expect(cleanPreset({ id: 'x', name: 'a', area: 'none' })!.area).toBe('none');
+    expect(cleanPreset({ id: 'x', name: 'a', area: sq })!.area).toEqual(sq);
+    // 小数6桁にそろえる
+    expect(cleanPreset({ id: 'x', name: 'a', area: [[35.3900001234, 139.4253], sq[1], sq[2]] })!.area![0]).toEqual([35.39, 139.4253]);
+    // 2点・遠すぎる点・形でないものは受け取らない
+    expect(cleanPreset({ id: 'x', name: 'a', area: sq.slice(0, 2) })).toBeNull();
+    expect(cleanPreset({ id: 'x', name: 'a', area: [...sq, [35.0, 135.0]] })).toBeNull();
+    expect(cleanPreset({ id: 'x', name: 'a', area: 'all' })).toBeNull();
+    expect(presetSummary(cleanPreset({ id: 'x', name: 'a', area: sq })!)).toMatch(/範囲つき$/);
+    expect(presetSummary(cleanPreset({ id: 'x', name: 'a', area: 'none' })!)).toMatch(/範囲なし$/);
+  });
+
   it('要約', () => {
     expect(presetSummary(defaultPresets()[2])).toBe('ドロケイ・ゲーム7:00・鬼3:逃7・希望を聞く・全員同時・マイクずっと・司令塔・縮む2回・ミッション・チャット札');
   });
