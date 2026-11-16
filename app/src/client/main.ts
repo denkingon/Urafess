@@ -16,6 +16,7 @@ import { Sensors } from './sense';
 import { Perms } from './perms';
 import { callAccount, createAccount, errorText } from './views/account';
 import { createAnnounce } from './views/announce';
+import { createLookup, createLookupButton } from './views/lookup';
 import { createCapture } from './views/capture';
 import { createDrum } from './views/drum';
 import { createVoice } from './views/voice';
@@ -34,6 +35,8 @@ import { createRunLab } from './views/lab-run';
 import { createPerm } from './views/perm';
 import { createPhone } from './views/phone';
 import { createScreenKeeper } from './wake-lock';
+import { createSos, type SosScreen } from './views/sos';
+import { createSosHost } from './views/sos-host';
 
 // ---------- しくみの用意 ----------
 
@@ -189,7 +192,9 @@ function sessionSet(k: string, v: string): void {
 
 function startPlayer(): void {
   const client = makeClient({ kind: 'player' });
-  startUpdateChecks(() => !(client.state.phase === 'ready' && inMatch(client.state.game?.stage)));
+  // 救護の呼び出し中は、新しい版への読み込み直しもしない
+  let sos: SosScreen | null = null;
+  startUpdateChecks(() => !(client.state.phase === 'ready' && inMatch(client.state.game?.stage)) && !sos?.active());
   // 自分のページ（ステータスと設定）。開いている間は、試合が始まるまでこちらを出す
   let accountOpen = false;
   const account = createAccount({
@@ -263,6 +268,9 @@ function startPlayer(): void {
   // 走ると光る：走っているかはこのスマホが決め、光っている間だけ位置を送る
   const glow = createGlow({ sensors, root: phone.el, onDisqualified: () => client.disqualified(), onReported: () => client.reportedToJail() });
   phone.stage.append(glow.el);
+  // 救護の呼び出し（緊急ボタン）：入室したあとは、いつも右上に出る
+  sos = createSos({ client, sensors, gameId });
+  phone.el.append(sos.btn, sos.sheet);
   // 配役のドラムロール：止めた（役を見た）配役の番号をこのスマホに覚えておく（開き直しても、もう一度は流さない）
   const seenKey = `urafess:seen:${gameId}`;
   let seenAssign = Number(safeGet(seenKey) ?? 0) || 0;
@@ -325,6 +333,9 @@ function startPlayer(): void {
   const chime = new AnnounceChime();
   const announce = createAnnounce(chime);
   phone.el.append(announce.el);
+  // 本部の「前を向いて」（全員のスマホで同じ瞬間から流す。いちばん上に重ねる）
+  const lookup = createLookup(chime, () => client.serverNow() ?? Date.now());
+  document.body.append(lookup.el);
   const unlock = () => {
     voice.unlock();
     emitter.unlock();
@@ -398,6 +409,9 @@ function startPlayer(): void {
       });
       return;
     }
+    const sosReady = s.phase === 'ready' && !!s.game && !!s.me;
+    sos!.update(s.me?.sos, sosReady, s.online);
+    phone.el.classList.toggle('has-sos', sosReady);
     if (s.phase !== 'ready' || !s.game || !s.me) {
       voice.update(0);
       show(phone.el);
@@ -430,6 +444,7 @@ function startPlayer(): void {
       announce.update({ news, aboutMe: news !== null && me.newsAbout === news.seq, serverNow, freeRunner, busy: emitter.playing });
     }
     voice.update(s.online && view.touch === 'oni' && view.lightable ? s.game.assignId : 0);
+    lookup.update(s.game.lookup ?? null);
     capture.update(view, s);
     mission.update(s.game, s.me);
     jail.update(view, s);
@@ -555,6 +570,12 @@ function startHost(token: string): void {
   const chime = new AnnounceChime();
   const announce = createAnnounce(chime);
   host.el.append(announce.el);
+  // 救護の呼び出し：画面のいちばん上にかぶせる（前の画面・本部のどちらでも）
+  const sosHost = createSosHost({ command: (op, extra) => client.command(op, extra) });
+  document.body.append(sosHost.el);
+  // 前を向いて：主催者の画面には全画面を出さず（「終わり」を押せなくなる）、浮かせたボタンだけ
+  const lookupBtn = createLookupButton((on) => hostActions.command('lookup', { on }));
+  host.el.append(lookupBtn.el);
   document.addEventListener('pointerup', () => chime.unlock(), { capture: true, passive: true });
   document.addEventListener('click', () => chime.unlock(), { capture: true, passive: true });
   loop(() => {
@@ -577,7 +598,9 @@ function startHost(token: string): void {
       mates: s.mates,
       chat: s.chat,
     });
+    sosHost.update(s.host?.sos, s.game, client.serverNow() ?? Date.now());
     announce.update({ news: s.game?.news ?? null, aboutMe: false, serverNow: client.serverNow() ?? Date.now(), freeRunner: false, busy: false });
+    lookupBtn.update(s.game?.lookup ?? null);
   });
 }
 

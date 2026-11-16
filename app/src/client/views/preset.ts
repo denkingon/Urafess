@@ -127,7 +127,7 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
     ed.append(
       section('遊び方', 'mode', p.id, seg<GameMode>('モード', 'mode', p.id, p.mode, GAME_MODES.map((m) => [m.mode, m.ready ? m.name : `${m.name}（まだ）`, !m.ready]))),
     );
-    if (GAME_MODES.some((m) => !m.ready)) ed.lastElementChild!.append(mk('p', 'np-hint', '増やし鬼・氷鬼の決まりはまだアプリに無い（いまはドロケイで動く）'));
+    if (GAME_MODES.some((m) => !m.ready)) ed.lastElementChild!.append(mk('p', 'np-hint', '氷鬼の決まりはまだアプリに無い（選んでもドロケイで動く）。増やし鬼は、捕まった人が牢屋に入らず鬼になる'));
     ed.append(section('時間', 'round', p.id, partRows(p.round, (button, index, seconds) => {
       openDuration(button, ROUND_PARTS[index], seconds, partMinimum(index), (value) => {
         const next = presets.map(copy);

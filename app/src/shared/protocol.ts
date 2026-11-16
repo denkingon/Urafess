@@ -35,6 +35,18 @@ export interface CaptureNews {
   sound: AnnounceSound;
 }
 
+/**
+ * 本部の「前を向いて（LOOK UP / LISTEN）」。on のあいだ、全員のスマホで同じ瞬間（showAt）からアニメを流し、
+ * 最後は画面を暗くして止める。本部が「終わり」を押すと on=false
+ */
+export interface LookupView {
+  /** 押すたびに増える番号 */
+  seq: number;
+  on: boolean;
+  /** アニメを始める瞬間（サーバー時刻）。全員がこの瞬間から流す */
+  showAt: number;
+}
+
 /** ゲーム全体の段階（サーバーが持つ正解） */
 export type Stage =
   /** 配役前（入室を受け付けている） */
@@ -64,6 +76,10 @@ export interface GameView {
   counts: { oni: number; runner: number; total: number; caught: number };
   result: Winner | null;
   durations: number[];
+  /** 遊び方（fueshi＝増やし鬼：捕まった逃走者は牢屋に入らず鬼になる）。古いサーバーからは来ない（そのときはドロケイ） */
+  mode?: 'dorokei' | 'fueshi' | 'koori';
+  /** 増やし鬼：いまの配役で、捕まって鬼になった人数 */
+  turned?: number;
   /** 今の夜を始めた時刻（「新しい夜を始める」を押した時刻）。古いサーバーは送らない */
   nightAt?: number;
   /** 配役の比率（鬼：逃走者）。古いサーバーからは来ない */
@@ -116,6 +132,8 @@ export interface GameView {
   reveal?: { mode: RevealMode; hitAt: number | null } | null;
   /** 司令塔の札（本部のデッキで入れたり外したりする）。誰が司令塔かは入れない。古いサーバーからは来ない（そのときは外してある） */
   lead?: LeadRules;
+  /** 本部の「前を向いて」。古いサーバーからは来ない */
+  lookup?: LookupView | null;
 }
 
 /**
@@ -218,6 +236,10 @@ export interface MeView {
   rescues?: number;
   /** 今の配役で捕まえた人数（鬼だけ） */
   catches: number;
+  /** 救護の呼び出し：自分のいちばん新しい呼び出し（今夜のうち）。無ければ null。古いサーバーからは来ない */
+  sos?: MeSos | null;
+  /** 増やし鬼：いまの配役で捕まって、逃走者から鬼になった */
+  turned?: boolean;
   /** 逃走者の「捕まった」（選ぶまで開いている）。at は最初に長押しを始めたサーバー時刻。cands は並べる候補 */
   claim: { at: number; cands: Candidate[] } | null;
   /** ミッション：このラウンドに自分が送った写真（古い順）。古いサーバーからは来ない */
@@ -269,8 +291,38 @@ export interface HostCapture {
 }
 
 /** 主催者だけに送る集計 */
+/** 救護の呼び出しの状態。open＝本部がまだ見ていない、ack＝本部が見た（向かう）、done＝終わった、cancel＝本人が取り消した */
+export type SosStatus = 'open' | 'ack' | 'done' | 'cancel';
+
+/** 救護：押した本人に返す、自分の呼び出し */
+export interface MeSos {
+  cid: string;
+  id: number;
+  status: SosStatus;
+  at: number;
+  ackAt: number | null;
+}
+
+/** 救護：主催者に送る、まだ終わっていない呼び出し（古い順） */
+export interface HostSos {
+  id: number;
+  name: string;
+  status: 'open' | 'ack';
+  at: number;
+  ackAt: number | null;
+  /** いまの配役での役と、牢屋にいるか（探すときの手がかり） */
+  role: RoleId | null;
+  caught: boolean;
+  /** 押した人の位置（取れていれば）。at＝その位置を受け取った時刻 */
+  pos: { lat: number; lon: number; acc: number; at: number } | null;
+  /** 押した人のスマホがいまつながっているか */
+  online: boolean;
+}
+
 export interface HostSummary {
   roster?: { name: string; num: number; role: RoleId | null; caught: boolean; connected: boolean; need: PermItem[] | null }[];
+  /** 救護の呼び出し（まだ終わっていないもの）。古いサーバーからは来ない */
+  sos?: HostSos[];
   /** 入室していて外されていない人 */
   total: number;
   /** 今つながっている人 */
@@ -496,7 +548,13 @@ export type HostOp =
   /** 司令塔を指名する（pid＝今の配役で役がある人。その人の側の司令塔になる） */
   | 'lead-pick'
   /** 司令塔をくじで引き直す（role＝どちらの側か） */
-  | 'lead-draw';
+  | 'lead-draw'
+  /** 救護の呼び出しを「見た（向かう）」にする（rid＝呼び出しの番号）。押した本人の画面に「本部が見た」と出る。版番号を見ない */
+  | 'sos-ack'
+  /** 救護の呼び出しを「終わった」にする（rid＝呼び出しの番号）。版番号を見ない */
+  | 'sos-done'
+  /** 前を向いて（LOOK UP / LISTEN）：on=true で全員のスマホに流す、false で終わり。いつでも。版番号を見ない */
+  | 'lookup';
 
 export type ClientMsg =
   /** 新しく名簿に入って、今夜に入る（名前が名簿にあれば taken が返る） */
@@ -624,6 +682,11 @@ export type ClientMsg =
    * 同じ配役のうちに失格していなければ無視する
    */
   | { t: 'dq-ok' }
+  /**
+   * 救護の呼び出し（緊急ボタンを3秒長押し）。on=true で呼ぶ（位置が取れていれば付ける。あとから位置だけ送り直してもいい）、
+   * false で本人が取り消す。cid＝このスマホが決めた呼び出しの印（送り直しで2件にならないように）。試合の段階に関係なくいつでも
+   */
+  | { t: 'sos'; on: boolean; cid: string; lat?: number; lon?: number; acc?: number }
   /**
    * 配役の希望：次の配役でなりたい役（null＝どちらでも）。配役の前（待合室・結果発表）と、見学の人だけ変えられる。
    * 役が決まってからゲームが終わるまでの分は、サーバーが捨てて今の状態を送り直す

@@ -22,6 +22,7 @@ import {
 import { isAnnounceSettings } from '../shared/announce';
 import type {
   CaptureNews,
+  LookupView,
   ClientMsg,
   GameView,
   GlowEntry,
@@ -30,8 +31,10 @@ import type {
   HostLead,
   HostPhoto,
   HostOp,
+  HostSos,
   HostSummary,
   MateEntry,
+  MeSos,
   MatesScope,
   MeLead,
   MeView,
@@ -45,7 +48,7 @@ import type {
   Stage,
   Winner,
 } from '../shared/protocol';
-import { decideWinner, everyoneJailed } from '../shared/jail';
+import { decideWinner, everyoneJailed, everyoneTurned } from '../shared/jail';
 import {
   cardOf,
   CHAT_GAP_MS,
@@ -139,7 +142,7 @@ import { DEFAULT_LEAD_RULES, isLeadRules, leadDown, leadSight, patchLeadRules, t
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventToLine, eventsToCsv, type EventRow } from './log';
 import { cleanNightPlan, type NightPlan } from '../shared/night';
-import { cleanPresets, defaultPresets, presetDurations, type Preset } from '../shared/preset';
+import { cleanPresets, defaultPresets, fueshiPreset, FUESHI_PRESET_ID, presetDurations, PRESETS_MAX, type GameMode, type Preset } from '../shared/preset';
 import type { ProbeHub } from './probe';
 import { checkNewHostKey, hostKeyCandidates, sameHostKey } from '../shared/hostkey';
 
@@ -199,12 +202,20 @@ interface GameState {
   allCaughtAt?: number | null;
   /** result をアプリが決めた */
   resultAuto?: boolean;
+  /** 遊び方（プリセットをデッキへ入れると決まる）。fueshi＝増やし鬼。古い保存データには無い（ドロケイ） */
+  mode?: GameMode;
+  /** 増やし鬼：いまの配役で、捕まって鬼になった人数（配役で 0 に戻る） */
+  turned?: number;
+  /** 増やし鬼のプリセットを、前からある部屋のプリセットの並びに1回だけ足した */
+  fueshiSeeded?: boolean;
   /** 捕まったときの全員への知らせの設定（主催者が切り替える。新しい夜でも残る）。古い保存データには無い */
   announce?: AnnounceSettings;
   /** 最後の知らせ。配役・リセット・新しい夜で消える */
   news?: NewsState | null;
   /** 知らせの番号（増え続ける。配役をまたいでも戻さない） */
   newsSeq?: number;
+  /** 本部の「前を向いて」。古い保存データには無い */
+  lookup?: LookupView | null;
   /** 配役の決め方（主催者が切り替える）。古い保存データには無いので load で補う */
   wishMode: WishMode;
   /** 夜の予定（本部で組む。新しい夜を始めても残す）。古い保存データには無い */
@@ -522,6 +533,8 @@ export class GameRoom extends DurableObject<Env> {
   private readonly runs = new Map<string, RunRec>();
   /** 今の配役で、鬼 → 捕まえた回数（解放されても減らない。主催者の取り消しでだけ減る） */
   private readonly catches = new Map<string, number>();
+  /** 増やし鬼：捕まって鬼になった人 → その配役の番号（画面の一言のため。サーバーが入れ替わると消えるが、役は残る） */
+  private readonly turnedAt = new Map<string, { assignId: number; by: string | null; via: CaptureVia | null; at: number }>();
   /** 範囲の外で失格を数えた人（配役の番号つき。同じ配役のうちは1回だけ） */
   private readonly dqSeen = new Map<string, number>();
   /** 失格のあと牢屋に出頭した人（配役の番号つき。記録を1回にするための印） */
@@ -561,6 +574,8 @@ export class GameRoom extends DurableObject<Env> {
   private chatKey = '';
   private readonly lastVoiceAt = new Map<string, number>();
   private readonly lastChatAt = new Map<string, number>();
+  /** 救護の呼び出し：pid ごとのいちばん新しい呼び出し（今夜のうち。サーバーが入れ替わったら表から読み直す） */
+  private readonly sosByPid = new Map<string, SosRec>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -730,6 +745,22 @@ export class GameRoom extends DurableObject<Env> {
       )`,
     );
     this.sql.exec(`CREATE INDEX IF NOT EXISTS chat_night ON chat (night, assign_id)`);
+    // 救護の呼び出し。新しい夜を始めても消さない（あとで何があったか読めるように）
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS sos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cid TEXT NOT NULL,
+        pid TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        ack_at INTEGER,
+        done_at INTEGER,
+        lat REAL,
+        lon REAL,
+        acc INTEGER,
+        pos_at INTEGER
+      )`,
+    );
     // 1イベント＝1行。部屋を空にしても消さない（あとで人数比や流れを統計で見るため）
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS events (
@@ -792,6 +823,13 @@ export class GameRoom extends DurableObject<Env> {
       if (row) this.saveGame();
     }
     if (!isValidRatio(this.game.ratio)) this.game.ratio = { ...DEFAULT_RATIO };
+    // 増やし鬼を入れる前にプリセットをいじった部屋には、増やし鬼のプリセットが無い。1回だけ足す（消したら戻さない）
+    if (this.game.presets && !this.game.fueshiSeeded) {
+      const list = this.game.presets;
+      if (list.length < PRESETS_MAX && !list.some((p) => p.id === FUESHI_PRESET_ID || p.mode === 'fueshi')) this.game.presets = [...list, fueshiPreset()];
+      this.game.fueshiSeeded = true;
+      if (row) this.saveGame();
+    }
     // ミッションを入れる前の版で作った部屋には、ミッションの番号が無い
     if (!Number.isInteger(this.game.missionSeq)) {
       const last = this.sql.exec<{ n: number | null }>(`SELECT MAX(id) AS n FROM missions`).toArray()[0]?.n;
@@ -807,6 +845,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!isAnnounceSettings(this.game.announce)) this.game.announce = { ...ANNOUNCE_DEFAULT };
     if (this.game.news === undefined) this.game.news = null;
     if (!Number.isInteger(this.game.newsSeq)) this.game.newsSeq = 0;
+    if (this.game.lookup === undefined) this.game.lookup = null;
     if (!isShrinkPlan(this.game.shrinkPlan)) this.game.shrinkPlan = { ...DEFAULT_SHRINK_PLAN };
     if (this.game.shrink === undefined) this.game.shrink = null;
     if (this.game.jail === undefined) this.game.jail = null;
@@ -831,6 +870,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!isChatJail(this.game.chatJail)) this.game.chatJail = DEFAULT_CHAT_JAIL;
     if (!cleanPlaces(this.game.chatPlaces)) this.game.chatPlaces = [...DEFAULT_PLACES];
     this.loadChat();
+    this.loadSos();
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -978,6 +1018,26 @@ export class GameRoom extends DurableObject<Env> {
       if (r.kind === 'capture') this.catches.set(pid, (this.catches.get(pid) ?? 0) + 1);
       else if (r.kind === 'release') this.catches.set(pid, Math.max(0, (this.catches.get(pid) ?? 0) - 1));
       else this.rescues.set(pid, (this.rescues.get(pid) ?? 0) + 1);
+    }
+    // 増やし鬼：鬼になった人（取り消されていない人）も記録から戻す
+    this.turnedAt.clear();
+    for (const r of this.sql.exec<{ kind: string; pid: string | null; at: number; via: string | null; data: string | null }>(
+      `SELECT kind, pid, at, via, data FROM events WHERE id > ? AND assign_id = ? AND kind IN ('turn', 'unturn') AND pid IS NOT NULL ORDER BY id`,
+      base,
+      this.game.assignId,
+    )) {
+      if (r.kind === 'unturn') {
+        this.turnedAt.delete(r.pid!);
+        continue;
+      }
+      let by: string | null = null;
+      try {
+        const d = r.data ? (JSON.parse(r.data) as { by?: unknown }) : null;
+        if (d && typeof d.by === 'string') by = d.by;
+      } catch {
+        // 読めない記録は、捕まえた鬼なしで戻す
+      }
+      this.turnedAt.set(r.pid!, { assignId: this.game.assignId, by, via: (r.via as CaptureVia | null) ?? null, at: r.at });
     }
   }
 
@@ -1315,6 +1375,9 @@ export class GameRoom extends DurableObject<Env> {
         return;
       case 'chat':
         this.onChat(att, msg, now);
+        return;
+      case 'sos':
+        this.onSos(att, msg, now);
         return;
     }
   }
@@ -2345,14 +2408,66 @@ export class GameRoom extends DurableObject<Env> {
     this.endHold(runner.pid, Date.now(), 'capture');
     // 捕まった人は光らない。位置は主催者にだけ届く
     this.endRun(runner.pid, Date.now(), 'caught');
-    this.flushMatesSoon(true);
-    this.leadCaught(runner, at);
+    const fueshi = this.game.mode === 'fueshi';
+    // 増やし鬼は牢屋が無い（司令塔が「落ちる」こともない）
+    if (fueshi) this.dropSpot(runner.pid);
+    else {
+      this.flushMatesSoon(true);
+      this.leadCaught(runner, at);
+    }
     this.notify(runner.pid, 'caught', oni ?? undefined, via);
     if (oni) this.notify(oni.pid, 'captured', runner, via);
     this.announceNews('capture', runner, oni);
+    if (fueshi) this.turnToOni(runner, at);
     // 最後の1人が牢屋に入ったら、ゲームを終わらせる（その中で配り直す）
     if (!this.checkAllCaught(Date.now(), at)) this.broadcastNow();
     this.refreshAutoResult();
+  }
+
+  /**
+   * 増やし鬼：捕まった逃走者を、牢屋に入れずにその場で鬼にする。捕獲の記録（ログ・捕まえた数・知らせ）は済んでいる。
+   * 役と人数を保存する。配り直しは呼んだ側（recordCapture）がする
+   */
+  private turnToOni(runner: Participant, at: number): void {
+    const g = this.game;
+    if (runner.role !== 'runner') return;
+    const was = { assignId: g.assignId, by: runner.caughtBy, via: runner.caughtVia, at };
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE participants SET role = 'oni', caught_assign = 0, caught_by = NULL, caught_at = NULL, caught_via = NULL, free_until = NULL WHERE pid = ?`,
+        runner.pid,
+      );
+      this.log('turn', { p: runner, at, via: was.via, data: { by: was.by, oni: g.counts.oni + 1, runner: Math.max(0, g.counts.runner - 1) } });
+    });
+    runner.role = 'oni';
+    runner.caughtAssign = 0;
+    runner.caughtBy = null;
+    runner.caughtAt = null;
+    runner.caughtVia = null;
+    runner.freeUntil = null;
+    this.turnedAt.set(runner.pid, was);
+    this.commit({ counts: { oni: g.counts.oni + 1, runner: Math.max(0, g.counts.runner - 1) }, turned: (g.turned ?? 0) + 1 });
+  }
+
+  /** 増やし鬼：いまの配役で、捕まって鬼になった人か */
+  private isTurned(p: Participant): boolean {
+    return p.role === 'oni' && this.game.assignId > 0 && this.turnedAt.get(p.pid)?.assignId === this.game.assignId;
+  }
+
+  /** 増やし鬼：鬼になった人を逃走者に戻す（主催者の取り消し・やり直し）。配り直しは呼んだ側がする */
+  private turnBack(p: Participant, now: number, why: 'release' | 'reset'): void {
+    if (!this.isTurned(p)) return;
+    const g = this.game;
+    const was = this.turnedAt.get(p.pid)!;
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`UPDATE participants SET role = 'runner' WHERE pid = ?`, p.pid);
+      this.log('unturn', { p, at: now, data: { why, by: was.by } });
+    });
+    p.role = 'runner';
+    this.turnedAt.delete(p.pid);
+    this.catches.delete(p.pid);
+    if (why === 'release' && was.by) this.catches.set(was.by, Math.max(0, (this.catches.get(was.by) ?? 0) - 1));
+    this.commit({ counts: { oni: Math.max(0, g.counts.oni - 1), runner: g.counts.runner + 1 }, turned: Math.max(0, (g.turned ?? 0) - 1) });
   }
 
   // ---------- 捕まったときの全員への知らせ ----------
@@ -2526,7 +2641,8 @@ export class GameRoom extends DurableObject<Env> {
   private checkAllCaught(now: number, at: number): boolean {
     const g = this.game;
     if (g.stage !== 'timer' && g.stage !== 'result') return false;
-    if (g.allCaughtAt != null || !everyoneJailed(this.gameView().counts)) return false;
+    const view = this.gameView();
+    if (g.allCaughtAt != null || !(g.mode === 'fueshi' ? everyoneTurned(view) : everyoneJailed(view.counts))) return false;
     let timer = g.timer;
     let ended = false;
     if (g.stage === 'timer' && timer) {
@@ -3021,6 +3137,147 @@ export class GameRoom extends DurableObject<Env> {
     this.scheduleHostUpdate();
   }
 
+  // ---------- 救護の呼び出し（緊急ボタン） ----------
+
+  private loadSos(): void {
+    this.sosByPid.clear();
+    for (const r of this.sql.exec<SosRow>(`SELECT * FROM sos WHERE at > ? ORDER BY id`, Date.now() - SOS_KEEP_MS)) {
+      this.sosByPid.set(r.pid, sosOf(r));
+    }
+  }
+
+  private saveSos(r: SosRec): void {
+    this.sql.exec(
+      `UPDATE sos SET status = ?, ack_at = ?, done_at = ?, lat = ?, lon = ?, acc = ?, pos_at = ? WHERE id = ?`,
+      r.status,
+      r.ackAt,
+      r.doneAt,
+      r.pos?.lat ?? null,
+      r.pos?.lon ?? null,
+      r.pos?.acc ?? null,
+      r.pos?.at ?? null,
+      r.id,
+    );
+  }
+
+  /**
+   * 参加者が緊急ボタンを押した（on）・取り消した（off）。試合の段階に関係なく受ける。
+   * 同じ cid の送り直しは同じ呼び出しのまま（位置だけ新しくする）。まだ終わっていない呼び出しがあれば、それに重ねる
+   */
+  private onSos(att: Attachment, msg: Extract<ClientMsg, { t: 'sos' }>, now: number): void {
+    const p = att.pid ? this.people.get(att.pid) : undefined;
+    if (!p) return;
+    const cid = typeof msg.cid === 'string' ? msg.cid.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) : '';
+    if (!cid) return;
+    const pos = cleanPos(msg.lat, msg.lon, msg.acc);
+    const cur = this.sosByPid.get(p.pid);
+    const live = cur && (cur.status === 'open' || cur.status === 'ack') ? cur : null;
+    if (msg.on !== true) {
+      if (!live || live.cid !== cid) return this.sendSnapTo([p.pid]);
+      live.status = 'cancel';
+      live.doneAt = now;
+      this.saveSos(live);
+      this.log('sos-cancel', { p, at: now, data: { id: live.id } });
+      this.sosChanged(p.pid);
+      return;
+    }
+    if (live || cur?.cid === cid) {
+      // 送り直し・位置の更新（終わった呼び出しの送り直しは、位置も変えずに今の状態を返す）
+      const r = live ?? cur!;
+      if (live && pos && (!r.pos || pos.acc <= r.pos.acc + 20 || now - r.pos.at > 15_000)) {
+        r.pos = { ...pos, at: now };
+        this.saveSos(r);
+        this.sosChanged(p.pid);
+      } else {
+        this.sendSnapTo([p.pid]);
+      }
+      return;
+    }
+    if (cur && now - cur.at < SOS_GAP_MS) return this.sendSnapTo([p.pid]);
+    const id = this.sql
+      .exec<{ id: number }>(
+        `INSERT INTO sos (cid, pid, at, status, lat, lon, acc, pos_at) VALUES (?, ?, ?, 'open', ?, ?, ?, ?) RETURNING id`,
+        cid,
+        p.pid,
+        now,
+        pos?.lat ?? null,
+        pos?.lon ?? null,
+        pos?.acc ?? null,
+        pos ? now : null,
+      )
+      .one().id;
+    const r: SosRec = { id, cid, pid: p.pid, at: now, status: 'open', ackAt: null, doneAt: null, pos: pos ? { ...pos, at: now } : null };
+    this.sosByPid.set(p.pid, r);
+    const inRound = this.inRound(p.pid);
+    this.log('sos', { p, at: now, data: { id, role: inRound?.role ?? null, lat: pos?.lat ?? null, lon: pos?.lon ?? null, acc: pos?.acc ?? null } });
+    this.sosChanged(p.pid);
+  }
+
+  /** 主催者が「見た（向かう）」「終わった」を押した */
+  private onSosHost(op: 'sos-ack' | 'sos-done', rid: unknown, now: number): void {
+    const id = Number(rid);
+    const r = [...this.sosByPid.values()].find((x) => x.id === id);
+    if (!r || (r.status !== 'open' && r.status !== 'ack')) return this.sendHostsNow();
+    if (op === 'sos-ack') {
+      if (r.status === 'ack') return;
+      r.status = 'ack';
+      r.ackAt = now;
+    } else {
+      r.status = 'done';
+      r.doneAt = now;
+    }
+    this.saveSos(r);
+    this.log(op, { p: this.people.get(r.pid) ?? null, at: now, data: { id: r.id, secs: Math.round((now - r.at) / 1000) } });
+    this.sosChanged(r.pid);
+  }
+
+  /** 押した本人と主催者に、すぐ送る（まとめて送るのを待たない） */
+  private sosChanged(pid: string): void {
+    this.sendSnapTo([pid]);
+    this.sendHostsNow();
+  }
+
+  private sendHostsNow(): void {
+    if (this.hostTimer) {
+      clearTimeout(this.hostTimer);
+      this.hostTimer = null;
+    }
+    const game = this.gameView();
+    const host = this.hostSummary();
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = (ws.deserializeAttachment() as Attachment | null) ?? {};
+      if (att.host) this.send(ws, this.snapFor(att, game, host));
+    }
+  }
+
+  private meSos(pid: string, now: number): MeSos | null {
+    const r = this.sosByPid.get(pid);
+    if (!r || now - r.at > SOS_KEEP_MS) return null;
+    return { cid: r.cid, id: r.id, status: r.status, at: r.at, ackAt: r.ackAt };
+  }
+
+  private hostSos(connected: Set<string>): HostSos[] {
+    const out: HostSos[] = [];
+    for (const r of this.sosByPid.values()) {
+      if (r.status !== 'open' && r.status !== 'ack') continue;
+      const p = this.people.get(r.pid);
+      const m = p ? null : this.members.get(r.pid);
+      const inRound = p ? this.inRound(p.pid) : undefined;
+      out.push({
+        id: r.id,
+        name: p?.name ?? m?.name ?? '？',
+        status: r.status,
+        at: r.at,
+        ackAt: r.ackAt,
+        role: inRound?.role ?? null,
+        caught: inRound ? this.isCaught(inRound) : false,
+        pos: r.pos,
+        online: connected.has(r.pid),
+      });
+    }
+    return out.sort((a, b) => a.at - b.at);
+  }
+
   // ---------- 主催者 ----------
 
   /** 空白・大文字小文字・全角半角のちがいは同じ合言葉とみなす（スマホで打つため。shared/hostkey.ts） */
@@ -3087,6 +3344,12 @@ export class GameRoom extends DurableObject<Env> {
     // 旧画面からのコマンドでも、廃止したルールは再有効化できない。
     if (['preset-apply', 'presets', 'wish-mode', 'reveal', 'cast', 'lead', 'lead-pick', 'lead-draw', 'shrink-plan', 'shrink-now', 'mic', 'chat-mode'].includes(op)) {
       return this.reject(ws, att, op, 'not-allowed');
+    }
+
+    // 救護の呼び出しは、ほかの操作とぶつからないので版番号を見ない（いつでも）
+    if (op === 'sos-ack' || op === 'sos-done') {
+      this.onSosHost(op, msg.rid, now);
+      return;
     }
 
     // 人を外す操作は、ほかの主催者の操作とぶつからないので版番号を見ない
@@ -3157,6 +3420,20 @@ export class GameRoom extends DurableObject<Env> {
       const g = this.game;
       if (g.stage !== 'timer' && g.stage !== 'result') return this.reject(ws, att, op, 'not-allowed');
       const runner = this.inRound(msg.pid);
+      // 増やし鬼：鬼になった人の捕獲を取り消すと、逃走者に戻る
+      if (op === 'release' && runner && this.isTurned(runner)) {
+        const by = this.turnedAt.get(runner.pid)?.by ?? null;
+        this.turnBack(runner, now, 'release');
+        if (g.allCaughtAt != null) {
+          this.commit({ allCaughtAt: null });
+          this.log('all-caught-undo', { at: now, data: { runner: runner.pid } });
+        }
+        this.notify(runner.pid, 'released');
+        this.broadcastNow();
+        if (by) this.sendSnapTo([by]);
+        this.refreshAutoResult();
+        return;
+      }
       if (!runner || runner.role !== 'runner') return this.reject(ws, att, op, 'not-found');
       if (op === 'capture') {
         if (this.isCaught(runner)) return this.reject(ws, att, op, 'not-allowed');
@@ -3203,6 +3480,21 @@ export class GameRoom extends DurableObject<Env> {
       if (JSON.stringify(list) === JSON.stringify(this.game.presets ?? defaultPresets())) return;
       this.game = { ...this.game, presets: list };
       this.saveGame();
+      this.broadcastNow();
+      return;
+    }
+
+    // 前を向いて：いつでも（試合中でも）。ほかの操作とぶつからないので版番号を見ない
+    if (op === 'lookup') {
+      const on = msg.on === true;
+      const cur = this.game.lookup ?? null;
+      if (!on && !cur?.on) return;
+      const next: LookupView = on
+        ? { seq: (cur?.seq ?? 0) + 1, on: true, showAt: now + ANNOUNCE_LEAD_MS }
+        : { ...cur!, on: false };
+      this.game = { ...this.game, lookup: next };
+      this.saveGame();
+      this.log('lookup', { at: now, data: { on } });
       this.broadcastNow();
       return;
     }
@@ -3277,6 +3569,7 @@ export class GameRoom extends DurableObject<Env> {
           result: null,
           resultAuto: false,
           allCaughtAt: null,
+          turned: 0,
           counts: { oni, runner },
           news: null,
           wishStat,
@@ -3379,6 +3672,8 @@ export class GameRoom extends DurableObject<Env> {
           this.sql.exec(`UPDATE participants SET free_until = NULL`);
           this.dropClaims();
         });
+        // 増やし鬼：鬼になった人は、やり直しで逃走者に戻る
+        for (const p of [...this.people.values()]) this.turnBack(p, now, 'reset');
         this.dropJail();
         for (const p of this.people.values()) {
           p.freeUntil = null;
@@ -3482,6 +3777,7 @@ export class GameRoom extends DurableObject<Env> {
         const durations = msg.durations ? [...msg.durations] : presetDurations({ ...preset, round: { ...preset.round, phases } });
         const leadBefore = this.lead().rules;
         this.commit({
+          mode: preset.mode,
           durations,
           ratio: { ...preset.ratio },
           micMode: preset.mic,
@@ -4544,11 +4840,14 @@ export class GameRoom extends DurableObject<Env> {
         .filter((ph) => ph.status === 'ok')
         .map((ph) => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, freed: ph.freed })),
       allCaughtAt: g.allCaughtAt ?? null,
+      mode: g.mode ?? 'dorokei',
+      turned: g.turned ?? 0,
       resultAuto: g.resultAuto === true,
       micMode: g.micMode,
       area: g.area ?? null,
       announce: g.announce ?? { ...ANNOUNCE_DEFAULT },
       news: g.news?.view ?? null,
+      lookup: g.lookup ?? null,
       shrinkPlan: g.shrinkPlan ?? DEFAULT_SHRINK_PLAN,
       shrink: g.shrink ?? null,
       jail: g.jail ?? null,
@@ -4621,6 +4920,7 @@ export class GameRoom extends DurableObject<Env> {
           ? { byNum: by?.num ?? null, byName: by?.name ?? null, at: p.caughtAt ?? 0, via: p.caughtVia ?? 'host' }
           : null,
       catches,
+      ...(live && this.isTurned(p) ? { turned: true } : {}),
       claim,
       sent: [...this.photos.values()]
         .filter((ph) => ph.pid === p.pid)
@@ -4636,6 +4936,7 @@ export class GameRoom extends DurableObject<Env> {
       wishMissed: live && g.wishStat != null && p.wish !== null && p.role !== null && p.role !== p.wish,
       hostCast: false,
       lead: live ? this.meLead(p) : null,
+      sos: this.meSos(p.pid, now),
     };
   }
 
@@ -4646,12 +4947,15 @@ export class GameRoom extends DurableObject<Env> {
     const inRound = [...this.people.values()].filter((p) => !p.removed && p.assignId === g.assignId && p.role);
     const catches = this.catches;
     return {
+      // 増やし鬼：捕まって鬼になった人も、捕まった人としてここに並べる（押すと取り消して逃走者に戻せる）
       runners: inRound
-        .filter((p) => p.role === 'runner')
+        .filter((p) => p.role === 'runner' || this.isTurned(p))
         .sort((a, b) => a.num - b.num)
         .map((p) => {
-          const caught = this.isCaught(p);
-          const by = caught && p.caughtBy ? this.people.get(p.caughtBy) : undefined;
+          const turned = this.isTurned(p) ? this.turnedAt.get(p.pid)! : null;
+          const caught = turned !== null || this.isCaught(p);
+          const byPid = turned ? turned.by : p.caughtBy;
+          const by = caught && byPid ? this.people.get(byPid) : undefined;
           return {
             pid: p.pid,
             num: p.num,
@@ -4659,8 +4963,8 @@ export class GameRoom extends DurableObject<Env> {
             caught,
             byNum: by?.num ?? null,
             byName: by?.name ?? null,
-            via: caught ? p.caughtVia : null,
-            at: caught ? p.caughtAt : null,
+            via: turned ? turned.via : caught ? p.caughtVia : null,
+            at: turned ? turned.at : caught ? p.caughtAt : null,
             open: !caught && this.liveClaim(p.pid, now) !== null,
             freeUntil: !caught && p.freeUntil !== null && p.freeUntil > now ? p.freeUntil : null,
             rescues: this.rescues.get(p.pid) ?? 0,
@@ -4744,6 +5048,7 @@ export class GameRoom extends DurableObject<Env> {
           connected: connected.has(p.pid), need: permNeed.get(p.pid) ?? null,
         };
       }),
+      sos: this.hostSos(connected),
       total: active.length,
       connected: active.filter((p) => connected.has(p.pid)).length,
       assigned: inAssign.length,
@@ -4914,6 +5219,50 @@ export class GameRoom extends DurableObject<Env> {
       // 閉じかけの接続は、つなぎ直したときに全部を送り直すので捨ててよい
     }
   }
+}
+
+/** 救護：呼び出しを覚えておく長さ（押した本人の画面と主催者の一覧に出す。表には残る） */
+const SOS_KEEP_MS = 12 * 60 * 60_000;
+/** 救護：終わった呼び出しのすぐあとに、新しい呼び出しを受けるまでの間（押し間違いの連打よけ） */
+const SOS_GAP_MS = 5_000;
+
+interface SosRec {
+  id: number;
+  cid: string;
+  pid: string;
+  at: number;
+  status: 'open' | 'ack' | 'done' | 'cancel';
+  ackAt: number | null;
+  doneAt: number | null;
+  pos: { lat: number; lon: number; acc: number; at: number } | null;
+}
+
+type SosRow = {
+  id: number;
+  cid: string;
+  pid: string;
+  at: number;
+  status: string;
+  ack_at: number | null;
+  done_at: number | null;
+  lat: number | null;
+  lon: number | null;
+  acc: number | null;
+  pos_at: number | null;
+};
+
+function sosOf(r: SosRow): SosRec {
+  const status = r.status === 'ack' || r.status === 'done' || r.status === 'cancel' ? r.status : 'open';
+  return {
+    id: r.id,
+    cid: r.cid,
+    pid: r.pid,
+    at: r.at,
+    status,
+    ackAt: r.ack_at,
+    doneAt: r.done_at,
+    pos: r.lat !== null && r.lon !== null ? { lat: r.lat, lon: r.lon, acc: r.acc ?? 9_999, at: r.pos_at ?? r.at } : null,
+  };
 }
 
 /** 走ると光る：届いた位置を確かめて丸める（緯度・経度は小数5桁＝約1m、誤差は m の整数）。おかしければ null */

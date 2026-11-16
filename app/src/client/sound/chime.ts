@@ -9,7 +9,7 @@ import { wavBlob } from './emitter';
  * - 音は聞こえる帯（1〜3kHz）だけで作る。番号を運ぶ超音波（15kHz より上）に混ざらない
  */
 
-export type ChimeKind = 'capture' | 'release' | 'test';
+export type ChimeKind = 'capture' | 'release' | 'test' | 'lookup';
 
 const RATE = 48_000;
 
@@ -35,9 +35,15 @@ const NOTES: Record<ChimeKind, Note[]> = {
     { f: 1568, ms: 200, gap: 0 },
   ],
   test: CAPTURE,
+  /** 前を向いて：ゆっくり上がる3音（顔を上げる合図。確保の音と聞き分けられるように） */
+  lookup: [
+    { f: 1047, ms: 220, gap: 60 },
+    { f: 1319, ms: 220, gap: 60 },
+    { f: 1568, ms: 460, gap: 0 },
+  ],
 };
 
-const GAIN: Record<ChimeKind, number> = { capture: 0.7, release: 0.45, test: 0.7 };
+const GAIN: Record<ChimeKind, number> = { capture: 0.7, release: 0.45, test: 0.7, lookup: 0.6 };
 
 /** 音の波形（テストでも使う）。silent は unlock 用の無音 */
 export function chimeSamples(kind: ChimeKind | 'silent', rate = RATE): Float32Array {

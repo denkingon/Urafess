@@ -420,6 +420,16 @@ export class GameClient {
   }
 
   /** 範囲の外に20秒いて失格になったことを伝える（同じ配役のうちは何度送ってもサーバーが1回だけ数える） */
+  /**
+   * 救護の呼び出し（緊急ボタン）。on=true で呼ぶ・位置を送り直す、false で取り消す。cid はこのスマホが決めた印。
+   * 切れていれば送れない（false）。届いたかは返ってくる状態（me.sos）で分かるので、画面の側が送り直す
+   */
+  sos(on: boolean, cid: string, pos: { lat: number; lon: number; acc: number } | null): boolean {
+    if (!this.isOpen()) return false;
+    this.send({ t: 'sos', on, cid, ...(pos ?? {}) });
+    return true;
+  }
+
   disqualified(): void {
     this.send({ t: 'dq' });
   }

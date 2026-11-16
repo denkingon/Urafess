@@ -26,8 +26,8 @@ const KEEP_LINES = 2000;
 
 const HOST_OPS = new Set(['assign', 'start', 'pause', 'resume', 'reset', 'result', 'end', 'clear', 'durations', 'ratio', 'mic', 'wish-mode',
   'cast', 'recast', 'area', 'jail-place', 'remove', 'host-key', 'chat-mode', 'chat-places', 'mission', 'mission-close', 'shrink', 'shrink-plan', 'skip']);
-const BAD = new Set(['capture', 'dq', 'all-caught', 'bad-name', 'taken', 'name-shame']);
-const GOOD = new Set(['rescue', 'mission-free', 'photo-ok', 'meet', 'dq-ok']);
+const BAD = new Set(['sos', 'capture', 'dq', 'all-caught', 'bad-name', 'taken', 'name-shame']);
+const GOOD = new Set(['rescue', 'mission-free', 'photo-ok', 'meet', 'dq-ok', 'sos-done']);
 
 function tone(l: LogLine): string {
   if (BAD.has(l.kind)) return 'bad';

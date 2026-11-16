@@ -1,6 +1,6 @@
 import { allocateCounts } from './allocate';
 import { CAPTURE_PHASE_INDEX, captureOpenAt } from './capture';
-import { decideWinner, endReason, everyoneJailed } from './jail';
+import { decideWinner, endReason, everyoneJailed, fueshiResult, isFueshi } from './jail';
 import type { GameView, HostSummary, MeView, Winner } from './protocol';
 import { CLAIM_GRACE_MS, DEFAULT_RATIO, PHASES, REVEAL_AHEAD_MAX_MS, REVEAL_COUNT_MS, ROLE_NAME, ROLES, type RoleId } from './rules';
 import { formatClock, positionAt } from './schedule';
@@ -183,7 +183,7 @@ export function participantView(
     runners: !assigned
       ? '?'
       : game.stage === 'timer' || game.stage === 'result'
-        ? `残り${game.counts.runner - (game.counts.caught ?? 0)}/${game.counts.runner}`
+        ? `残り${game.counts.runner - (game.counts.caught ?? 0)}/${game.counts.runner + (isFueshi(game) ? (game.turned ?? 0) : 0)}`
         : String(game.counts.runner),
     offline: !online,
     touch: 'none',
@@ -283,6 +283,10 @@ export function participantView(
     };
   }
 
+  if (game.stage === 'result' && isFueshi(game)) {
+    return { ...base, step: 6, label: '結果発表', message: `${game.resultAuto === false ? '' : endReason(game)}次のラウンドは配役から。`, ...fueshiEnd(game, me), wish };
+  }
+
   if (game.stage === 'result') {
     const winner = game.result ?? decideWinner(game);
     return {
@@ -313,7 +317,10 @@ export function participantView(
   // 牢屋から出られるのは、ゲームの段階が動いている間だけ（全員が入ったら、もう出られない）
   const rescueOpen = captureOpenAt(timer, serverNow) && !allCaught;
   const rescue: PhoneView['rescue'] =
-    role !== 'runner' || !rescueOpen ? 'none' : caught ? 'help' : (game.counts.caught ?? 0) > 0 ? 'save' : 'none';
+    role !== 'runner' || !rescueOpen || isFueshi(game) ? 'none' : caught ? 'help' : (game.counts.caught ?? 0) > 0 ? 'save' : 'none';
+  if (pos.kind === 'done' && isFueshi(game)) {
+    return { ...base, step: 6, label: '結果発表', message: endReason(game), touch, caught, ...fueshiEnd(game, me), wish: touch === 'none' ? wish : null };
+  }
   if (pos.kind === 'done') {
     // 時間が0になった：結果はアプリが決める（サーバーの確定を待たずに、同じ決め方で出す）
     const winner = decideWinner(game);
@@ -329,8 +336,21 @@ export function participantView(
   const lightable = !caught && captureOpenAt(timer, serverNow);
   const paused = timer.status === 'paused';
   const afterGame = pos.index > CAPTURE_PHASE_INDEX;
+  const fueshi = isFueshi(game);
+  // 増やし鬼：捕まって鬼になった人には、ゲームの間ずっとそう伝える
+  const turned = fueshi && role === 'oni' && me.turned === true;
   const message = paused
     ? '主催者の合図を待つ。'
+    : fueshi && afterGame && allCaught
+      ? '全員が鬼になった。ゲーム終了。広場に戻る。'
+    : fueshi && pos.index === CAPTURE_PHASE_INDEX
+      ? turned
+        ? '捕まった。ここからは鬼。逃走者を捕まえろ。'
+        : role === 'runner' && immuneMs <= 0
+          ? '逃げ切れ。捕まったら、その場で鬼になる。'
+          : role === 'oni'
+            ? '捕まえろ。捕まえた人は鬼になる。'
+            : MESSAGES[role][pos.index + 1]
     : afterGame && (allCaught || everyoneJailed(game.counts))
       ? '全員が牢屋に入った。ゲーム終了。広場に戻る。'
       : caught && pos.index === CAPTURE_PHASE_INDEX
@@ -361,6 +381,14 @@ export function participantView(
           : SCENES[role][pos.index + 1].word,
     note: paused
       ? ['主催者の合図を待つ', 'Wait for the host']
+      : fueshi && allCaught
+        ? ['全員が鬼になった', 'Everyone is a chaser now']
+      : turned && !afterGame
+        ? ['捕まった。ここからは鬼', 'Caught. You are a chaser now']
+      : fueshi && pos.index === CAPTURE_PHASE_INDEX && immuneMs <= 0
+        ? role === 'runner'
+          ? ['捕まったら鬼になる', 'Get caught and you become a chaser']
+          : ['捕まえた人は鬼になる', 'Whoever you catch becomes a chaser']
       : allCaught || (afterGame && everyoneJailed(game.counts))
         ? ['全員が牢屋に入った', 'Every runner is in jail']
         : caught && !afterGame
@@ -374,6 +402,19 @@ export function participantView(
     lightable,
     rescue,
     immuneMs,
+  };
+}
+
+/** 増やし鬼の結果の画面（勝ち負けはつけない。逃げ切った人だけ「逃げ切った」） */
+function fueshiEnd(game: GameView, me: MeView): Pick<PhoneView, 'big' | 'scene' | 'word' | 'note' | 'outcome'> {
+  const all = decideWinner(game) === 'oni';
+  const left = Math.max(0, game.counts.runner - (game.counts.caught ?? 0));
+  return {
+    big: fueshiResult(game),
+    scene: 'result',
+    word: me.role === 'runner' ? ['逃げ切った', 'SURVIVED'] : all ? ['全員が鬼', 'ALL CHASERS'] : ['終了', 'END'],
+    note: all ? ['全員が鬼になった', 'Everyone became a chaser'] : [`逃げ切り ${left}人`, `${left} survived`],
+    outcome: me.role === 'runner' ? 'win' : null,
   };
 }
 
@@ -436,16 +477,16 @@ export function hostStatus(game: GameView, serverNow: number): { title: string; 
     case 'result':
       return {
         title: `6 結果発表（${game.resultAuto === false ? '主催者が決めた' : 'アプリが決めた'}）`,
-        big: WINNER_TEXT[game.result ?? decideWinner(game)],
+        big: isFueshi(game) ? fueshiResult(game) : WINNER_TEXT[game.result ?? decideWinner(game)],
         next: `${game.resultAuto === false ? '' : endReason(game)}次：配役で次のラウンド`,
       };
     case 'timer': {
       const timer = game.timer!;
       const pos = positionAt(timer, serverNow);
-      if (pos.kind === 'done') return { title: '6 結果発表', big: WINNER_TEXT[decideWinner(game)], next: `${endReason(game)}アプリが結果を出す` };
+      if (pos.kind === 'done') return { title: '6 結果発表', big: isFueshi(game) ? fueshiResult(game) : WINNER_TEXT[decideWinner(game)], next: `${endReason(game)}アプリが結果を出す` };
       const nextLabel = pos.index + 1 < PHASES.length ? PHASES[pos.index + 1].label : '結果発表';
       const paused = timer.status === 'paused';
-      const allIn = game.allCaughtAt != null ? '全員が牢屋に入った（鬼の勝ちで決まり）　' : '';
+      const allIn = game.allCaughtAt != null ? (isFueshi(game) ? '全員が鬼になった　' : '全員が牢屋に入った（鬼の勝ちで決まり）　') : '';
       return {
         title: `${pos.index + 2} ${PHASES[pos.index].label}${paused ? '（一時停止中）' : ''}`,
         big: formatClock(pos.remainingMs),

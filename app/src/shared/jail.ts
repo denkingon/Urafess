@@ -23,8 +23,24 @@ export function decideWinner(game: Pick<GameView, 'counts' | 'allCaughtAt'>): Wi
   return everyoneJailed(game.counts) ? 'oni' : 'runner';
 }
 
+/** 増やし鬼か（捕まった逃走者は牢屋に入らず、その場で鬼になる） */
+export function isFueshi(game: Pick<GameView, 'mode'>): boolean {
+  return game.mode === 'fueshi';
+}
+
+/** 増やし鬼：逃走者が1人もいなくなった（全員が鬼になった）。はじめから逃走者が0人の配役では起きない */
+export function everyoneTurned(game: Pick<GameView, 'counts' | 'mode' | 'turned'>): boolean {
+  return isFueshi(game) && game.counts.runner === 0 && (game.turned ?? 0) > 0;
+}
+
+/** 増やし鬼の結果の言葉（勝ち負けはつけない） */
+export function fueshiResult(game: Pick<GameView, 'counts' | 'allCaughtAt'>): string {
+  return decideWinner(game) === 'oni' ? '全員が鬼になった' : `逃げ切り ${freeRunners(game.counts)}人`;
+}
+
 /** 結果の理由（画面に出す一言） */
-export function endReason(game: Pick<GameView, 'counts' | 'allCaughtAt'>): string {
+export function endReason(game: Pick<GameView, 'counts' | 'allCaughtAt' | 'mode'>): string {
+  if (isFueshi(game)) return decideWinner(game) === 'oni' ? '全員が鬼になった。' : `時間切れ。逃げ切った ${freeRunners(game.counts)}人。`;
   if (decideWinner(game) === 'oni') return '全員が牢屋に入った。';
   const free = freeRunners(game.counts);
   return `時間切れ。逃げ切った逃走者 ${free}人。`;
