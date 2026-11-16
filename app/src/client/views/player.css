@@ -579,3 +579,38 @@
 .player .ov-me.is-lit .ov-me-cone { fill: var(--chikko); }
 .player .ov-me .ov-me-ring { stroke-width: 3.5; }
 .player .ov-name { stroke: #0b0c10; stroke-width: 4.5px; }
+
+/* スマホの許可のバナー：許可をお願いする板はこの1枚だけ（蓄光の点線）。最初は大きく、そのあと（断られた・マイクが止まった）は小さく */
+.player .perm-ask {
+  width: 100%; min-height: 96px; border-radius: 18px; border: 3px dashed var(--chikko); background: transparent; color: var(--chikko);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 14px 16px; text-align: center;
+}
+.player .perm-ask[hidden] { display: none; }
+.player .perm-ask b { font-size: max(var(--min), 22px); line-height: 1.2; font-weight: 900; }
+.player .perm-ask b span { font-size: inherit; color: inherit; font-weight: inherit; line-height: inherit; }
+.player .perm-ask b .en { font-size: max(calc(var(--min) * 1.2), .8em); }
+.player .perm-ask > span { font-size: max(var(--min), 15px); line-height: 1.45; color: var(--tsuki); font-weight: 500; opacity: 1; }
+.player .perm-ask > span span { font-size: inherit; color: inherit; }
+.player .perm-ask.compact { min-height: 60px; padding: 8px 12px; gap: 2px; }
+.player .perm-ask.compact b { font-size: max(var(--min), 18px); }
+.player .perm-ask[data-kind="denied"], .player .perm-ask[data-kind="fix"] { border-color: var(--shu); color: var(--shu); }
+.player .perm-ask:disabled { opacity: .7; }
+/* ゲームの段階は地図に高さを譲る：小さいバナーは1行だけ */
+.player.is-glow .perm-ask.compact > span { display: none; }
+.player.is-chat .perm-ask { display: none; }
+/* 待合室・結果発表：バナーが出ている間は、真ん中の絵をしまって高さを譲る（小さいスマホでもスクロールさせない） */
+.player[data-glow="none"]:has(.perm-ask:not([hidden])) .p-pic { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .player .perm-ask[data-kind="ask"] { animation: p-perm-pulse 1.6s ease-in-out infinite; }
+}
+@keyframes p-perm-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(184, 255, 90, .4); } 50% { box-shadow: 0 0 0 10px rgba(184, 255, 90, 0); } }
+/* 背の低いスマホ（iPhone SE など）：バナーを詰める。説明は日本語の1行だけ */
+@media (max-height: 720px) {
+  .player .perm-ask, .player .perm-ask.compact { min-height: 0; padding: 8px 12px; gap: 2px; }
+  .player .perm-ask b { font-size: max(var(--min), 20px); }
+  .player .perm-ask > span .en { display: none; }
+  .player .perm-ask.compact { padding: 4px 12px; gap: 0; }
+  .player .perm-ask.compact b { line-height: 1.1; }
+  /* 最初のお願いが出ている間は「自分のページ」をしまう（許可が先） */
+  .player:has(.perm-ask[data-kind="ask"]:not([hidden])) .p-mine { display: none; }
+}

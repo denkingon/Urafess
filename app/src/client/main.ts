@@ -11,6 +11,7 @@ import { AnnounceChime } from './sound/chime';
 import { SoundEmitter } from './sound/emitter';
 import { SoundListener } from './sound/listener';
 import { Sensors } from './sense';
+import { Perms } from './perms';
 import { callAccount, createAccount, errorText } from './views/account';
 import { createAnnounce } from './views/announce';
 import { createCapture } from './views/capture';
@@ -27,6 +28,7 @@ import { createMission, createPhotoLoader } from './views/mission';
 import { createWish } from './views/wish';
 import { mountBackdrop } from './views/backdrop';
 import { createRunLab } from './views/lab-run';
+import { createPerm } from './views/perm';
 import { createPhone } from './views/phone';
 import { createScreenKeeper } from './wake-lock';
 
@@ -270,6 +272,21 @@ function startPlayer(): void {
   phone.slot.before(chat.panel, chat.strip);
   const reporter = new RunReporter();
   let lastView: PhoneView | null = null;
+  // スマホの許可（動き・位置・マイク）：入室してすぐの1枚のバナーでまとめてもらう。ほかの場面では聞かない
+  /** いまマイクが要るか：鬼は配役〜ゲームの終わり、逃走者は牢屋の中 */
+  const wantMic = (v: PhoneView | null): boolean =>
+    !!v && ((v.role === '鬼' && !v.caught && v.step >= 1 && v.step <= 4) || v.rescue === 'help');
+  const perms = new Perms({
+    sensors,
+    listener,
+    unlockAudio: () => {
+      emitter.unlock();
+      listener.unlock();
+      chime.unlock();
+    },
+  });
+  const perm = createPerm(() => perms.request(wantMic(lastView)));
+  phone.slot.prepend(perm.el);
   let lastMatePos = 0;
   setInterval(() => {
     const view = lastView;
@@ -381,6 +398,7 @@ function startPlayer(): void {
       wish.update(waiting, s);
       glow.update(waiting, s, client.serverNow());
       chat.update(null, s, Date.now());
+      perm.update(null);
       return;
     }
     show(phone.el);
@@ -406,6 +424,9 @@ function startPlayer(): void {
     wish.update(view, s);
     glow.update(view, s, client.serverNow());
     chat.update(view, s, client.serverNow() ?? Date.now());
+    // 許可のバナー：夜が終わったあとは出さない。許可があれば、マイクは要る場面で押さなくても開く
+    perms.tick(wantMic(view));
+    perm.update(view.ended ? null : perms.banner(wantMic(view)));
     // 配役が出たら、音の部品を読み込み、自分の3桁の音を前もって作っておく（長押しの瞬間に間に合うように）
     if (s.me.code && s.me.code !== preparedCode) {
       preparedCode = s.me.code;

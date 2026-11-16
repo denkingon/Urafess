@@ -13,7 +13,7 @@ import { createRadar, type RadarLight } from './radar';
 /**
  * 走ると光る（見た目の層）。参加者の画面の真ん中（時計と長押しの間）に出す。
  *
- * 配役〜追跡開始まで：「走ると光るをオンにする」（動きのセンサーと位置の許可）。押したあとは「オン」の一言だけ
+ * 配役〜追跡開始まで：センサーが使えていれば「走ると光る：オン」の一言だけ（許可は最初のバナーでもらう。views/perm.ts）
  * ゲームの段階：光の地図と、いちばん近い人の行。自分が光っている間は「光っている」と大きく出す
  * 参加者の画面は日本語と英語（ui.ts の言語に従う）。主催者の画面（createLightsBoard の既定）は日本語だけ
  */
@@ -394,14 +394,11 @@ export interface GlowScreen {
   update(view: PhoneView, state: ClientState, serverNow: number | null): void;
 }
 
-/** 許可・センサーの状態の一言（困っているときだけ。困っていなければ null） */
+/** センサーの状態の一言（困っているときだけ。困っていなければ null）。許可が無いときは、許可のバナーが言う */
 function senseProblem(s: Sensors): Pair | null {
-  if (s.motion === 'denied' && s.geo === 'denied')
-    return ['動きのセンサーも位置も許可されていない。このままでは走っても光らない。アプリを開き直して、もう一度「オンにする」を押す', 'Motion and location are blocked, so running will not make you glow. Reopen the app and turn it on again'];
-  if (s.motion === 'denied')
-    return ['動きのセンサーが許可されていない。走りは位置の速さで決める（遅れて光る）。アプリを開き直すと、もう一度聞ける', 'Motion is blocked, so running is judged by GPS speed (slower). Reopen the app to be asked again'];
-  if (s.geo === 'denied')
-    return ['位置が許可されていない。光っても場所は出ず、地図の真ん中も決まらない。設定アプリで位置を許可する', 'Location is blocked: your spot will not show and the map has no center. Allow location in Settings'];
+  if (s.motion === 'denied' && s.geo === 'denied') return ['動きも位置も許可されていない。このままでは走っても光らない', 'Motion and location are blocked, so running will not make you glow'];
+  if (s.motion === 'denied') return ['動きが許可されていない。走りは位置の速さで決める（遅れて光る）', 'Motion is blocked, so running is judged by GPS speed (slower)'];
+  if (s.geo === 'denied') return ['位置が許可されていない。光っても場所は出ず、地図の真ん中も決まらない', 'Location is blocked: your spot will not show and the map has no center'];
   if (s.motion === 'unsupported' && s.geo !== 'ok')
     return ['このスマホは動きのセンサーが使えない。位置が取れるまで、走っても光らない', 'This phone has no motion sensor. Running will not glow until location works'];
   if (s.geo === 'error') return ['位置が取れていない（建物の中・電波）。外に出ると取れる', 'No location yet (indoors or weak signal). Go outside'];
@@ -446,10 +443,6 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
   const el = document.createElement('section');
   el.className = 'glow';
   el.innerHTML = `
-    <button type="button" class="glow-ask" data-act="sense" hidden>
-      <b class="u-ask">${say(['走ると光るをオンにする', 'TURN ON RUN TO GLOW'])}</b>
-      <span data-k="askSub"></span>
-    </button>
     <p class="glow-note" data-k="note" hidden></p>
     <p class="lead-strip" data-k="lead" role="status" hidden></p>
     <div class="area-out" data-k="out" role="alert" hidden>
@@ -513,7 +506,6 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
   for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) reportBtn.addEventListener(ev, endHold);
   reportBtn.addEventListener('contextmenu', (e) => e.preventDefault());
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
-  const ask = el.querySelector('.glow-ask') as HTMLButtonElement;
   const note = q('note');
   const litChip = root?.querySelector('[data-k="lit"]') as HTMLElement | null;
   const board = createLightsBoard({ listMax: 1, start: 'all', labelMax: 10, bilingual: true, overlay: true });
@@ -581,10 +573,6 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
     if (show) vibrate([700, 150, 700]);
   };
 
-  ask.addEventListener('click', () => {
-    // このタップの中で許可を聞く（iPhone はタップの直後でないと聞けない）
-    sensors.request();
-  });
   // 毎フレーム呼ばれるので、変わったときだけ書き換える（字は setHTML が同じ中身なら書き換えない）
   const setHidden = (e: HTMLElement, hidden: boolean) => {
     if (e.hidden !== hidden) e.hidden = hidden;
@@ -602,23 +590,16 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
       }
       const now = Date.now();
 
-      // 光らない人（見学・捕まった）にも地図は出るので、位置だけは使ってほしい
-      const watcher = view.role === 'なし' || view.caught;
-      setHidden(ask, !sensors.needsTap);
-      setHTML(
-        q('askSub'),
-        sent(
-          watcher
-            ? ['位置を使う（光った人の方角と距離）', 'Uses location']
-            : ['動きと位置を使う（ゲームの間、仲間の地図に自分が出る）', 'Uses motion and location (teammates see you on the map)'],
-        ),
-      );
       const problem = senseProblem(sensors);
       if (view.glow === 'prep') {
-        // 押したあとは「オン」の一言だけ（言葉の量は少なく）。困っているときだけ理由を出す
-        setHidden(note, !ask.hidden && !problem);
-        note.classList.toggle('is-problem', !!problem);
-        setHTML(note, problem ? sent(problem) : ask.hidden ? say(['走ると光る：オン', 'RUN TO GLOW: ON']) : '');
+        // センサーが使えていれば「オン」の一言だけ（言葉の量は少なく）。困っているときだけ理由を出す。
+        // 許可が無いときは許可のバナーが言うので、ここでは繰り返さない
+        const denied = sensors.motion === 'denied' || sensors.geo === 'denied';
+        const trouble = denied ? null : problem;
+        const on = !trouble && sensors.canDetect;
+        setHidden(note, !trouble && !on);
+        note.classList.toggle('is-problem', !!trouble);
+        setHTML(note, trouble ? sent(trouble) : on ? say(['走ると光る：オン', 'RUN TO GLOW: ON']) : '');
       } else {
         // ゲームの段階は地図に高さを譲る：困りごとは地図の真ん中に重ねる（位置が取れないときだけ）
         setHidden(note, true);
@@ -715,7 +696,8 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
         heading: sensors.heading(now),
         myNum: state.me?.num ?? null,
         meLit: lit,
-        message: pos ? null : sensors.geo === 'ok' || sensors.geo === 'asking' ? null : problem,
+        // 許可が無いときは許可のバナーが言うので、地図の上では繰り返さない
+        message: pos ? null : sensors.geo === 'ok' || sensors.geo === 'asking' || sensors.geo === 'denied' ? null : problem,
         mates: state.mates,
         meAcc: pos?.acc ?? null,
         myKind: view.role === '鬼' ? 'oni' : view.role === '逃走者' ? 'runner' : 'unknown',

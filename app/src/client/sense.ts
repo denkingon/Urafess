@@ -9,7 +9,7 @@ import { MATES_ACC_MAX, MATES_FIX_MAX_AGE_MS } from '../shared/rules';
  * - 方角（deviceorientation）：光の地図を、自分の向いている方が上になるよう回す。取れなければ北が上
  * - 位置（geolocation.watchPosition）：地図の真ん中（自分）と、光っている間に送る位置。配役〜ゲームの終わりだけ見る
  *
- * 許可を聞くのは「走ると光るをオンにする」を押したときだけ（いきなり許可の画面を出さない）。
+ * 許可を聞くのは、最初の「スマホの許可」のバナーを押したときだけ（いきなり許可の画面を出さない。perms.ts）。
  * Android の動きのセンサーと、前に許可した位置は、押さなくても使う
  */
 
@@ -155,28 +155,56 @@ export class Sensors {
     return this.motion === 'ok' || this.geo === 'ok';
   }
 
-  /** タップの中で呼ぶ。許可を聞いて、使えるものから使い始める */
+  /** 位置は前に許可されている（押さなくても使える）と分かっている */
+  get geoAllowed(): boolean {
+    return this.geoGranted;
+  }
+
+  /** タップの中で呼ぶ。許可を聞いて、使えるものから使い始める（主催者の地図・走りの試し用。参加者の画面は perms.ts が順番に聞く） */
   request(): void {
+    void this.requestMotion();
+    this.requestGeo();
+  }
+
+  /**
+   * 動きと方角の許可を聞く。タップの処理の中で（await の前に）呼ぶ：iPhone はそうしないと断る。
+   * 返す約束は、聞き終わったら（許可・断る・聞かなくていい端末のどれでも）終わる
+   */
+  requestMotion(): Promise<void> {
     this.asked = true;
-    // iPhone：許可を聞く関数は、タップの処理の中で（await の前に）呼ばないと断られる
     const motionAsk = typeof DeviceMotionEvent !== 'undefined' ? requestPermissionOf(DeviceMotionEvent) : null;
     const orientAsk = typeof DeviceOrientationEvent !== 'undefined' ? requestPermissionOf(DeviceOrientationEvent) : null;
+    const waits: Promise<unknown>[] = [];
     if (motionAsk) {
       this.setMotion('asking');
-      motionAsk()
-        .then((r) => (r === 'granted' ? this.startMotion() : this.setMotion('denied')))
-        .catch(() => this.setMotion('error'));
+      waits.push(
+        motionAsk()
+          .then((r) => (r === 'granted' ? this.startMotion() : this.setMotion('denied')))
+          .catch(() => this.setMotion('error')),
+      );
     } else {
       this.startMotion();
     }
     if (orientAsk) {
-      orientAsk()
-        .then((r) => (r === 'granted' ? this.startOrientation() : (this.compass = 'denied')))
-        .catch(() => (this.compass = 'error'));
+      waits.push(
+        orientAsk()
+          .then((r) => (r === 'granted' ? this.startOrientation() : (this.compass = 'denied')))
+          .catch(() => (this.compass = 'error')),
+      );
     } else {
       this.startOrientation();
     }
+    return Promise.all(waits).then(() => undefined);
+  }
+
+  /** 位置の許可を聞く（タップの外でも聞ける）。断られたあとにもう一度呼ぶと、聞き直す */
+  requestGeo(): void {
+    this.asked = true;
     this.geoGranted = true;
+    if (this.geo === 'denied' || this.geo === 'error') {
+      this.stopGeo();
+      this.geo = 'off';
+    }
     this.startGeo(true);
   }
 
@@ -186,9 +214,10 @@ export class Sensors {
     this.active = on;
     if (on) {
       // 許可の要らないもの・前に許可したものは、押さなくても始める
-      if (!this.motionNeedsTap || this.asked) this.startMotion();
+      // 断られたものは始め直さない（「断られた」のまま、許可のバナーに出し続ける。聞き直すのはバナーを押したとき）
+      if ((!this.motionNeedsTap || this.asked) && this.motion !== 'denied') this.startMotion();
       if (this.asked || typeof DeviceOrientationEvent === 'undefined' || requestPermissionOf(DeviceOrientationEvent) === null) this.startOrientation();
-      if (this.asked || this.geoGranted) this.startGeo();
+      if ((this.asked || this.geoGranted) && this.geo !== 'denied') this.startGeo();
     } else {
       this.stopGeo();
       this.stopMotion();
