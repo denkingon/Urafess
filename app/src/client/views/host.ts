@@ -1365,7 +1365,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       micBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mic === mic)));
       q('micNote').textContent =
         mic === 'always'
-          ? 'マイクをオンにした鬼は、押さなくても聞いている。逃走者の長押しの間に拾えば記録される'
+          ? '鬼は、押さなくても聞いている。逃走者の長押しの間に拾えば記録される'
           : '鬼は「捕まえた」を押している間だけ聞く（前の版と同じ）';
 
       const wishMode = game.wishMode ?? 'lot';
@@ -1538,8 +1538,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
               (areaPts ? (outside.length ? `　範囲の外 ${outside.length}人（${outside.map((m) => m.name).join('・')}）` : '　範囲の外 0人') : '')
             : 'ゲームの段階で地図に出る・光る';
         q('glowReady').textContent = g
-          ? `いまつながっている配役の人 ${g.total}人のうち、動きのセンサーが使える ${g.motion}人・位置が使える ${g.geo}人。` +
-            (g.total > 0 && (g.motion < g.total || g.geo < g.total) ? '足りない人は、画面の「走ると光るをオンにする」を押す。' : '')
+          ? `いまつながっている配役の人 ${g.total}人のうち、動きのセンサーが使える ${g.motion}人・位置が使える ${g.geo}人。`
           : '';
         glowMap.hidden = !sensors || !sensors.needsTap;
         board.el.hidden = gp !== 'live';
