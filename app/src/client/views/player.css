@@ -625,39 +625,26 @@
 }
 
 /* アプリ権限の最初のお願い（まだ押していない・確認が出ている間）：画面全体にかぶせ、ほかの字を見せない。
-   どこを押してもいい。真ん中に押す形（波紋の点と光る札）を出して、押すものだと一目で分かるようにする */
+   見出し → 光る丸い札（タップして許可）→ 小さい一行。どこを押してもいい */
 .player .perm-ask[data-kind="ask"], .player .perm-ask[data-kind="asking"]:not(.compact),
 .player.is-glow .perm-ask[data-kind="ask"], .player.is-glow .perm-ask[data-kind="asking"]:not(.compact) {
   position: fixed; inset: 0; z-index: 90; width: auto; min-height: 0; margin: 0; border-radius: 0;
-  background: rgba(11, 12, 16, .97); color: var(--tsuki); box-shadow: none; animation: none;
-  padding: calc(32px + env(safe-area-inset-top)) 24px calc(32px + env(safe-area-inset-bottom)); gap: 16px;
-  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  background: var(--yami); color: var(--tsuki); box-shadow: none; animation: none;
+  padding: calc(32px + env(safe-area-inset-top)) 24px calc(32px + env(safe-area-inset-bottom)); gap: 28px;
 }
-.player .perm-ask[data-kind="ask"] b, .player .perm-ask[data-kind="asking"]:not(.compact) b { font-size: max(var(--min), min(6.4vw, 32px)); color: var(--tsuki); }
-.player .perm-ask[data-kind="ask"] > span:not(.perm-cta), .player .perm-ask[data-kind="asking"]:not(.compact) > span { display: block; color: var(--muted, #a29d93); font-weight: 700; }
-.player .perm-ask[data-kind="ask"] > span:not(.perm-cta) .en, .player .perm-ask[data-kind="asking"] > span .en { display: block; }
-.player .perm-cta { display: flex; flex-direction: column; align-items: center; gap: 22px; margin-top: 28px; }
+.player .perm-ask[data-kind="ask"] b, .player .perm-ask[data-kind="asking"]:not(.compact) b { order: 0; font-size: max(var(--min), min(6.4vw, 32px)); color: var(--tsuki); }
+.player .perm-ask[data-kind="ask"] .perm-cta { order: 1; }
+.player .perm-ask[data-kind="ask"] > span:not(.perm-cta), .player .perm-ask[data-kind="asking"]:not(.compact) > span { order: 2; display: block; color: var(--muted, #a29d93); font-weight: 400; }
+.player .perm-ask[data-kind="ask"] > span:not(.perm-cta) .en { display: none; }
+.player .perm-cta { display: flex; }
 .player .perm-cta[hidden] { display: none; }
 .player .perm-cta-l {
-  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 18px 32px; border-radius: 999px;
-  background: var(--chikko); color: var(--yami); font-size: max(var(--min), 24px); font-weight: 900; line-height: 1.15;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 20px 40px; border-radius: 999px;
+  background: var(--chikko); color: var(--yami); font-size: max(var(--min), 26px); font-weight: 900; line-height: 1.15;
   box-shadow: 0 0 0 4px rgba(184, 255, 90, .28), 0 0 28px rgba(184, 255, 90, .55);
 }
 .player .perm-cta-l span { color: inherit; font-size: inherit; font-weight: inherit; }
-.player .perm-cta-l .en { font-size: max(calc(var(--min) * 1.2), .8em); }
-/* 押す点：まんなかの点から輪が広がる（指で押すところ） */
-.player .perm-tap { position: relative; width: 56px; height: 56px; border-radius: 50%; background: var(--tsuki); }
-.player .perm-tap::before, .player .perm-tap::after {
-  content: ""; position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--tsuki); opacity: 0;
-}
+.player .perm-cta-l .en { font-size: max(calc(var(--min) * 1.2), .75em); }
 @media (prefers-reduced-motion: no-preference) {
   .player .perm-cta-l { animation: p-perm-pulse 1.2s ease-in-out infinite; }
-  .player .perm-tap { animation: p-perm-press 1.6s ease-in-out infinite; }
-  .player .perm-tap::before { animation: p-perm-ring 1.6s ease-out infinite; }
-  .player .perm-tap::after { animation: p-perm-ring 1.6s ease-out .5s infinite; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .player .perm-tap::before { opacity: .5; transform: scale(1.6); }
-}
-@keyframes p-perm-ring { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(2.6); opacity: 0; } }
-@keyframes p-perm-press { 0%, 100% { transform: scale(1); } 12% { transform: scale(.82); } 24% { transform: scale(1); } }
