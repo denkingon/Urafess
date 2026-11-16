@@ -31,32 +31,10 @@ function vibrate(pattern: number | number[]): void {
   }
 }
 
-/** 牢屋の人のマイクの案内：[大きい字, 小さい字, 押せるか]（何も出さなくてよければ null） */
-function micPrompt(listener: SoundListener): [string, string, boolean] | null {
-  if (listener.live && !listener.silent) return null;
-  if (listener.silent) return ['マイクに音が来ていない', '押して開き直す。それまでは「助けて」を仲間と同時に長押しで出られる', true];
-  switch (listener.state) {
-    case 'starting':
-      return ['マイクを準備中…', '許可を聞かれたら「許可」を押す', false];
-    case 'denied':
-      return ['マイクが許可されていない', '押してもう一度試す。それまでは「助けて」を仲間と同時に長押しで出られる', true];
-    case 'unsupported':
-      return ['このスマホではマイクが使えない', '「助けて」を仲間と同時に長押しで出られる', false];
-    case 'error':
-    case 'ready':
-      return ['マイクをもう一度オンにする', 'マイクが止まっている。押すと戻る', true];
-    default:
-      return ['マイクをオンにする', '仲間が「助ける」を押した音を拾うと、その瞬間に出られる', true];
-  }
-}
-
 export function createJail({ client, emitter, listener }: JailDeps): JailScreen {
   const el = document.createElement('section');
   el.className = 'jail';
   el.innerHTML = `
-    <button type="button" class="cap-mic" data-act="mic" data-k="mic" hidden>
-      <span class="cap-lab"><b data-k="micLabel"></b><span data-k="micSub"></span></span>
-    </button>
     <p class="cap-status" data-k="status" hidden></p>
     <button type="button" class="hold hold-rescue" data-k="hold" hidden>
       <span class="hold-fill"></span>
@@ -133,15 +111,6 @@ export function createJail({ client, emitter, listener }: JailDeps): JailScreen 
   hold.addEventListener('lostpointercapture', release);
   hold.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  el.addEventListener('click', (e) => {
-    const t = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null;
-    if (t?.dataset.act === 'mic') {
-      // このタップの中で開く（音の処理を動かすのも、許可を聞くのもタップの直後でないとできない端末がある）
-      listener.unlock();
-      void listener.open();
-    }
-  });
-
   // ---------- 牢屋の人のマイク ----------
 
   const startJailListening = () => {
@@ -214,14 +183,7 @@ export function createJail({ client, emitter, listener }: JailDeps): JailScreen 
       } else {
         stopJailListening();
       }
-      const mic = q('mic') as HTMLButtonElement;
-      const prompt = mode === 'help' ? micPrompt(listener) : null;
-      mic.hidden = !prompt;
-      if (prompt) {
-        q('micLabel').textContent = prompt[0];
-        q('micSub').textContent = prompt[1];
-        mic.disabled = !prompt[2];
-      }
+      // マイクの許可は最初のバナーでもらい、牢屋に入ると自分から開く。止まった・断られたときは、同じバナーが出る（views/perm.ts）
       const status = q('status');
       status.hidden = mode !== 'help' || !listener.live;
       if (!status.hidden) status.textContent = `マイク：聞いている ${'▮'.repeat(1 + Math.round(listener.level * 5))}`;

@@ -579,3 +579,47 @@
 .player .ov-me.is-lit .ov-me-cone { fill: var(--chikko); }
 .player .ov-me .ov-me-ring { stroke-width: 3.5; }
 .player .ov-name { stroke: #0b0c10; stroke-width: 4.5px; }
+
+/* スマホの許可のバナー：許可をお願いする板はこの1枚だけ。画面のいちばん上に、ほかの板（闇の地に線）と違う「塗り」で出す。
+   最初は蓄光の塗りに闇の字で大きく、断られた・マイクが止まったは朱の塗り。全員に入れてもらうためのもの */
+.player .perm-ask {
+  flex: 0 0 auto; order: -1; width: 100%; min-height: 112px; margin: 0 0 12px; border-radius: 18px; border: none;
+  background: var(--chikko); color: var(--yami);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 16px; text-align: center;
+  box-shadow: 0 0 0 4px rgba(184, 255, 90, .28), 0 0 28px rgba(184, 255, 90, .55);
+}
+.player .perm-ask[hidden] { display: none; }
+.player .perm-ask b { font-size: max(var(--min), 28px); line-height: 1.15; font-weight: 900; }
+.player .perm-ask[data-kind="denied"] b { font-size: max(var(--min), 22px); }
+.player .perm-ask b span { font-size: inherit; color: inherit; font-weight: inherit; line-height: inherit; }
+.player .perm-ask b .en { font-size: max(calc(var(--min) * 1.2), .8em); }
+.player .perm-ask > span { font-size: max(var(--min), 16px); line-height: 1.4; color: var(--yami); font-weight: 700; opacity: 1; }
+.player .perm-ask > span span { font-size: inherit; color: inherit; }
+.player .perm-ask.compact { min-height: 64px; padding: 8px 12px; gap: 2px; }
+.player .perm-ask.compact b { font-size: max(var(--min), 20px); }
+.player .perm-ask[data-kind="denied"], .player .perm-ask[data-kind="fix"] { background: var(--shu); box-shadow: 0 0 0 4px rgba(255, 106, 61, .28), 0 0 24px rgba(255, 106, 61, .5); }
+.player .perm-ask:disabled { opacity: .75; }
+/* ゲームの段階は地図に高さを譲る：小さいバナーは1行だけ */
+.player.is-glow .perm-ask { min-height: 0; padding: 6px 12px; gap: 0; margin-bottom: 8px; }
+.player.is-glow .perm-ask b { font-size: max(var(--min), 20px); }
+.player.is-glow .perm-ask > span { display: none; }
+.player.is-ended .perm-ask { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .player .perm-ask:not(:disabled) { animation: p-perm-pulse 1.2s ease-in-out infinite; }
+  .player .perm-ask[data-kind="denied"]:not(:disabled), .player .perm-ask[data-kind="fix"]:not(:disabled) { animation-name: p-perm-pulse-shu; }
+}
+@keyframes p-perm-pulse { 0%, 100% { box-shadow: 0 0 0 4px rgba(184, 255, 90, .28), 0 0 28px rgba(184, 255, 90, .55); } 50% { box-shadow: 0 0 0 12px rgba(184, 255, 90, 0), 0 0 44px rgba(184, 255, 90, .9); } }
+@keyframes p-perm-pulse-shu { 0%, 100% { box-shadow: 0 0 0 4px rgba(255, 106, 61, .28), 0 0 24px rgba(255, 106, 61, .5); } 50% { box-shadow: 0 0 0 12px rgba(255, 106, 61, 0), 0 0 40px rgba(255, 106, 61, .85); } }
+/* 待合室・結果発表：バナーが出ている間は、真ん中の絵をしまって高さを譲る（小さいスマホでもスクロールさせない） */
+.player[data-glow="none"]:has(.perm-ask:not([hidden])) .p-pic { display: none; }
+/* 背の低いスマホ（iPhone SE など）：バナーを詰める。説明は日本語の1行だけ */
+@media (max-height: 720px) {
+  .player .perm-ask { min-height: 0; padding: 10px 12px; gap: 2px; margin-bottom: 8px; }
+  .player .perm-ask b { font-size: max(var(--min), 24px); }
+  .player .perm-ask > span .en { display: none; }
+  .player .perm-ask[data-kind="denied"] b { font-size: max(var(--min), 19px); }
+  .player .perm-ask.compact { padding: 5px 12px; gap: 0; }
+  .player .perm-ask.compact b { font-size: max(var(--min), 19px); line-height: 1.1; }
+  /* 最初のお願いが出ている間は「自分のページ」をしまう（許可が先） */
+  .player:has(.perm-ask[data-kind="ask"]:not([hidden])) .p-mine { display: none; }
+}

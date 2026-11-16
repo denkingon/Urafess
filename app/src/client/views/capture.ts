@@ -44,32 +44,10 @@ function vibrate(pattern: number | number[]): void {
   }
 }
 
-/** 鬼のマイクのボタンに出す言葉：[大きい字, 小さい字, 押せるか] */
-function micPrompt(listener: SoundListener): [Pair, Pair, boolean] {
-  if (listener.silent) return [['マイクに音が来ていない', 'NO SOUND ON MIC'], ['押して開き直す。直らなければアプリを開き直す', 'Tap to reopen. If that fails, reopen the app'], true];
-  switch (listener.state) {
-    case 'starting':
-      return [['マイクを準備中…', 'STARTING MIC'], ['許可を聞かれたら「許可」を押す', 'Tap "Allow" when asked'], false];
-    case 'ready':
-      return [['マイクをもう一度オンにする', 'MIC ON AGAIN'], ['マイクが止まっている。押すと戻る', 'The mic stopped. Tap to restart'], true];
-    case 'denied':
-      return [['マイクが許可されていない', 'MIC NOT ALLOWED'], ['押してもう一度試す。だめなら設定アプリでマイクを許可する。それまでは長押しの時刻だけで記録の候補に出る', 'Tap to retry, or allow the mic in Settings. Until then, only the hold time is used'], true];
-    case 'error':
-      return [['マイクをもう一度オンにする', 'MIC ON AGAIN'], ['マイクを開けなかった。押してもう一度試す', 'Could not open the mic. Tap to retry'], true];
-    case 'unsupported':
-      return [['このスマホではマイクが使えない', 'NO MIC ON THIS PHONE'], ['長押しの時刻だけで記録の候補に出る', 'Only the hold time is used'], false];
-    default:
-      return [['マイクをオン', 'MIC ON'], ['捕まえた相手の音を拾うのに使う。オンになるまで、ここに出る', 'Used to hear who you caught. Stays here until it is on'], true];
-  }
-}
-
 export function createCapture({ client, emitter, listener }: CaptureDeps): CaptureScreen {
   const el = document.createElement('section');
   el.className = 'capture';
   el.innerHTML = `
-    <button type="button" class="cap-mic" data-act="mic" data-k="mic" hidden>
-      ${glyph.mic}<span class="cap-lab"><b data-k="micLabel"></b><span data-k="micSub"></span></span>
-    </button>
     <div class="cap-cands" data-k="cands" hidden>
       <p class="cap-title">${glyph.oni}<span>${say(['捕まえたのは？', 'WHO CAUGHT YOU?'])}</span></p>
       <div class="cap-grid" data-k="grid" data-kind="oni"></div>
@@ -299,11 +277,6 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       case 'close':
         sheet.hidden = true;
         return;
-      case 'mic':
-        // このタップの中で開く（音の処理を動かすのも、許可を聞くのもタップの直後でないとできない端末がある）
-        listener.unlock();
-        void listener.open();
-        return;
       case 'prep':
         if (role === '鬼') {
           void listener.open();
@@ -393,7 +366,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       role = view.role;
       code = state.me?.code ?? null;
       if (prevMode !== mode && mode === 'none') endPress(true);
-      // 主催者が「ずっと聞く」にしているとき、鬼はゲームの段階の間ずっと聞く（マイクがもう開いているときだけ。開くのはマイクの板を押したとき）。
+      // 主催者が「ずっと聞く」にしているとき、鬼はゲームの段階の間ずっと聞く（マイクがもう開いているときだけ。開くのは perms.ts：許可があれば配役で自分から開く）。
       // 足すのは読み取りの計算だけ：マイクは配役のあとから開けたまま。「押している間だけ」なら前の版と同じ
       const always = (state.game?.micMode ?? 'always') === 'always';
       const wantPassive = mode === 'oni' && always && listener.state === 'ready';
@@ -410,7 +383,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       const afterGame = view.step === 0 || view.step >= 5;
       // 牢屋にいる逃走者は、助けに来た仲間の音を聞くのでマイクを閉じない（牢屋の画面 jail.ts が使う）。
       // 牢屋を出たら閉じる：マイクを開けたままだと iPhone は鳴らす音を小さくすることがあり、「助ける」の最大音量が出ないため
-      // （次に牢屋に入ったら、もう一度「マイクをオンにする」を押してもらう）
+      // （次に牢屋に入ったら、許可があれば押さなくてもまた開く）
       if (listener.state === 'ready' && view.rescue !== 'help' && ((mode === 'none' && afterGame) || view.role !== '鬼')) listener.close();
 
       onNotice(state);
@@ -450,16 +423,12 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
         setHTML(q('sheetWait'), people.length ? '' : sent(['選べる人がいない', 'Nobody to pick']));
       }
 
-      // 鬼のマイク：配役からゲームの終わりまで、マイクが本当に音を拾えるようになるまで大きく出し続ける。
-      // 一度オンにしても、止まったら（iPhone で画面を離れた・ほかの音のアプリ・電話など）また出す
+      // 鬼のマイク：許可は最初のバナーでもらい、配役で自分から開く。止まった・断られたときは、同じバナーが出る（views/perm.ts）
       const inRound = view.role !== 'なし' && !view.caught;
       const beforeOrDuring = view.step >= 1 && view.step <= 4;
-      const needMic = inRound && beforeOrDuring && role === '鬼' && !listener.live;
-      // まだ一度も試していないうちは、長押しの板の場所にマイクの板を出す。試したあと（止まった・断られた）は、小さくして長押しの板も出す
-      const micFirst = needMic && listener.state === 'off' && !listener.silent;
 
       // 長押しボタン
-      hold.hidden = mode === 'none' || (mode === 'oni' && micFirst);
+      hold.hidden = mode === 'none';
       q('foot').hidden = mode === 'none';
       // 手動の一覧：鬼はゲームの間いつでも。逃走者は「捕まった」を長押ししたあと（候補の枠の中）だけ
       q('footManual').hidden = mode !== 'oni';
@@ -481,9 +450,9 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
           off: null,
           starting: ['マイク：準備中', 'Mic: starting'],
           ready: listener.silent
-            ? ['マイク：音が来ていない（上のボタンで開き直す）', 'Mic: no sound (tap above to reopen)']
+            ? ['マイク：音が来ていない', 'Mic: no sound']
             : !listener.live
-              ? ['マイク：止まっている（上のボタンで戻す）', 'Mic: stopped (tap above to restart)']
+              ? ['マイク：止まっている', 'Mic: stopped']
               : holding
                 ? [`マイク：${'▮'.repeat(1 + Math.round(listener.level * 5))}`, '']
                 : null,
@@ -497,17 +466,6 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
         setHTML(status, emitter.playing || emitter.unlocked ? '' : sent(['音：一度「音を試す」を押す', 'Sound: tap "Test sound" once']));
       } else {
         setHTML(status, '');
-      }
-
-      const mic = q('mic') as HTMLButtonElement;
-      mic.hidden = !needMic;
-      mic.classList.toggle('compact', needMic && !micFirst && !hold.hidden);
-      mic.dataset.state = listener.silent ? 'silent' : listener.state;
-      if (needMic) {
-        const [label, sub, usable] = micPrompt(listener);
-        setHTML(q('micLabel'), say(label));
-        setHTML(q('micSub'), sent(sub));
-        mic.disabled = !usable;
       }
 
       // 準備（ゲームの前に一度：逃走者は音を試す）
