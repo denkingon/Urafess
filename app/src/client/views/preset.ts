@@ -54,7 +54,7 @@ const SECTION_KEYS: Record<Section, (keyof Preset)[]> = {
   cast: ['wish', 'reveal', 'mic'],
   lead: ['lead'],
   chat: ['chat'],
-  area: ['area'],
+  area: ['area', 'jail'],
   shrink: ['shrink'],
 };
 const LEAD_NAME: Record<LeadRuleKey, string> = {
@@ -73,7 +73,11 @@ const RING_PTS: [number, number][] = [
   [RING_BOX.south, RING_BOX.east],
   [RING_BOX.south, RING_BOX.west],
 ];
-const ptsOf = (p: Preset): [number, number][] | null => (Array.isArray(p.area) ? p.area : null);
+type Layer = 'area' | 'jail';
+const ptsOf = (p: Preset, l: Layer = 'area'): [number, number][] | null => {
+  const v = p[l];
+  return Array.isArray(v) ? v : null;
+};
 const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
 /**
@@ -113,6 +117,16 @@ function areaThumb(p: Preset, all: readonly Preset[]): SVGSVGElement {
     l.setAttribute('class', 'pp-thumb-none');
     el.append(l);
   }
+  const jail = ptsOf(p, 'jail');
+  if (jail) {
+    const ws2 = jail.map(([lat, lon]) => toWorld({ lat, lon }));
+    const c = document.createElementNS(NS, 'circle');
+    c.setAttribute('cx', (ox + (ws2.reduce((a, w) => a + w.x, 0) / ws2.length - x0) * S).toFixed(1));
+    c.setAttribute('cy', (oy + (ws2.reduce((a, w) => a + w.y, 0) / ws2.length - y0) * S).toFixed(1));
+    c.setAttribute('r', '3');
+    c.setAttribute('class', 'pp-thumb-jail');
+    el.append(c);
+  }
   return el;
 }
 
@@ -142,16 +156,19 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
   const canDeck = () => !game || game.stage === 'lobby' || game.stage === 'assigned' || game.stage === 'result';
 
   // 遊ぶ範囲を描く地図（1枚を使い回す。開いているプリセットの中に差しこむ）。描いている途中の角は「決める」まで送らない
-  let drawing: { id: string; pts: [number, number][] } | null = null;
-  const draftOf = (id: string) => (drawing?.id === id ? drawing.pts : null);
+  let layer: Layer = 'area';
+  let drawing: { id: string; layer: Layer; pts: [number, number][] } | null = null;
+  const draftOf = (id: string) => (drawing?.id === id && drawing.layer === layer ? drawing.pts : null);
+  /** そのプリセットをデッキへ入れたあとの牢屋（プリセットが持っていればそれ、そのままなら部屋のいまの牢屋） */
+  const jailOf = (p: Preset) => ptsOf(p, 'jail') ?? (p.jail === 'none' ? null : (game?.jail?.pts ?? null));
   const mapBox = mk('div', 'pp-map');
   const areaMap = createOverview({
     onTap: (pos) => {
       const p = presets.find((x) => x.id === selected);
-      if (!p || p.area === 'none' || (p.area === null && drawing?.id !== p.id)) return;
+      if (!p || p[layer] === 'none' || (!ptsOf(p, layer) && !draftOf(p.id))) return;
       const d = draftOf(p.id) ?? [];
       if (d.length >= AREA_MAX_PTS) return;
-      drawing = { id: p.id, pts: [...d, [round6(pos.lat), round6(pos.lon)]] };
+      drawing = { id: p.id, layer, pts: [...d, [round6(pos.lat), round6(pos.lon)]] };
       render();
     },
   });
@@ -159,7 +176,7 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
   const drawMap = (p: Preset) => {
     const pts = ptsOf(p);
     const d = draftOf(p.id);
-    const center = pts && !d?.length && p.shrink.times > 0 && p.shrink.to === 'mid' ? midOf(pts) : null;
+    const center = pts && !d?.length && layer === 'area' && p.shrink.times > 0 && p.shrink.to === 'mid' ? midOf(pts) : null;
     areaMap.update({
       me: null,
       meKind: 'unknown',
@@ -167,10 +184,10 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
       points: [],
       labelMax: 0,
       area: pts,
-      jail: game?.jail?.pts ?? null,
+      jail: jailOf(p),
       draft: d?.length ? d : null,
-      draftLayer: 'area',
-      frameBase: d ? 'campus' : 'area',
+      draftLayer: layer,
+      frameBase: d && layer === 'area' ? 'campus' : 'area',
       zone: center && pts ? { center, preview: scalePts(pts, center, Math.sqrt(p.shrink.finalArea)) } : null,
     });
   };
@@ -216,25 +233,45 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
     return box;
   };
 
+  const LAYER_TEXT: Record<Layer, { own: string; none: string; keep: (now: string) => string; gone: string; nowNone: string }> = {
+    area: {
+      own: 'このプリセットの範囲',
+      none: '範囲なし',
+      keep: (now) => `デッキへ入れても、いまの遊ぶ範囲に触らない（いま：${now}）`,
+      gone: 'デッキへ入れると、遊ぶ範囲が消える（どこまで行っても「戻れ」は出ない）',
+      nowNone: '範囲なし',
+    },
+    jail: {
+      own: 'このプリセットの牢屋',
+      none: '牢屋の場所なし',
+      keep: (now) => `デッキへ入れても、いまの牢屋の場所に触らない（いま：${now}）`,
+      gone: 'デッキへ入れると、牢屋の場所が消える（捕まった人に牢屋への向きが出なくなる）',
+      nowNone: 'まだ決めていない',
+    },
+  };
   const areaSection = (p: Preset) => {
-    const pts = ptsOf(p);
+    const T = LAYER_TEXT[layer];
+    const pts = ptsOf(p, layer);
     const d = draftOf(p.id);
-    const kind = d || pts ? 'own' : p.area === 'none' ? 'none' : 'keep';
-    const kids: HTMLElement[] = [
-      seg<string>('', 'area-kind', p.id, kind, [['keep', 'そのまま'], ['own', 'このプリセットの範囲'], ['none', '範囲なし']]),
-    ];
-    const now = game?.area?.pts ?? null;
+    const kind = d || pts ? 'own' : p[layer] === 'none' ? 'none' : 'keep';
+    const state = (l: Layer) => (ptsOf(p, l) ? '決めた' : p[l] === 'none' ? 'なし' : 'そのまま');
+    const tabs = mk('div', 'np-seg-btns pp-layers');
+    for (const [l, name] of [['area', '遊ぶ範囲'], ['jail', '牢屋']] as [Layer, string][]) {
+      tabs.append(btn(`${name}：${state(l)}`, 'area-layer', { id: p.id, v: l }, l === layer));
+    }
+    const kids: HTMLElement[] = [tabs, seg<string>('', 'area-kind', p.id, kind, [['keep', 'そのまま'], ['own', T.own], ['none', T.none]])];
+    const now = game?.[layer]?.pts ?? null;
     if (kind === 'keep') {
-      kids.push(mk('p', 'np-hint', `デッキへ入れても、いまの遊ぶ範囲に触らない（いま：${now ? areaSize(now) : '範囲なし'}）`));
+      kids.push(mk('p', 'np-hint', T.keep(now ? areaSize(now) : T.nowNone)));
     } else if (kind === 'none') {
-      kids.push(mk('p', 'np-hint', 'デッキへ入れると、遊ぶ範囲が消える（どこまで行っても「戻れ」は出ない）'));
+      kids.push(mk('p', 'np-hint', T.gone));
     } else {
-      const state = d
+      const text = d
         ? d.length < AREA_MIN_PTS
           ? `地図を押して角を足す（いま ${d.length}。3つ以上で決められる）`
           : `描いている途中（角 ${d.length}・${areaSize(d)}）。「決める」でこのプリセットに入る`
         : `角 ${pts!.length}・${areaSize(pts!)}。地図を押すと描き直せる`;
-      kids.push(mk('p', 'np-hint pp-area-now', state), mapBox);
+      kids.push(mk('p', 'np-hint pp-area-now', text), mapBox);
       const ops = mk('div', 'np-ops');
       if (d) {
         const undo = btn('1つ戻す', 'area-undo', { id: p.id });
@@ -244,23 +281,26 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
         save.disabled = d.length < AREA_MIN_PTS;
         ops.append(undo, btn('やめる', 'area-cancel', { id: p.id }), save);
       }
-      const take = btn('いまの範囲を取り込む', 'area-take', { id: p.id });
+      if (layer === 'area') ops.append(btn('メビウスリングの四角', 'area-ring', { id: p.id }));
+      const take = btn(layer === 'area' ? 'いまの範囲を取り込む' : 'いまの牢屋を取り込む', 'area-take', { id: p.id });
       take.disabled = !now;
-      ops.append(btn('メビウスリングの四角', 'area-ring', { id: p.id }), take);
+      ops.append(take);
       kids.push(ops);
-      const jail = game?.jail?.pts;
-      const shape = d && d.length >= AREA_MIN_PTS ? d : pts;
-      if (jail && shape) {
-        const mid = midOf(jail);
-        if (!checkArea(shape, { lat: mid[0], lon: mid[1] }).inside) {
-          const warn = mk('ul', 'np-issues');
-          warn.append(mk('li', '', '牢屋の場所がこの範囲の外にある（捕まった人が牢屋へ歩くと「戻れ」が出る）'));
-          kids.push(warn);
-        }
-      }
-      if (pts && !d && p.shrink.times > 0) kids.push(mk('p', 'np-hint', p.shrink.to === 'mid' ? '点線＝時間で縮みきったときの形' : '縮む先は毎回どこか（始めるときに決まる）'));
+      if (layer === 'area' && pts && !d && p.shrink.times > 0) kids.push(mk('p', 'np-hint', p.shrink.to === 'mid' ? '点線＝時間で縮みきったときの形' : '縮む先は毎回どこか（始めるときに決まる）'));
     }
-    return section('遊ぶ範囲', 'area', p.id, ...kids);
+    // デッキへ入れたあとの牢屋が、入れたあとの範囲の外にあれば知らせる（描いている途中の形も見る）
+    const dOk = d && d.length >= AREA_MIN_PTS ? d : null;
+    const areaAfter = (layer === 'area' ? dOk : null) ?? ptsOf(p, 'area') ?? (p.area === 'none' ? null : (game?.area?.pts ?? null));
+    const jailAfter = (layer === 'jail' ? dOk : null) ?? jailOf(p);
+    if (areaAfter && jailAfter && (ptsOf(p, 'area') || ptsOf(p, 'jail') || dOk)) {
+      const mid = midOf(jailAfter);
+      if (!checkArea(areaAfter, { lat: mid[0], lon: mid[1] }).inside) {
+        const warn = mk('ul', 'np-issues');
+        warn.append(mk('li', '', '牢屋の場所が遊ぶ範囲の外にある（捕まった人が牢屋へ歩くと「戻れ」が出る）'));
+        kids.push(warn);
+      }
+    }
+    return section('遊ぶ範囲・牢屋', 'area', p.id, ...kids);
   };
 
   const editor = (p: Preset) => {
@@ -404,16 +444,20 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
         drawing = null;
         return render();
       case 'area-undo':
-        if (drawing) drawing = { id: drawing.id, pts: drawing.pts.slice(0, -1) };
+        if (drawing) drawing = { ...drawing, pts: drawing.pts.slice(0, -1) };
         return render();
       case 'area-cancel':
+        drawing = null;
+        return render();
+      case 'area-layer':
+        layer = v as Layer;
         drawing = null;
         return render();
       case 'area-kind':
         if (v === 'own') {
           // 形がまだ無ければ、描き始める（「決める」まではプリセットは変わらない）
-          if (p && !ptsOf(p)) drawing = { id: p.id, pts: [] };
-          if (p && p.area === 'none') break;
+          if (p && !ptsOf(p, layer)) drawing = { id: p.id, layer, pts: [] };
+          if (p && p[layer] === 'none') break;
           return render();
         }
         drawing = null;
@@ -503,11 +547,11 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
           p.chat.jail = v as ChatJail;
           break;
         case 'area-kind':
-          p.area = v === 'none' ? 'none' : v === 'keep' ? null : ptsOf(p);
+          p[layer] = v === 'none' ? 'none' : v === 'keep' ? null : ptsOf(p, layer);
           break;
         case 'area-save':
           if (!drawing || drawing.id !== p.id || drawing.pts.length < AREA_MIN_PTS) return;
-          p.area = drawing.pts;
+          p[drawing.layer] = drawing.pts;
           drawing = null;
           break;
         case 'area-ring':
@@ -515,8 +559,8 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
           drawing = null;
           break;
         case 'area-take':
-          if (!game?.area) return;
-          p.area = game.area.pts.map(([a, b]) => [a, b] as [number, number]);
+          if (!game?.[layer]) return;
+          p[layer] = game[layer]!.pts.map(([a, b]) => [a, b] as [number, number]);
           drawing = null;
           break;
         case 'shrink-times':
