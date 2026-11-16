@@ -154,3 +154,19 @@
 .np .np-ops button { white-space: normal; text-align: left; line-height: 20px; padding: 6px 10px; }
 .np .pp-pick { white-space: normal; text-align: left; }
 .pp-pick > * { min-width: 0; }
+
+/* プリセットの遊ぶ範囲：並びの左に形の小さい絵（全部同じ縮尺）、中身に描く地図 */
+.np .pp-pick { display: grid; grid-template-columns: 48px minmax(0, 1fr) !important; gap: 0 10px !important; align-items: center; }
+.pp-pick-t { display: flex; flex-direction: column; min-width: 0; }
+.pp-thumb { width: 48px; height: 48px; flex: none; border: 1px solid var(--sen); border-radius: 4px; }
+.pp-thumb-ring { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; }
+.pp-thumb-area { fill: var(--tsuki); fill-opacity: 0.22; stroke: var(--tsuki); stroke-width: 1.5; stroke-linejoin: round; }
+.pp-thumb-none { stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; }
+.pp-map { height: min(96vw, 440px); }
+.pp-map .ov { height: 100%; }
+.pp-area-now { color: var(--tsuki); }
+.np .np-ops button.pp-go { border: 2px solid var(--tsuki); background: var(--sen); font-weight: 700; }
+.np .np-ops button.pp-go:disabled { border: 1px solid var(--sen); background: transparent; font-weight: 400; }
+@media (min-width: 1000px) {
+  .pp-editor > .pp-sec:has(.pp-map) { grid-column: span 2; }
+}

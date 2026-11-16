@@ -3767,6 +3767,14 @@ export class GameRoom extends DurableObject<Env> {
         }
         const durations = msg.durations ? [...msg.durations] : presetDurations({ ...preset, round: { ...preset.round, phases } });
         const leadBefore = this.lead().rules;
+        // プリセットが遊ぶ範囲を持っていれば、範囲も一緒に入れる（null・前の版のプリセット＝いまの範囲のまま、'none'＝範囲なし）
+        let areaPatch: { area: Area | null } | null = null;
+        if (preset.area === 'none') {
+          if (g.area) areaPatch = { area: null };
+        } else if (preset.area) {
+          const pts = cleanAreaPts(preset.area);
+          if (JSON.stringify(pts) !== JSON.stringify(g.area?.pts ?? null)) areaPatch = { area: { pts, at: now } };
+        }
         this.commit({
           mode: preset.mode,
           durations,
@@ -3778,8 +3786,10 @@ export class GameRoom extends DurableObject<Env> {
           chatMode: preset.chat.mode,
           chatJail: preset.chat.jail,
           shrinkPlan: { ...preset.shrink },
+          ...(areaPatch ?? {}),
         });
         this.log('preset', { at: now, data: { id: preset.id, name: preset.name, mode: preset.mode, durations } });
+        if (areaPatch) this.log('area', { at: now, data: { pts: areaPatch.area?.pts ?? null, preset: preset.id } });
         if (JSON.stringify(leadBefore) !== JSON.stringify(preset.lead)) {
           this.syncLeads(now);
           this.leadChanged();

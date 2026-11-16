@@ -50,7 +50,7 @@ import { createChatHost, type ChatHostScreen } from './chat-host';
 import type { ChatJail, ChatMode } from '../../shared/chat';
 import { createLightsBoard, openZone } from './glow';
 import { createOverview, RING_BOX } from './overview';
-import { AREA_MAX_PTS, AREA_MIN_PTS, isFarOutside } from '../../shared/area';
+import { AREA_MAX_PTS, AREA_MIN_PTS, areaSize, isFarOutside } from '../../shared/area';
 import {
   DEFAULT_SHRINK_PLAN,
   midOf,
@@ -177,15 +177,6 @@ const REASONS: Record<string, string> = {
   'too-many-tags': `印は1人に${TAGS_MAX}つまで。`,
   'not-found': 'その人は見つからない（もう待っていない・つながっていない）。',
 };
-
-/** 範囲のおおよその大きさ（東西 × 南北） */
-function areaSize(pts: [number, number][]): string {
-  const lats = pts.map((p) => p[0]);
-  const lons = pts.map((p) => p[1]);
-  const ns = distanceM({ lat: Math.min(...lats), lon: lons[0] }, { lat: Math.max(...lats), lon: lons[0] });
-  const ew = distanceM({ lat: lats[0], lon: Math.min(...lons) }, { lat: lats[0], lon: Math.max(...lons) });
-  return `東西 約${Math.round(ew / 10) * 10}m × 南北 約${Math.round(ns / 10) * 10}m`;
-}
 
 export function createHost(actions: HostActions, sensors?: Sensors): HostScreen {
   const el = document.createElement('main');
