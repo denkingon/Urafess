@@ -184,7 +184,10 @@
 .hq-dashboard-grid > [data-panel="map"] { grid-area: map; }
 .hq-dashboard-grid > [data-panel="mission"] { grid-area: mission; }
 .hq-dashboard-side { grid-area: side; min-width: 0; align-self: stretch; display: flex; flex-direction: column; gap: 10px; }
-.hq-dashboard-side .hq-dock { margin-top: auto; padding-bottom: 0; }
+.hq-dashboard-side .hq-dock { padding: 0; }
+.hq .hq-dashboard-side .hq-dock :is([data-op="start"], [data-op="assign"]) {
+  flex: 1 1 0; min-height: 76px; font-size: clamp(17px, 1.8vw, 24px);
+}
 .hq-dashboard-side .hq-dock button:not(.hq-wait) { background: var(--raised); }
 .hq-dashboard-side .hq-panel, .hq-dashboard-grid [data-panel="mission"] { background: var(--raised); border: 1px solid var(--sen); border-radius: 8px; padding: 12px; }
 .hq-dashboard-grid h3 { margin: 0; font-size: 16px; }
@@ -199,7 +202,7 @@
 @media (max-width: 970px) {
   .hq-dashboard-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "map" "mission" "side"; }
   .hq-dashboard-side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .hq-dashboard-side .hq-dock { grid-column: 1 / -1; justify-self: end; width: min(100%, 310px); }
+  .hq-dashboard-side .hq-dock { grid-column: 1 / -1; width: 100%; }
 }
 @media (max-width: 640px) {
   .hq-shell { display: block; }
@@ -251,3 +254,6 @@
   border: 1px solid #637487; border-radius: 8px; background: #111923f2; color: #fff;
 }
 .hq .ov-zoom button { min-width: 44px; min-height: 44px; padding: 0 8px; }
+
+.hq .ov.is-interactive { touch-action: none; cursor: grab; user-select: none; }
+.hq .ov.is-dragging { cursor: grabbing; }

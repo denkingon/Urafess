@@ -70,6 +70,7 @@ export interface OvInput {
 export interface OverviewOptions {
   /** 地図を押したとき（範囲を描く）。押した場所の緯度・経度 */
   onTap?: (p: LatLon) => void;
+  /** 管理画面用。拡大ボタン、ドラッグ、ピンチで表示範囲を動かす。 */
   zoomControls?: boolean;
 }
 
@@ -191,8 +192,10 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       opts.onTap!(fromWorld(x, y));
     });
   }
-  let zoomLevel = 0;
+  const minZoomLevel = -2;
   const maxZoomLevel = 6;
+  const zoomStep = 1.4;
+  let camera: { cx: number; cy: number; baseScale: number; level: number } | null = null;
   let lastInput: OvInput | null = null;
   let lastKey = '';
   const measure = () => {
@@ -233,9 +236,9 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     const baseScale = meW
       ? w / ((2 * focus!) / (EARTH_CIRC_M * Math.cos((input.me!.lat * Math.PI) / 180)))
       : Math.min(w / (f.x1 - f.x0), (h - inset) / (f.y1 - f.y0)); // 画面の px ／ 世界の 1
-    const S = baseScale * 1.4 ** zoomLevel;
-    const cx = meW ? meW.x : (f.x0 + f.x1) / 2;
-    const cy = (meW ? meW.y : (f.y0 + f.y1) / 2) - inset / 2 / S;
+    const S = camera ? camera.baseScale * zoomStep ** camera.level : baseScale;
+    const cx = camera?.cx ?? (meW ? meW.x : (f.x0 + f.x1) / 2);
+    const cy = camera?.cy ?? ((meW ? meW.y : (f.y0 + f.y1) / 2) - inset / 2 / S);
     const key = JSON.stringify([
       w,
       h,
@@ -464,6 +467,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
   };
 
   if (opts.zoomControls) {
+    el.classList.add('is-interactive');
     const controls = document.createElement('div');
     controls.className = 'ov-zoom';
     controls.setAttribute('role', 'group');
@@ -478,16 +482,82 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
     const out = button('−', '縮小');
     const reset = button('全体', '全体表示に戻す');
     const inButton = button('＋', '拡大');
-    const setZoom = (level: number) => {
-      zoomLevel = Math.max(0, Math.min(maxZoomLevel, level));
-      out.disabled = reset.disabled = zoomLevel === 0;
-      inButton.disabled = zoomLevel === maxZoomLevel;
-      if (lastInput) draw(lastInput, true);
+    const updateControls = () => {
+      const level = camera?.level ?? 0;
+      out.disabled = level <= minZoomLevel;
+      reset.disabled = camera === null;
+      inButton.disabled = level >= maxZoomLevel;
+      if (lastInput) draw(lastInput);
     };
-    out.addEventListener('click', () => setZoom(zoomLevel - 1));
-    reset.addEventListener('click', () => setZoom(0));
-    inButton.addEventListener('click', () => setZoom(zoomLevel + 1));
-    setZoom(0);
+    type Point = { x: number; y: number };
+    const moveView = (level: number, from: Point, to: Point, origin: NonNullable<typeof view>, baseScale: number) => {
+      const nextLevel = Math.max(minZoomLevel, Math.min(maxZoomLevel, level));
+      const scale = baseScale * zoomStep ** nextLevel;
+      // 指やポインターが示す場所を保ったまま倍率を変える。
+      camera = {
+        level: nextLevel,
+        baseScale,
+        cx: origin.cx + (from.x - origin.w / 2) / origin.S - (to.x - origin.w / 2) / scale,
+        cy: origin.cy + (from.y - origin.h / 2) / origin.S - (to.y - origin.h / 2) / scale,
+      };
+      updateControls();
+    };
+    const zoomBy = (delta: number, anchor?: Point) => {
+      if (!view) return;
+      const center = anchor ?? { x: view.w / 2, y: view.h / 2 };
+      moveView((camera?.level ?? 0) + delta, center, center, view, camera?.baseScale ?? view.S);
+    };
+    out.addEventListener('click', () => zoomBy(-1));
+    reset.addEventListener('click', () => {
+      camera = null;
+      updateControls();
+    });
+    inButton.addEventListener('click', () => zoomBy(1));
+
+    const point = (event: MouseEvent): Point => {
+      const bounds = el.getBoundingClientRect();
+      return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+    };
+    const pointers = new Map<number, Point>();
+    const gestureShape = () => {
+      const [first, second] = pointers.values();
+      if (!first || !second) return { center: first, distance: 0 };
+      return {
+        center: { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 },
+        distance: Math.max(1, Math.hypot(first.x - second.x, first.y - second.y)),
+      };
+    };
+    el.addEventListener('pointerdown', (event) => {
+      if (!view || pointers.size >= 2 || event.button !== 0 || (event.target as Element).closest('button, a')) return;
+      pointers.set(event.pointerId, point(event));
+      el.setPointerCapture(event.pointerId);
+      el.classList.add('is-dragging');
+    });
+    el.addEventListener('pointermove', (event) => {
+      if (!view || !pointers.has(event.pointerId)) return;
+      const before = gestureShape();
+      pointers.set(event.pointerId, point(event));
+      const after = gestureShape();
+      if (!before.center || !after.center) return;
+      const delta = before.distance ? Math.log(after.distance / before.distance) / Math.log(zoomStep) : 0;
+      moveView((camera?.level ?? 0) + delta, before.center, after.center, view, camera?.baseScale ?? view.S);
+    });
+    const endPointer = (event: PointerEvent) => {
+      pointers.delete(event.pointerId);
+      el.classList.toggle('is-dragging', pointers.size > 0);
+    };
+    el.addEventListener('pointerup', endPointer);
+    el.addEventListener('pointercancel', endPointer);
+    el.addEventListener('lostpointercapture', endPointer);
+    // トラックパッドのピンチは、ブラウザーによって Ctrl 付きのホイールイベントになる。
+    el.addEventListener('wheel', (event) => {
+      if (!event.ctrlKey || !view) return;
+      event.preventDefault();
+      const factor = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? view.h : 1;
+      zoomBy(-event.deltaY * factor / 120, point(event));
+    }, { passive: false });
+    updateControls();
     controls.append(out, reset, inButton);
     el.append(controls);
   }
