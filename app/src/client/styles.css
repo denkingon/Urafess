@@ -778,28 +778,20 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .perm-host.is-ok .perm-host-head span { color: var(--quiet); font-weight: 500; }
 .perm-host.is-ok .perm-host-list { display: none; }
 
-/* 前を向いて（LOOK UP / LISTEN）：本部が押すと全員のスマホで同時に流れる全画面。いちばん上に重ねる */
-.lookup { --yami: #0b0c10; --tsuki: #f1ede4; --tsuki-muted: #a29d93; --chikko: #b8ff5a; --picto-ground: #0b0c10;
+/* 前を向いて（LOOK UP / LISTEN）点滅版：本部が押すと全員のスマホで同じ拍で点滅する全画面。いちばん上に重ねる */
+.lookup { --yami: #0b0c10; --tsuki: #f1ede4; --tsuki-muted: #a29d93; --chikko: #b8ff5a;
   position: fixed; inset: 0; z-index: 200; background: var(--yami); color: var(--tsuki); display: flex; flex-direction: column; align-items: center;
-  padding: calc(18px + env(safe-area-inset-top)) 20px calc(26px + env(safe-area-inset-bottom)); overflow: hidden; touch-action: none; }
+  padding: calc(4vh + env(safe-area-inset-top)) 20px calc(40px + env(safe-area-inset-bottom)); overflow: hidden; touch-action: none; }
 .lookup[hidden] { display: none; }
-.lookup .lu-from { align-self: stretch; display: flex; align-items: baseline; gap: 10px; font-size: 16px; font-weight: 700; color: var(--tsuki-muted); opacity: 0; }
-.lookup .lu-from b { font-family: "URAJI", system-ui, sans-serif; font-size: 19.2px; letter-spacing: .08em; font-weight: 400; color: var(--tsuki); }
-.lookup .lu-stage { position: relative; width: 100%; flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; }
-.lookup svg { width: 100%; height: 100%; max-height: 100%; overflow: visible; }
-.lookup .lu-words { text-align: center; width: 100%; }
-.lookup .lu-en { font-family: "URAJI", system-ui, sans-serif; font-size: clamp(64px, 21vw, 92px); line-height: .95; letter-spacing: .03em; white-space: nowrap;
-  clip-path: inset(100% 0 0 0); transform: translateY(18px); }
-.lookup .lu-ja { margin-top: 12px; font-size: clamp(28px, 8.4vw, 36px); font-weight: 900; letter-spacing: .08em; opacity: 0; }
-.lookup .lu-listen { margin-top: 14px; display: inline-flex; align-items: center; gap: 12px; opacity: 0;
-  font-family: "URAJI", system-ui, sans-serif; font-size: 28px; letter-spacing: .14em; color: var(--chikko); }
-.lookup .lu-listen i { font-style: normal; font-family: "Noto Sans JP", "Hiragino Sans", system-ui, sans-serif; font-weight: 700; font-size: 16px; letter-spacing: .08em; color: var(--tsuki-muted); }
-.lookup .lu-flash, .lookup .lu-dim { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
-.lookup .lu-flash { background: var(--tsuki); }
-.lookup .lu-dim { background: var(--yami); }
-.lookup .lu-rest { position: absolute; left: 0; right: 0; bottom: calc(34px + env(safe-area-inset-bottom)); text-align: center; opacity: 0; pointer-events: none; }
-.lookup .lu-rest b { display: block; font-family: "URAJI", system-ui, sans-serif; font-weight: 400; font-size: 40px; letter-spacing: .06em; color: var(--tsuki); }
-.lookup .lu-rest span { font-size: 18px; font-weight: 700; color: var(--tsuki-muted); letter-spacing: .08em; }
+.lookup .lu-arrows { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; }
+.lookup .lu-arrows svg { width: 62vw; max-width: 260px; height: auto; max-height: 20vh; display: block; margin-top: -2vh; color: #23261d; }
+.lookup .lu-arrows svg.on { color: var(--chikko); }
+.lookup .lu-en { font-family: "URAJI", system-ui, sans-serif; font-size: clamp(64px, 22vw, 96px); line-height: .95; letter-spacing: .03em; white-space: nowrap; }
+.lookup .lu-en.off { opacity: .15; }
+.lookup .lu-ja { margin-top: 12px; font-size: clamp(28px, 8.4vw, 36px); font-weight: 900; letter-spacing: .08em; }
+.lookup .lu-sub { margin-top: 10px; display: inline-flex; align-items: baseline; gap: 12px; font-family: "URAJI", system-ui, sans-serif; font-size: 24px; letter-spacing: .14em; color: var(--tsuki-muted); }
+.lookup .lu-sub i { font-style: normal; font-family: "Noto Sans JP", "Hiragino Sans", system-ui, sans-serif; font-weight: 700; font-size: 16px; letter-spacing: .08em; }
+.lookup .lu-flash { position: absolute; inset: 0; opacity: 0; pointer-events: none; background: var(--tsuki); }
 
 /* 主催者・本部の「前を向いて」ボタン（左下に浮かせる） */
 .lookup-btn { position: fixed; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 45; }
