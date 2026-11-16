@@ -2338,9 +2338,9 @@ export class GameRoom extends DurableObject<Env> {
     this.rescueHolds.delete(runner.pid);
     // 捕まった人が押したまま記録されたら、その長押しはここで終わり
     this.endHold(runner.pid, Date.now(), 'capture');
-    // 捕まった人は光らない。全体の地図からも消える
+    // 捕まった人は光らない。位置は主催者にだけ届く
     this.endRun(runner.pid, Date.now(), 'caught');
-    this.dropSpot(runner.pid);
+    this.flushMatesSoon(true);
     this.leadCaught(runner, at);
     this.notify(runner.pid, 'caught', oni ?? undefined, via);
     if (oni) this.notify(oni.pid, 'captured', runner, via);
@@ -2700,11 +2700,11 @@ export class GameRoom extends DurableObject<Env> {
 
   // ---------- 全体の地図（仲間の居場所） ----------
 
-  /** 位置が届いた。ゲームの段階の外・捕まった人・配役に入っていない人の分は捨てる */
+  /** 位置が届いた。ゲームの段階の外・配役に入っていない人の分は捨てる */
   private onPos(att: Attachment, msg: Extract<ClientMsg, { t: 'pos' }>, now: number): void {
     const p = this.inRound(att.pid);
     if (!p) return;
-    if (this.isCaught(p) || !this.glowOpen(now)) return this.dropSpot(p.pid);
+    if (!this.glowOpen(now)) return this.dropSpot(p.pid);
     const pos = cleanPos(msg.lat, msg.lon, msg.acc);
     if (!pos) return;
     const had = this.spots.has(p.pid);
@@ -2782,14 +2782,14 @@ export class GameRoom extends DurableObject<Env> {
     if (this.lead().rules.on) this.flushGlowSoon(true);
   }
 
-  /** 段階が終わった・届かなくなった・捕まった・外された人の位置を消す（合図・主催者の操作のたびに見る） */
+  /** 段階が終わった・届かなくなった・外された人の位置を消す（合図・主催者の操作のたびに見る） */
   private sweepSpots(now: number): void {
     if (this.spots.size === 0) return;
     const open = this.glowOpen(now);
     let changed = false;
     for (const sp of [...this.spots.values()]) {
       const p = this.inRound(sp.pid);
-      if (!open || !p || this.isCaught(p) || now - sp.at > MATES_STALE_MS) {
+      if (!open || !p || now - sp.at > MATES_STALE_MS) {
         this.spots.delete(sp.pid);
         changed = true;
       }
@@ -2835,8 +2835,9 @@ export class GameRoom extends DurableObject<Env> {
       const p = this.inRound(sp.pid);
       if (!p || (p.role !== 'oni' && p.role !== 'runner')) continue;
       const e: MateEntry = { num: p.num, name: p.name, lat: sp.lat, lon: sp.lon, acc: sp.acc, at: sp.at };
-      lists[p.role].push(e);
-      lists.all.push({ ...e, role: p.role });
+      const caught = this.isCaught(p);
+      if (!caught) lists[p.role].push(e);
+      lists.all.push({ ...e, role: p.role, ...(caught ? { caught: true } : {}) });
     }
     for (const l of Object.values(lists)) l.sort((a, b) => a.num - b.num);
     return lists;

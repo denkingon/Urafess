@@ -989,7 +989,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   let lastNamesKey = '';
   let lastAskKey = '';
   // 走ると光る：主催者の画面にも光の地図（真ん中はこの画面の場所。たいてい広場）
-  const board = createLightsBoard({ listMax: 6, start: 'all', labelMax: 60 });
+  const board = createLightsBoard({ mapOnly: true, labelMax: 60 });
   q('glowBoard').append(board.el);
   const glowMap = el.querySelector('[data-act="glow-map"]') as HTMLButtonElement;
   glowMap.addEventListener('click', () => sensors?.request());
@@ -1530,11 +1530,12 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         const litNow = (input.glow?.runs ?? []).filter((r) => serverNow - r.at <= RUN_STALE_MS).length;
         const onMap = (input.mates?.people ?? []).filter((m) => serverNow - m.at <= MATES_STALE_MS);
         const oniOn = onMap.filter((m) => m.role === 'oni').length;
+        const caughtOn = onMap.filter((m) => m.caught).length;
         const areaPts = zoneAt(game.area, game.shrink, game.timer, serverNow);
         const outside = areaPts ? onMap.filter((m) => isFarOutside(areaPts, m)) : [];
         q('glowCount').textContent =
           gp === 'live'
-            ? `地図に 鬼${oniOn}・逃走者${onMap.length - oniOn}　光っている ${litNow}人` +
+            ? `地図に 鬼${oniOn}・逃走者${onMap.length - oniOn - caughtOn}・捕まった人${caughtOn}　光っている ${litNow}人` +
               (areaPts ? (outside.length ? `　範囲の外 ${outside.length}人（${outside.map((m) => m.name).join('・')}）` : '　範囲の外 0人') : '')
             : '試合中に参加者の位置が表示されます。';
         q('glowReady').textContent = g

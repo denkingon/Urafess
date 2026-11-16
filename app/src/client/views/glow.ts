@@ -65,6 +65,8 @@ export interface BoardOptions {
   listMax?: number;
   /** 最初に出す地図：all＝全体の地図、near＝光の地図（自分が真ん中） */
   start?: 'all' | 'near';
+  /** 主催者用の全体地図。切り替えや光の一覧は表示しない。 */
+  mapOnly?: boolean;
   /** 全体の地図で名前を出す最大の人数 */
   labelMax?: number;
   /** 参加者の画面：英語も出す（ui.ts の言語に従う）。主催者の画面は日本語だけ */
@@ -109,7 +111,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
   const lang = bilingual ? UI.lang : 'ja';
   /** 寄る（自分のまわりだけ映す）。全体の地図のときだけ効く */
   let zoomed = false;
-  let mode: 'all' | 'near' = opts.start ?? 'all';
+  let mode: 'all' | 'near' = opts.mapOnly ? 'all' : opts.start ?? 'all';
   const el = document.createElement('div');
   el.className = 'glow-board';
   const tabs = document.createElement('div');
@@ -158,7 +160,8 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
     el.classList.add('is-overlay');
     wrap.append(tabs, zoom);
     el.append(wrap, list);
-  } else el.append(tabs, wrap, list);
+  } else if (opts.mapOnly) el.append(wrap);
+  else el.append(tabs, wrap, list);
   const applyMode = () => {
     el.dataset.mode = mode;
     el.dataset.zoom = zoomed ? 'in' : 'out';
@@ -270,6 +273,7 @@ export function createLightsBoard(opts: BoardOptions = {}): LightsBoard {
             pos: run ? { lat: run.lat!, lon: run.lon! } : { lat: m.lat, lon: m.lon },
             acc: run?.acc ?? m.acc,
             kind: kindOfMate(m.role),
+            caught: m.caught,
             fresh: run ? 1 : 1 - age / MATES_STALE_MS,
             lit: litNums.has(m.num),
             lead: !!others.find((r) => r.num === m.num)?.lead,

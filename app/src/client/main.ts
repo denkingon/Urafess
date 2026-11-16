@@ -298,8 +298,8 @@ function startPlayer(): void {
     const lit = sensors.tick(now);
     const send = reporter.next(now, lit, !!view?.lightable && s.online, sensors.sendPos(now));
     if (send) client.run(send.on, send.on ? send.pos : null);
-    // 全体の地図：ゲームの段階の間だけ、5秒ごとに自分の位置を送る（捕まった人・見学の人は送らない）
-    if (view?.lightable && view.role !== 'なし' && s.online) {
+    // 全体の地図：ゲームの段階の間だけ、5秒ごとに自分の位置を送る（捕まった人の位置は主催者にだけ届く）
+    if ((view?.lightable || (view?.caught && view.glow === 'live' && !view.paused)) && view.role !== 'なし' && s.online) {
       const mp = now - lastMatePos >= MATES_SEND_EVERY_MS ? sensors.matePos(now) : null;
       if (mp) {
         lastMatePos = now;

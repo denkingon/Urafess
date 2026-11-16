@@ -4,7 +4,7 @@
  * - ゲームの段階の外では、送った位置は捨てられ、誰にも届かない
  * - 鬼には鬼どうし、逃走者には逃走者どうしだけが届く（相手の役の位置は入らない）。参加者に届く分に役は入らない
  * - 主催者には全員が役つきで届く。配役に入っていない人（見学）には誰も届かない
- * - 捕まった逃走者は地図から消える。位置が届かなくなった人は MATES_STALE_MS で消える。段階が終わると全員消える
+ * - 捕まった逃走者の位置は主催者の地図にだけ残る。位置が届かなくなった人は MATES_STALE_MS で消える。段階が終わると全員消える
  *
  * 実行：npx vitest run --config vitest.sim.config.ts sim/mates.test.ts
  *
@@ -142,7 +142,7 @@ describe('全体の地図', () => {
     await sleep(500);
   });
 
-  it('ゲームの段階だけ、同じ役どうしの位置が届き、主催者には全員。捕まる・途切れる・段階の終わりで消える', async () => {
+  it('ゲームの段階だけ、同じ役どうしの位置が届き、主催者には全員。捕まった人は主催者にだけ見え、途切れる・段階の終わりで消える', async () => {
     await startServer();
     const host = client('host');
     await waitFor('主催者がつながる', () => host.state.phase === 'ready');
@@ -225,21 +225,26 @@ describe('全体の地図', () => {
     const reopened = client('player', stores.get(runners[2])!);
     await waitFor('開き直した逃走者に仲間', () => reopened.state.phase === 'ready' && mateNums(reopened).length === 4, 5_000);
 
-    // ---- 捕まった逃走者は地図から消える（仲間の地図・主催者の地図の両方） ----
+    // 捕まった人の現在地は主催者だけが引き続き確認できる。
     const caught = runners[3];
+    const caughtNum = caught.state.me!.num;
     host.command('capture', { pid: caught.state.me!.pid, by: oni[0].state.me!.pid });
-    await waitFor('捕まった人が消える', () => !mateNums(host).includes(caught.state.me!.num) && !mateNums(runners[0]).includes(caught.state.me!.num), 3_000);
-    // 捕まった人が送っても戻らない
-    caught.pos(at(0, 0));
-    await sleep(600);
-    expect(mateNums(host)).not.toContain(caught.state.me!.num);
+    await waitFor('捕まった人は主催者の地図だけに残る', () =>
+      matesOf(host).some((p) => p.num === caughtNum && p.caught) &&
+      !mateNums(runners[0]).includes(caughtNum) && !mateNums(oni[0]).includes(caughtNum), 3_000);
+    const caughtPos = at(0, 0);
+    caught.pos(caughtPos);
+    await waitFor('捕まった後の位置も主催者に届く', () =>
+      matesOf(host).some((p) => p.num === caughtNum && p.caught && p.lat === caughtPos.lat && p.lon === caughtPos.lon), 3_000);
+    expect(mateNums(runners[0])).not.toContain(caughtNum);
+    expect(mateNums(oni[0])).not.toContain(caughtNum);
     // 捕まった人にも、仲間はまだ見える
     await sleep(1_200);
     expect(matesOf(caught).length).toBeGreaterThanOrEqual(2);
 
     // ---- 位置が届かなくなった人は消える（ほかの人は送り続ける） ----
     const silent = oni[1];
-    const keepers = players.filter((p) => p !== silent && p !== caught);
+    const keepers = players.filter((p) => p !== silent);
     const t0 = Date.now();
     while (Date.now() - t0 < MATES_STALE_MS + 4_500) {
       keepers.forEach((p) => p.pos(at(1, 1)));
@@ -248,7 +253,7 @@ describe('全体の地図', () => {
     }
     expect(mateNums(host)).not.toContain(silent.state.me!.num);
     expect(mateNums(oni[0])).not.toContain(silent.state.me!.num);
-    expect(mateNums(host).length).toBe(4);
+    expect(mateNums(host).length).toBe(players.length - 1);
 
     // ---- 段階が終わる（次に進む）と全員消える ----
     host.command('skip');

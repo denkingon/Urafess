@@ -81,15 +81,12 @@
 /* 4つの場所 */
 .hq-body { flex: 1 1 0; min-height: 0; overflow-y: auto; margin-top: 10px; padding: 0 16px 16px; -webkit-overflow-scrolling: touch; }
 .hq-panel { display: none; flex-direction: column; gap: 16px; }
-.hq[data-tab="map"] .hq-panel[data-panel="map"], .hq[data-tab="people"] .hq-panel[data-panel="people"],
-.hq[data-tab="mission"] .hq-panel[data-panel="mission"], .hq[data-tab="deck"] .hq-panel[data-panel="deck"],
-.hq[data-tab="chat"] .hq-panel[data-panel="chat"] { display: flex; }
+.hq[data-tab="deck"] .hq-panel[data-panel="deck"] { display: flex; }
 .hq .hq-card > .chat-host { border-top: none; padding-top: 0; }
 .hq[data-stage="timer"] .area-host { display: none; }
 /* 地図：地図を先に、説明はあと。本部の地図は道具なので無彩色で、参加者の画面より明るく */
 .hq .glow-host > .cap-host-head { order: -2; }
 .hq .glow-host > [data-k="glowBoard"] { order: -1; }
-.hq .glow-host .glow-board[data-mode="all"] .glow-radar { height: clamp(260px, 58dvh, 720px); }
 .hq .ov-tiles img { filter: invert(1) grayscale(1) brightness(1.9) contrast(1.05); }
 .hq .buttons button:disabled { display: none; }
 
@@ -106,15 +103,6 @@
 .hq .hq-dock button[data-short] { font-size: 0; }
 .hq .hq-dock button[data-short]::after { content: attr(data-short); font-size: 16px; }
 .hq .hq-dock button.hq-wait[data-short]::after { font-size: 20px; }
-
-/* タブ */
-.hq-tabs { flex: none; display: flex; border-top: 1px solid var(--sen); padding: 0 8px calc(8px + env(safe-area-inset-bottom)); }
-.hq-tabs button { flex: 1 1 auto; min-width: 0; min-height: 56px; padding: 0; border: 0; border-top: 3px solid transparent; border-radius: 0; background: transparent; color: var(--muted);
-  display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 16px; font-weight: 700; white-space: nowrap; }
-.hq-tabs button[aria-current] { color: var(--tsuki); border-top-color: var(--tsuki); }
-.hq-tabs i { font-style: normal; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--tsuki); color: var(--yami); display: inline-flex; align-items: center; justify-content: center;
-  font-family: "URAJI", "Hiragino Sans", system-ui, sans-serif; font-weight: 900; font-size: 16px; line-height: 1; }
-.hq-tabs i[hidden] { display: none; }
 
 /* デッキの札 */
 .hq-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--muted); border-radius: 6px; background: var(--raised); }
@@ -175,7 +163,7 @@
 .hq-live { display: flex; flex-direction: column; gap: 12px; }
 .hq-live[hidden] { display: none; }
 .hq-live .hq-now, .hq-live .hq-rail, .hq-live .hq-strip { margin-inline: 0; }
-.hq-live .hq-dock, .hq-live .hq-tabs { padding-inline: 0; }
+.hq-live .hq-dock { padding-inline: 0; }
 .hq-body { overflow: visible; margin-top: 16px; padding: 0; }
 .hq-panel { min-width: 0; }
 .hq-panel[data-panel="deck"] { max-width: 980px; }
@@ -187,8 +175,6 @@
 @media (max-width: 640px) {
   .hq-shell { grid-template-columns: 90px minmax(0, 1fr); }
   .hq .hq-sidebar button { padding-inline: 8px; font-size: 13px; overflow-wrap: anywhere; }
-  .hq-tabs { flex-wrap: wrap; }
-  .hq-tabs button { min-height: 44px; padding-inline: 6px; }
   .hq-head-r { gap: 6px; }
 }
 
@@ -234,3 +220,32 @@
 .hq-duration-actions button[value="save"] { background: var(--tsuki); color: var(--yami); }
 /* スマホの許可がまだの人（上の行のすぐ下） */
 .hq .perm-host { flex: none; margin: 0; border-radius: 6px; max-height: 30dvh; overflow-y: auto; }
+
+.hq-dashboard-grid { display: grid; grid-template-columns: minmax(0, 1fr) clamp(210px, 24%, 310px); gap: 14px; align-items: start; }
+.hq .hq-dashboard-grid .hq-panel { display: flex; gap: 8px; }
+.hq-dashboard-side { min-width: 0; display: grid; gap: 10px; }
+.hq-dashboard-side .hq-panel, .hq-timeline { background: var(--raised); border: 1px solid var(--sen); border-radius: 8px; padding: 12px; }
+.hq-dashboard-side h3 { margin: 0; font-size: 16px; }
+.hq-summary { margin: 0; color: var(--tsuki); overflow-wrap: anywhere; }
+.hq-dashboard-details > summary { color: var(--muted); cursor: pointer; padding-block: 5px; }
+.hq-dashboard-details[open] > summary { margin-bottom: 8px; }
+.hq-dashboard-details .chat-feed { max-height: 220px; overflow-y: auto; }
+.hq-dashboard-grid .glow-host { margin: 0; border-top: 0; padding: 0; }
+.hq .glow-host .glow-board[data-mode="all"] .glow-radar { height: clamp(330px, 63dvh, 830px); }
+.hq .glow-host > [data-k="glowBoard"] { order: -3; }
+.hq-timeline { display: flex; flex-direction: column; gap: 12px; }
+.hq .hq-timeline .hq-big { font-size: 36px; line-height: 1.1; }
+.hq .ov-pt.is-caught .ov-dot { fill: #f5bc57; stroke: #292208; }
+@media (max-width: 970px) {
+  .hq-dashboard-grid { grid-template-columns: minmax(0, 1fr); }
+  .hq-dashboard-side { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .hq-shell { display: block; }
+  .hq-sidebar { display: flex; padding: 0; }
+  .hq .hq-sidebar button { text-align: center; }
+  .hq-dashboard-side { grid-template-columns: minmax(0, 1fr); }
+  .hq .glow-host .glow-board[data-mode="all"] .glow-radar { height: clamp(285px, 51dvh, 540px); }
+}
+
+.hq-body[hidden] { display: none; }

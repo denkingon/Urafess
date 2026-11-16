@@ -22,6 +22,7 @@ export interface OvPoint {
   /** 位置の誤差の半径（m） */
   acc: number;
   kind: OvKind;
+  caught?: boolean;
   /** 0〜1：1＝今届いた、0＝もうすぐ消える */
   fresh: number;
   /** いま走って光っている */
@@ -244,7 +245,7 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       inset,
       input.meKind,
       input.meLit,
-      input.points.map((p) => [p.key, p.name, p.pos.lat, p.pos.lon, p.kind, Math.round(p.fresh * 5), p.lit, p.lead]),
+      input.points.map((p) => [p.key, p.name, p.pos.lat, p.pos.lon, p.kind, Math.round(p.fresh * 5), p.lit, p.lead, p.caught]),
       input.labelMax,
       input.area,
       input.draft,
@@ -409,7 +410,10 @@ export function createOverview(opts: OverviewOptions = {}): Overview {
       if (r < Math.max(w, h)) accG.append(svg('circle', { cx: q.x.toFixed(1), cy: q.y.toFixed(1), r: r.toFixed(1), class: 'ov-acc-me' }));
     }
     for (const { p, q } of pts) {
-      const g = svg('g', { class: `ov-pt is-${p.kind}${p.lit ? ' is-lit' : ''}${q.edge ? ' is-edge' : ''}`, transform: `translate(${q.x.toFixed(1)} ${q.y.toFixed(1)})` });
+      const g = svg('g', { class: `ov-pt is-${p.kind}${p.lit ? ' is-lit' : ''}${p.caught ? ' is-caught' : ''}${q.edge ? ' is-edge' : ''}`, transform: `translate(${q.x.toFixed(1)} ${q.y.toFixed(1)})` });
+      const label = svg('title');
+      label.textContent = p.name + (p.caught ? '（捕まった人）' : '');
+      g.append(label);
       g.setAttribute('opacity', (0.3 + 0.7 * Math.max(0, Math.min(1, p.fresh))).toFixed(2));
       if (p.lit) {
         g.append(svg('circle', { r: 13, class: 'ov-halo' }), svg('circle', { r: 8, class: 'ov-ping' }));

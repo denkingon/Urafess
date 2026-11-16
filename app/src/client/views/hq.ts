@@ -18,17 +18,17 @@ import { createHost, type HostActions, type HostInput, type HostScreen } from '.
  * 本部（新しい主催者画面）。キャンバス「Urafess 本部（管理者画面）」の並びを、いまの主催者画面の上にかぶせる。
  *
  * しくみは前の主催者画面（createHost）をそのまま使う：中の部品（地図・捕獲と牢屋・ミッション・時間や割合の欄・ボタン）を
- * 4つの場所（地図・人・ミッション・デッキ）へ並べ替え、その上に「段階の帯・いま・要対応・押すもの・タブ」を足しているだけ。
+ * 地図と要約をダッシュボードにまとめ、タイムラインと進行操作を下に置く。
  * だから、押したときに起きることは前の画面と同じ。
  *
  * 決まり：
  * - 月白の板（塗り）は「返事を待っている」ものだけ。下の並び（押すもの）に出るのは、その段階で要るものだけ
  * - 要対応は、どの場所にいても、いちばん上の1件が選択肢つきで出る
- * - スマホは1つの場所だけ、幅の広い画面は3列に全部を並べる
+ * - 幅の広い画面では要約を地図の横に置き、スマホでは縦に並べる
  */
 
 type Tab = 'map' | 'people' | 'chat' | 'mission' | 'deck';
-const TABS: [Tab, string][] = [['map', '地図'], ['people', '人'], ['chat', 'チャット'], ['mission', 'ミッション'], ['deck', 'ルール設定']];
+const TABS: [Tab, string][] = [['map', '地図'], ['people', '参加者'], ['chat', 'チャット'], ['mission', 'ミッション'], ['deck', 'ルール設定']];
 
 /** 下の並びに出すボタンと重さ（wait＝月白の板、hold＝取り返しがつかない操作） */
 type DockItem = [op: string, weight: 'wait' | 'norm' | 'hold'];
@@ -98,17 +98,16 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
     body.append(panel[key]);
   }
   const dock = make('div', 'hq-dock');
-  const tabs = make('nav', 'hq-tabs');
-  tabs.setAttribute('aria-label', '本部の場所');
-  const tabBtn = {} as Record<Tab, HTMLButtonElement>;
-  for (const [key, label] of TABS) {
-    const b = make('button', '', `<span>${label}</span><i hidden></i>`);
-    b.type = 'button';
-    b.dataset.tab = key;
-    tabBtn[key] = b;
-    if (key !== 'deck') tabs.append(b);
+  const side = make('div', 'hq-dashboard-side');
+  const grid = make('div', 'hq-dashboard-grid');
+  grid.append(panel.map, side);
+  side.append(panel.people, panel.chat, panel.mission);
+  const cards = {} as Record<'people' | 'chat' | 'mission', HTMLDetailsElement>;
+  for (const [key, label] of [['people', '参加者'], ['chat', 'チャット'], ['mission', 'ミッション']] as const) {
+    panel[key].append(make('h3', '', label), make('p', 'hq-summary', `<span data-hq="${key}Summary"></span>`));
+    cards[key] = make('details', 'hq-dashboard-details');
+    cards[key].append(make('summary', '', `${label}の詳細・操作`));
   }
-
   // ---------- 前の部品を4つの場所へ ----------
   const hide = (sel: string) => old(sel)?.classList.add('hq-gone');
   hide('.host-head');
@@ -118,10 +117,10 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   rolesBox.hidden = true;
   const lobbyNote = make('p', 'note hq-lobby-note');
   panel.map.append(old('[data-k="glow"]'));
-  panel.people.append(old('[data-k="asklist"]'), lobbyNote, rolesBox, old('[data-k="cap"]'), old('[data-k="duplist"]'), old('[data-k="names"]'));
-  panel.mission.append(old('[data-k="missionPhoto"]'));
+  cards.people.append(old('[data-k="asklist"]'), lobbyNote, rolesBox, old('[data-k="cap"]'), old('[data-k="duplist"]'), old('[data-k="names"]'));
+  cards.mission.append(old('[data-k="missionPhoto"]'));
   // チャット：流れと送る欄は「話」、制約と場所の名前はデッキの札
-  panel.chat.append(old('[data-k="chatFeed"]'));
+  cards.chat.append(old('[data-k="chatFeed"]'));
   const chatCard = make('section', 'hq-card');
   chatCard.append(old('[data-k="chatSet"]'));
 
@@ -199,7 +198,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
     exclusive(chatCard.querySelector('[aria-label="仲間の回線で送れるもの"]')!, 'mode', '仲間の回線で送れるもの', true),
     exclusive(chatCard.querySelector('[aria-label="牢屋の人が送れるもの"]')!, 'jail', '牢屋の人が送れるもの'),
   ];
-  const missionFree = panel.people.querySelector<HTMLElement>('[data-k="mission"]')!;
+  const missionFree = cards.people.querySelector<HTMLElement>('[data-k="mission"]')!;
   const freeAll = missionFree.querySelector<HTMLButtonElement>('[data-mission="all"]')!;
   const freeSome = missionFree.querySelector<HTMLButtonElement>('[data-mission="n"]')!;
   const freeNumber = missionFree.querySelector<HTMLInputElement>('[data-k="missionN"]')!;
@@ -257,14 +256,15 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const area = old('[data-k="area"]');
   panel.deck.append(area);
   const reject = old('[data-k="reject"]');
-  // スマホの許可がまだの人：ダッシュボードの各タブで見える場所に置く（迷子の箱には入れない）
+  // スマホの許可がまだの人：参加者の詳細に置く（迷子の箱には入れない）
   const permBox = old('[data-k="perm"]');
   const strays = [...el.children].filter((c) => c !== reject && c !== permBox && !c.classList.contains('hq-gone')) as HTMLElement[];
   if (strays.length) {
     panel.deck.append(group('そのほか', ...strays));
   }
-  panel.people.append(ready);
-  panel.mission.append(night, rec);
+  cards.people.append(ready, permBox);
+  cards.mission.append(night, rec);
+  for (const key of ['people', 'chat', 'mission'] as const) panel[key].append(cards[key]);
   const shell = make('div', 'hq-shell');
   const menu = make('nav', 'hq-sidebar');
   menu.setAttribute('aria-label', '管理画面');
@@ -275,7 +275,11 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const content = make('div', 'hq-workspace');
   const title = make('h2', 'hq-page-title', 'ダッシュボード');
   const live = make('div', 'hq-live');
-  live.append(counts, now, rail, permBox, strip, dock, tabs);
+  panel.map.prepend(counts);
+  const timeline = make('section', 'hq-timeline');
+  timeline.setAttribute('aria-label', 'タイムラインと進行操作');
+  timeline.append(now, rail, dock);
+  live.append(grid, strip, timeline);
   const locked = make('p', 'hq-rules-locked', '試合終了後に次のゲームのルールを編集できます。');
   locked.hidden = true;
   content.append(title, live, reject, locked, body);
@@ -286,12 +290,12 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
     apply: (preset, durations) => actions.command('preset-apply', { preset, ...(durations ? { durations } : {}) }),
     durations: (durations) => actions.command('durations', { durations }),
   }, picker.open, false);
-  panel.mission.prepend(nightPal.el);
+  cards.mission.insertBefore(nightPal.el, night);
   if (termEl) el.append(termEl);
 
   // ---------- 押したとき ----------
-  let tab: Tab = 'map';
-  const showTab = (t: Tab) => {
+  let tab: 'map' | 'deck' = 'map';
+  const showTab = (t: 'map' | 'deck') => {
     tab = t;
     el.dataset.tab = t;
     const settings = t === 'deck';
@@ -300,7 +304,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
     rules.toggleAttribute('aria-current', settings);
     live.hidden = settings;
     locked.hidden = !(settings && panel.deck.inert);
-    for (const [key] of TABS) tabBtn[key].toggleAttribute('aria-current', key === t);
+    body.hidden = !settings;
   };
   dashboard.addEventListener('click', () => {
     showTab('map');
@@ -310,12 +314,12 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
     showTab('deck');
   });
   showTab('map');
-  tabs.addEventListener('click', (e) => {
-    const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
-    if (!b?.dataset.tab) return;
-    showTab(b.dataset.tab as Tab);
-    body.scrollTop = 0;
-  });
+  const showDetails = (t: string) => {
+    if (t === 'people' || t === 'chat' || t === 'mission') {
+      cards[t].open = true;
+      cards[t].scrollIntoView({ block: 'nearest' });
+    } else if (t === 'map') panel.map.scrollIntoView({ block: 'nearest' });
+  };
   strip.addEventListener('click', (e) => {
     const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
     if (!b) return;
@@ -327,13 +331,13 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
       // 本部あての1通：「返事」はあて先をその人にして「話」へ、「見た」は済みにする
       const id = Number(b.dataset.chat);
       if (b.dataset.ok === '1') {
-        showTab('chat');
+        showDetails('chat');
         inner.chat?.replyTo(id);
       } else {
         inner.chat?.dismiss(id);
       }
     } else if (b.dataset.go) {
-      showTab(b.dataset.go as Tab);
+      showDetails(b.dataset.go);
     }
   });
 
@@ -349,7 +353,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const opBtn = (op: string) => (op === 'csv' ? csv : (el.querySelector(`[data-op="${op}"]`) as HTMLButtonElement));
   const homeOrder = [...buttons.querySelectorAll('button')] as HTMLButtonElement[];
   for (const [op, short] of Object.entries(SHORT)) opBtn(op).dataset.short = short;
-  let lastKind = '';
 
   return {
     el,
@@ -491,16 +494,12 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
         strip.hidden = items.length === 0;
         strip.innerHTML = items.length ? `<b class="hq-badge u" aria-label="要対応 ${items.length}件">${items.length}</b>${items[0]}` : '';
       });
-      const badge = (t: Tab, n: number) =>
-        once(`b:${t}`, String(n), () => {
-          const i = tabBtn[t].querySelector('i') as HTMLElement;
-          i.hidden = n === 0;
-          i.textContent = String(n);
-        });
-      badge('mission', pending.length);
-      badge('chat', asks.length);
-      badge('people', (host.reclaims ?? []).length + host.dupNames.length + badNames.length);
-      badge('map', outside.length);
+      const mapped = new Set(onMap.map((m) => m.num)).size;
+      const activeMap = glowPhase(game, serverNow) === 'live';
+      text('peopleSummary', `接続 ${host.connected}/${host.total}人${activeMap ? ` ・位置取得 ${mapped}/${host.assigned}人` : ''}${outside.length ? ` ・範囲外 ${outside.length}人` : ''}`);
+      const chat = input.chat?.msgs.at(-1);
+      text('chatSummary', `${asks.length ? `未対応 ${asks.length}件 · ` : ''}${chat ? `${chat.from?.name ?? '本部'}：${chatText(chat)[0]}` : 'メッセージなし'}`);
+      text('missionSummary', `${old('[data-k="missionNow"]').textContent ?? ''}${pending.length ? ` ・確認待ち ${pending.length}件` : ''}`);
 
       // 配役済み：役ごとの名前（捕獲と牢屋の一覧は、試合が始まってから出る）
       const showRoles = game.stage === 'assigned' && !!cap;
@@ -558,10 +557,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
           }),
         );
       });
-
-      // 試合が始まったときは地図を正面に戻す。
-      if (kind !== lastKind && kind === 'timer' && tab !== 'deck') showTab('map');
-      lastKind = kind;
 
     },
   };

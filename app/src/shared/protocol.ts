@@ -386,6 +386,8 @@ export interface GlowEntry {
  * at は最後に届いたサーバー時刻
  */
 export interface MateEntry {
+  /** 捕まった人の位置は主催者にだけ送る */
+  caught?: boolean;
   num: number;
   name: string;
   role?: RoleId;
