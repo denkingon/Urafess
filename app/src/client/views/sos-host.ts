@@ -7,8 +7,6 @@ import type { GameView, HostSos } from '../../shared/protocol';
  * 試合は止めない（止めるかは本部が決める。帯に一時停止を置いた）
  */
 
-const GUARD_TEL = '0466-47-5114';
-
 export interface SosHost {
   el: HTMLElement;
   update(list: HostSos[] | undefined, game: GameView | null, serverNow: number): void;
@@ -110,7 +108,6 @@ export function createSosHost(act: { command(op: 'sos-ack' | 'sos-done' | 'pause
       }
       el.innerHTML =
         `<div class="sos-host-top"><b>救護の呼び出し ${items.length}件</b>` +
-        `<a href="tel:119">119</a><a href="tel:${GUARD_TEL.replace(/-/g, '')}">北門警備室</a>` +
         (running ? `<button type="button" data-op="pause"${dis('pause', '')}>試合を一時停止</button>` : '') +
         `</div>` +
         items

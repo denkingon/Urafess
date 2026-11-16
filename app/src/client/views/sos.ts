@@ -7,7 +7,7 @@ import type { Sensors } from '../sense';
 /**
  * 救護の呼び出し（緊急ボタン）。入室したあとは試合の段階に関係なく、画面の右上にいつも出る。
  * 3秒長押しで本部に知らせる（捕獲の0.5秒と取り違えない長さ）。位置が取れれば一緒に送る。
- * 押したあとは全画面の板：119 と北門警備室の電話がいちばん大きく、本部が見たかどうかが出る。
+ * 押したあとは全画面の板：本部が見たかどうかが出る。
  * 届いたかはサーバーから返ってくる状態（me.sos）で見て、届くまでこのスマホが送り直す（切れていても、つながったら届く）。
  * 押したことはこのスマホに覚えておく（開き直しても、呼び出しのまま）
  */
@@ -17,9 +17,6 @@ export const SOS_HOLD_MS = 3_000;
 const RESEND_MS = 3_000;
 /** 位置を送り直す間（呼び出しが終わるまで） */
 const POS_EVERY_MS = 20_000;
-/** 北門警備室（夜・休日。2026年度 SFC キャンパス案内） */
-const GUARD_TEL = '0466-47-5114';
-const PLACE_119 = '藤沢市遠藤5322 慶應義塾大学 湘南藤沢キャンパス';
 
 interface Local {
   cid: string;
@@ -44,8 +41,6 @@ function aidSVG(): string {
     return '';
   }
 }
-
-const tel = (n: string) => `tel:${n.replace(/[^0-9+]/g, '')}`;
 
 export function createSos(deps: { client: GameClient; sensors: Sensors; gameId: string }): SosScreen {
   const key = `urafess:sos:${deps.gameId}`;
@@ -90,9 +85,6 @@ export function createSos(deps: { client: GameClient; sensors: Sensors; gameId: 
       <div class="sos-pic big">${aidSVG()}</div>
       <div><b data-k="title"></b><p data-k="sub"></p></div>
     </div>
-    <a class="sos-call" href="${tel('119')}"><b>119 に電話</b><span>救急・火事。意識がない・息がおかしい・血が止まらない・頭を強く打った → まずこっち</span></a>
-    <a class="sos-call guard" href="${tel(GUARD_TEL)}"><b>北門警備室 ${GUARD_TEL}</b><span>夜・休日のキャンパスの窓口。救急車の手配や門のこと</span></a>
-    <p class="sos-place">119 で言う場所：<b>${PLACE_119}</b></p>
     <p class="sos-pos" data-k="pos"></p>
     <div class="sos-row">
       <button type="button" class="sos-close" data-k="close">画面を閉じる（呼び出しはそのまま）</button>
@@ -231,13 +223,13 @@ export function createSos(deps: { client: GameClient; sensors: Sensors; gameId: 
     sheet.dataset.st = st ?? 'none';
     if (st === 'sending') {
       title.textContent = '本部に送っている…';
-      sub.textContent = 'つながったらすぐ届く。急ぐときは下の 119 に電話';
+      sub.textContent = 'つながったらすぐ届く';
     } else if (st === 'open') {
       title.textContent = '本部に届いた';
       sub.textContent = '本部が見るまで鳴り続ける。動ける人はその場で待って';
     } else if (st === 'ack') {
       title.textContent = '本部が見た。向かっている';
-      sub.textContent = 'その場で待って。急ぐときは 119';
+      sub.textContent = 'その場で待って';
     } else if (st === 'done') {
       title.textContent = '本部が「終わった」にした';
       sub.textContent = 'また何かあれば、右上の救護をもう一度長押し';
