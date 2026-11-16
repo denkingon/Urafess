@@ -5,7 +5,7 @@
  * 夜の予定のプレ・本番のブロックはプリセットを選ぶ。当日はそのブロックで「このプリセットを入れる」を押すと、デッキ全部が一度に切りかわる。
  *
  * サーバーに置く（どの本部の画面でも同じ）。合言葉つきの /presets で読み書きできる（Claude と一緒に作るための口）。
- * 遊び方は、いまはドロケイだけが動く。増やし鬼・氷鬼は名前だけ先に置いてある（選んでもドロケイで動く）。
+ * 遊び方は、ドロケイと増やし鬼が動く（増やし鬼＝捕まった逃走者は牢屋に入らず、その場で鬼になる）。氷鬼は名前だけ先に置いてある（選んでもドロケイで動く）。
  */
 import { type ChatJail, type ChatMode, DEFAULT_CHAT_JAIL, DEFAULT_CHAT_MODE, isChatJail, isChatMode } from './chat';
 import { DEFAULT_LEAD_RULES, isLeadRules, type LeadRules } from './lead';
@@ -28,7 +28,7 @@ import { cleanShrinkPlan, DEFAULT_SHRINK_PLAN, isShrinkPlan, type ShrinkPlan } f
 export type GameMode = 'dorokei' | 'fueshi' | 'koori';
 export const GAME_MODES: { mode: GameMode; name: string; ready: boolean }[] = [
   { mode: 'dorokei', name: 'ドロケイ', ready: true },
-  { mode: 'fueshi', name: '増やし鬼', ready: false },
+  { mode: 'fueshi', name: '増やし鬼', ready: true },
   { mode: 'koori', name: '氷鬼', ready: false },
 ];
 
@@ -77,7 +77,16 @@ export function defaultPresets(): Preset[] {
   hard.lead = { ...DEFAULT_LEAD_RULES, on: true };
   hard.shrink = { times: 2, finalArea: 0.25, to: 'mid', pick: null, mission: true };
   hard.round = { cast: 60, phases: [20, 60, 420, 120], result: 180 };
-  return [pre, std, hard];
+  return [pre, std, hard, fueshiPreset()];
+}
+
+/** 最初に置いておく増やし鬼（鬼1人から始まる。司令塔・縮みは無し） */
+export const FUESHI_PRESET_ID = 'p4';
+export function fueshiPreset(): Preset {
+  const p = basePreset(FUESHI_PRESET_ID, '増やし鬼');
+  p.mode = 'fueshi';
+  p.ratio = { oni: 1, runner: 9 };
+  return p;
 }
 
 const isId = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{1,16}$/.test(v);

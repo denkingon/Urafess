@@ -35,6 +35,18 @@ export interface CaptureNews {
   sound: AnnounceSound;
 }
 
+/**
+ * 本部の「前を向いて（LOOK UP / LISTEN）」。on のあいだ、全員のスマホで同じ瞬間（showAt）からアニメを流し、
+ * 最後は画面を暗くして止める。本部が「終わり」を押すと on=false
+ */
+export interface LookupView {
+  /** 押すたびに増える番号 */
+  seq: number;
+  on: boolean;
+  /** アニメを始める瞬間（サーバー時刻）。全員がこの瞬間から流す */
+  showAt: number;
+}
+
 /** ゲーム全体の段階（サーバーが持つ正解） */
 export type Stage =
   /** 配役前（入室を受け付けている） */
@@ -64,6 +76,10 @@ export interface GameView {
   counts: { oni: number; runner: number; total: number; caught: number };
   result: Winner | null;
   durations: number[];
+  /** 遊び方（fueshi＝増やし鬼：捕まった逃走者は牢屋に入らず鬼になる）。古いサーバーからは来ない（そのときはドロケイ） */
+  mode?: 'dorokei' | 'fueshi' | 'koori';
+  /** 増やし鬼：いまの配役で、捕まって鬼になった人数 */
+  turned?: number;
   /** 今の夜を始めた時刻（「新しい夜を始める」を押した時刻）。古いサーバーは送らない */
   nightAt?: number;
   /** 配役の比率（鬼：逃走者）。古いサーバーからは来ない */
@@ -116,6 +132,8 @@ export interface GameView {
   reveal?: { mode: RevealMode; hitAt: number | null } | null;
   /** 司令塔の札（本部のデッキで入れたり外したりする）。誰が司令塔かは入れない。古いサーバーからは来ない（そのときは外してある） */
   lead?: LeadRules;
+  /** 本部の「前を向いて」。古いサーバーからは来ない */
+  lookup?: LookupView | null;
 }
 
 /**
@@ -220,6 +238,8 @@ export interface MeView {
   catches: number;
   /** 救護の呼び出し：自分のいちばん新しい呼び出し（今夜のうち）。無ければ null。古いサーバーからは来ない */
   sos?: MeSos | null;
+  /** 増やし鬼：いまの配役で捕まって、逃走者から鬼になった */
+  turned?: boolean;
   /** 逃走者の「捕まった」（選ぶまで開いている）。at は最初に長押しを始めたサーバー時刻。cands は並べる候補 */
   claim: { at: number; cands: Candidate[] } | null;
   /** ミッション：このラウンドに自分が送った写真（古い順）。古いサーバーからは来ない */
@@ -529,7 +549,9 @@ export type HostOp =
   /** 救護の呼び出しを「見た（向かう）」にする（rid＝呼び出しの番号）。押した本人の画面に「本部が見た」と出る。版番号を見ない */
   | 'sos-ack'
   /** 救護の呼び出しを「終わった」にする（rid＝呼び出しの番号）。版番号を見ない */
-  | 'sos-done';
+  | 'sos-done'
+  /** 前を向いて（LOOK UP / LISTEN）：on=true で全員のスマホに流す、false で終わり。いつでも。版番号を見ない */
+  | 'lookup';
 
 export type ClientMsg =
   /** 新しく名簿に入って、今夜に入る（名前が名簿にあれば taken が返る） */
