@@ -29,7 +29,7 @@ import { createHost, type HostActions, type HostInput, type HostScreen } from '.
  */
 
 type Tab = 'map' | 'people' | 'chat' | 'mission' | 'deck';
-const TABS: [Tab, string][] = [['map', '地図'], ['people', '人'], ['chat', '話'], ['mission', 'ミッション'], ['deck', 'デッキ']];
+const TABS: [Tab, string][] = [['map', '地図'], ['people', '人'], ['chat', 'チャット'], ['mission', 'ミッション'], ['deck', 'ルール設定']];
 
 /** 下の並びに出すボタンと重さ（wait＝月白の板、hold＝取り返しがつかない操作） */
 type DockItem = [op: string, weight: 'wait' | 'norm' | 'hold'];
@@ -104,7 +104,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
     b.type = 'button';
     b.dataset.tab = key;
     tabBtn[key] = b;
-    tabs.append(b);
+    if (key !== 'deck') tabs.append(b);
   }
 
   // ---------- 前の部品を4つの場所へ ----------
@@ -303,10 +303,11 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
     details.append(summary, content);
     return details;
   };
+  panel.people.append(cast);
   panel.deck.append(
-    group('時間と配役', timeCard, ratioCard, wishCard, revealCard, cast),
+    group('時間と配役', timeCard, ratioCard, wishCard, revealCard),
     group('司令塔・通信・通知', leadCard, micCard, chatCard, announceCard),
-    group('運営と記録', ready, night, rec, fixed), durations, ratio,
+    fixed, durations, ratio,
   );
   durations.classList.add('hq-gone');
   ratio.classList.add('hq-gone');
@@ -317,7 +318,24 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   if (strays.length) {
     panel.deck.append(group('そのほか', ...strays));
   }
-  el.append(head, rail, now, strip, reject, body, dock, tabs, picker.el);
+  panel.people.append(ready);
+  panel.mission.append(night, rec);
+  const shell = make('div', 'hq-shell');
+  const menu = make('nav', 'hq-sidebar');
+  menu.setAttribute('aria-label', '管理画面');
+  const dashboard = make('button', '', 'ダッシュボード');
+  const rules = make('button', '', 'ルール設定');
+  dashboard.type = rules.type = 'button';
+  menu.append(dashboard, rules);
+  const content = make('div', 'hq-workspace');
+  const title = make('h2', 'hq-page-title', 'ダッシュボード');
+  const live = make('div', 'hq-live');
+  live.append(now, rail, strip, dock, tabs);
+  const locked = make('p', 'hq-rules-locked', '試合終了後に次のゲームのルールを編集できます。');
+  locked.hidden = true;
+  content.append(title, live, reject, locked, body);
+  shell.append(menu, content);
+  el.append(head, shell, picker.el);
   // 夜の予定：スマホはデッキのいちばん上、幅の広い画面は全幅の帯（3列の上）
   const nightPal = createNightPalette((plan) => actions.command('night-plan', { night: plan }), {
     apply: (preset, durations) => actions.command('preset-apply', { preset, ...(durations ? { durations } : {}) }),
@@ -329,24 +347,42 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
     (preset) => actions.command('preset-apply', { preset }),
     picker.open,
   );
-  const wide = matchMedia('(min-width: 1024px)');
-  const placeNight = () => {
-    if (wide.matches) el.insertBefore(nightPal.el, body);
-    else panel.deck.prepend(nightPal.el);
-    nightPal.el.after(presetPal.el);
-  };
-  placeNight();
-  wide.addEventListener('change', placeNight);
+  panel.mission.prepend(nightPal.el);
+  panel.deck.prepend(presetPal.el);
+  const shrinkNow = old<HTMLButtonElement>('[data-act="shrink-now"]');
+  panel.map.append(shrinkNow);
+  panel.deck.append(old('[data-k="area"]'));
+  const mapWaiting = make('p', 'note', '配役後、ここで試合の地図を確認できます。');
+  panel.map.prepend(mapWaiting);
+  const matchMap = old('[data-k="glow"]');
   if (termEl) el.append(termEl);
 
   // ---------- 押したとき ----------
-  let tab: Tab = 'deck';
+  let tab: Tab = 'map';
+  let lastDashboardTab: Tab = 'map';
   let tabPicked = false;
   const showTab = (t: Tab) => {
     tab = t;
     el.dataset.tab = t;
+    const settings = t === 'deck';
+    if (!settings) lastDashboardTab = t;
+    title.textContent = settings ? 'ルール設定' : 'ダッシュボード';
+    dashboard.toggleAttribute('aria-current', !settings);
+    rules.toggleAttribute('aria-current', settings);
+    live.hidden = settings;
+    locked.hidden = !(settings && panel.deck.inert);
     for (const [key] of TABS) tabBtn[key].toggleAttribute('aria-current', key === t);
   };
+  dashboard.addEventListener('click', () => {
+    tabPicked = true;
+    showTab(lastDashboardTab);
+    content.scrollIntoView({ block: 'nearest' });
+  });
+  rules.addEventListener('click', () => {
+    tabPicked = true;
+    showTab('deck');
+  });
+  showTab('map');
   tabs.addEventListener('click', (e) => {
     const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
     if (!b?.dataset.tab) return;
@@ -395,6 +431,8 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
     el,
     update(input: HostInput) {
       inner.update(input);
+      mapWaiting.hidden = !matchMap.hidden;
+      shrinkNow.hidden = shrinkNow.disabled;
       const { game, host, serverNow } = input;
       if (!game || !host) return;
       const presets = host.presets ?? [];
@@ -404,6 +442,8 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       const done = game.stage === 'timer' && timer !== null && isDone(timer, serverNow);
       const running = game.stage === 'timer' && timer?.status === 'running' && !done;
       const paused = game.stage === 'timer' && timer?.status === 'paused' && !done;
+      panel.deck.inert = game.stage === 'timer' && !done;
+      locked.hidden = !(tab === 'deck' && panel.deck.inert);
       const pos = game.stage === 'timer' && timer ? positionAt(timer, serverNow) : null;
       const phase = pos && pos.kind === 'phase' ? pos : null;
       const kind = game.stage === 'timer' ? (done ? 'done' : 'timer') : game.stage;
@@ -536,7 +576,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       const badNames = (host.names ?? []).filter((n) => n.hit);
       if (badNames.length) items.push(`<span>気になる名前：${esc(badNames.map((n) => n.name).join('・'))}</span><button type="button" data-go="people">人</button>`);
       if (host.dupNames.length) items.push(`<span>同じ名前：${esc(host.dupNames.map((d) => d.name).join('・'))}</span><button type="button" data-go="people">人</button>`);
-      if (!old('[data-k="old"]').hidden) items.push('<span>前の夜のまま。集める前に新しい夜を始める</span><button type="button" data-go="deck">デッキ</button>');
+      if (!old('[data-k="old"]').hidden) items.push('<span>前の夜のまま。集める前に新しい夜を始める</span><button type="button" data-go="mission">運営</button>');
       once('strip', items.length ? `${items.length}|${items[0]}` : '', () => {
         strip.hidden = items.length === 0;
         strip.innerHTML = items.length ? `<b class="hq-badge u" aria-label="要対応 ${items.length}件">${items.length}</b>${items[0]}` : '';
@@ -642,8 +682,8 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       if (kind !== lastKind) {
         const first = lastKind === '';
         lastKind = kind;
-        if (first || !tabPicked || kind === 'timer') {
-          showTab(kind === 'timer' ? 'map' : kind === 'assigned' ? 'people' : kind === 'lobby' || kind === 'ended' ? 'deck' : first ? 'people' : tab);
+        if (tab !== 'deck' && (first || !tabPicked || kind === 'timer')) {
+          showTab(kind === 'timer' ? 'map' : kind === 'assigned' ? 'people' : kind === 'lobby' || kind === 'ended' ? 'people' : first ? 'people' : tab);
         }
       }
     },

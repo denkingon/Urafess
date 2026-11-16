@@ -151,40 +151,40 @@
 .hq .photo-judge button.primary { background: var(--sen); color: var(--tsuki); border: 2px solid var(--tsuki); }
 .hq figure[data-status="pending"] .photo-judge button[data-ok="1"] { background: var(--tsuki); color: var(--yami); border-color: var(--tsuki); }
 
-/* 幅の広い画面（PC）：上に「いま」の帯、下に3列。試合中は 人｜地図｜ミッション・デッキ、それ以外は デッキ｜地図｜人・ミッション */
-@media (min-width: 1024px) {
-  .phone.host.hq {
-    max-width: none; width: 100%; height: auto; min-height: 100dvh; padding: 16px 24px 24px;
-    display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 0 32px; align-items: center; align-content: start;
-    grid-template-areas: "head now rail dock" "strip strip strip strip" "reject reject reject reject" "night night night night" "presets presets presets presets" "body body body body";
-  }
-  .hq-head { grid-area: head; padding: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
-  .hq-head h1, .hq-head h1 .u { font-size: 24px; line-height: 32px; }
-  .hq-head-r { flex-direction: column; align-items: flex-start; gap: 0; }
-  .hq-now { grid-area: now; margin: 0; }
-  .hq-rail { grid-area: rail; margin: 0; }
-  .hq-rail li:not(:first-child):not(:last-child) .lbl { font-size: 24px; }
-  .hq-dock { grid-area: dock; padding: 0; }
-  .hq .hq-dock button { flex: none; min-height: 64px; padding: 0 24px; font-size: 20px; white-space: nowrap; }
-  .hq .hq-dock button[data-short]::after { font-size: 20px; }
-  .hq-strip { grid-area: strip; margin: 16px 0 0; }
-  .hq .reject { grid-area: reject; margin: 12px 0 0; }
-  .hq-tabs { display: none; }
-  .hq-body {
-    grid-area: body; overflow: visible; margin-top: 16px; padding: 20px 0 0; border-top: 1px solid var(--sen);
-    display: grid; grid-template-columns: 360px minmax(0, 1fr) 380px; gap: 24px 32px; align-items: start;
-  }
-  .hq .hq-panel { display: flex; min-width: 0; }
-  .hq-panel[data-panel="deck"] { grid-column: 1; grid-row: 1 / span 2; }
-  .hq-panel[data-panel="map"] { grid-column: 2; grid-row: 1 / span 2; }
-  .hq-panel[data-panel="deck"], .hq-panel[data-panel="map"] { grid-row: 1 / span 3; }
-  .hq-panel[data-panel="people"] { grid-column: 3; grid-row: 1; }
-  .hq-panel[data-panel="chat"] { grid-column: 3; grid-row: 2; }
-  .hq-panel[data-panel="mission"] { grid-column: 3; grid-row: 3; }
-  .hq[data-stage="timer"] .hq-panel[data-panel="people"] { grid-column: 1; grid-row: 1 / span 3; }
-  .hq[data-stage="timer"] .hq-panel[data-panel="chat"] { grid-column: 3; grid-row: 1; }
-  .hq[data-stage="timer"] .hq-panel[data-panel="mission"] { grid-column: 3; grid-row: 2; }
-  .hq[data-stage="timer"] .hq-panel[data-panel="deck"] { grid-column: 3; grid-row: 3; }
+/* 上部ヘッダー、左の管理メニュー、右の作業領域。 */
+.phone.host.hq {
+  max-width: none; width: 100%; min-height: 100dvh; height: auto; padding: 0;
+  --hq-sidebar: #173442; --hq-header: #224d60; --hq-active: #326f88;
+}
+.hq-head { min-height: 60px; padding: 8px clamp(12px, 2vw, 28px); background: var(--hq-header); }
+.hq-head h1 .u { color: #cae0e9; }
+.hq-shell { flex: 1; display: grid; grid-template-columns: clamp(160px, 19vw, 240px) minmax(0, 1fr); align-items: stretch; }
+.hq-sidebar { padding: 16px 0; background: var(--hq-sidebar); }
+.hq .hq-sidebar button {
+  width: 100%; min-height: 48px; padding: 8px 16px; border: 0; border-radius: 0;
+  background: transparent; color: #dbeaf0; text-align: left;
+}
+.hq .hq-sidebar button[aria-current] { background: var(--hq-active); color: white; font-weight: 700; }
+.hq-workspace { min-width: 0; padding: clamp(12px, 2vw, 28px); }
+.hq .hq-page-title { margin: 0 0 16px; font-size: 24px; }
+.hq-live { display: flex; flex-direction: column; gap: 12px; }
+.hq-live[hidden] { display: none; }
+.hq-live .hq-now, .hq-live .hq-rail, .hq-live .hq-strip { margin-inline: 0; }
+.hq-live .hq-dock, .hq-live .hq-tabs { padding-inline: 0; }
+.hq-body { overflow: visible; margin-top: 16px; padding: 0; }
+.hq-panel { min-width: 0; }
+.hq-panel[data-panel="deck"] { max-width: 980px; }
+.hq .np { grid-area: auto; margin-top: 0; }
+.hq .np-body { display: flex; }
+.hq .np[data-open="off"] .np-body { display: none; }
+.hq-rules-locked { padding: 12px; border: 1px solid var(--muted); border-radius: 6px; }
+.hq-panel[inert] { opacity: .65; }
+@media (max-width: 640px) {
+  .hq-shell { grid-template-columns: 90px minmax(0, 1fr); }
+  .hq .hq-sidebar button { padding-inline: 8px; font-size: 13px; overflow-wrap: anywhere; }
+  .hq-tabs { flex-wrap: wrap; }
+  .hq-tabs button { min-height: 44px; padding-inline: 6px; }
+  .hq-head-r { gap: 6px; }
 }
 
 /* 司令塔の札：入/切のスイッチ（入っている札は月白の線と地、切ってある札は影の線） */
