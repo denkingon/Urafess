@@ -37,6 +37,7 @@ export const EMOJI_MAX = 6;
 export const DIGIT_MAX = 8;
 /** 本部が打つ文の長さ */
 export const HQ_TEXT_MAX = 60;
+export const PLAYER_CHAT_MAX = 160;
 
 /** 絵文字の札（キーボードは出さない。ここから選ぶ） */
 export const EMOJI = ['👍', '👎', '🙏', '🆘', '👀', '🏃', '🤫', '😂', '😱', '🔥', '❤️', '💀', '⬆️', '⬇️', '⬅️', '➡️', '❓', '❗', '⭕', '❌', '👹', '🔦', '🌙', '🍦'] as const;

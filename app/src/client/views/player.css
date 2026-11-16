@@ -617,3 +617,10 @@
 @media (prefers-reduced-motion: no-preference) {
   .player .perm-cta-l { animation: p-perm-pulse 1.2s ease-in-out infinite; }
 }
+
+.player .voice-hold {
+  min-height: 46px; width: 100%; border: 1px solid var(--shu); border-radius: 8px;
+  background: var(--yami); color: var(--tsuki); touch-action: none; user-select: none;
+}
+.player .voice-hold[hidden] { display: none; }
+.player .voice-hold[aria-pressed="true"] { background: var(--shu); color: var(--yami); }

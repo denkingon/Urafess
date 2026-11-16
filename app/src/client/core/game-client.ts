@@ -13,6 +13,7 @@ import { SILENCE_LIMIT_MS, type AnnounceSettings, type RevealMode, type RoleId, 
 
 export interface WebSocketLike {
   readonly readyState: number;
+  readonly bufferedAmount?: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
   // ブラウザの WebSocket と Node の WebSocket の両方を受けるため、イベントの型はゆるくしておく
@@ -94,7 +95,8 @@ export interface ClientState {
 export type ChatSend =
   | { ch: ChatCh; card: string; person?: number; place?: string; pos?: { lat: number; lon: number; acc: number } | null }
   | { ch: 'team'; emoji: number[] }
-  | { ch: 'team'; digit: string };
+  | { ch: 'team'; digit: string }
+  | { ch: ChatCh; text: string };
 
 const CONNECTING = 0;
 const OPEN = 1;
@@ -445,6 +447,13 @@ export class GameClient {
     if (!this.isOpen() || assignId <= 0) return false;
     this.send({ t: 'seen', assignId });
     return true;
+  }
+
+  onVoice: ((packet: Extract<ServerMsg, { t: 'voice' }>) => void) | null = null;
+
+  sendVoice(assignId: number, audio: string): void {
+    if ((this.ws?.bufferedAmount ?? 0) > 4_096) return;
+    this.send({ t: 'voice', assignId, audio });
   }
 
   /** チャットを送る（参加者）。切れている間は送れない（false）。届いた分は、サーバーから戻ってきて画面に出る */
@@ -893,6 +902,9 @@ export class GameClient {
       case 'glow':
         this.state = { ...this.state, glow: { seq: ++this.glowSeq, s: msg.s, runs: Array.isArray(msg.runs) ? msg.runs : [] } };
         break;
+      case 'voice':
+        this.onVoice?.(msg);
+        return;
       case 'chat': {
         const got = Array.isArray(msg.msgs) ? msg.msgs : [];
         const prev = msg.reset ? [] : (this.state.chat?.msgs ?? []);

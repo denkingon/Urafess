@@ -37,4 +37,5 @@
 - `radar.ts`
 - `term.css`
 - `term.ts`
+- `voice.ts`
 - `wish.ts`

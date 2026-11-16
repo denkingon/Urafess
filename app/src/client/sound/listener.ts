@@ -54,6 +54,7 @@ export class SoundListener {
   private analyser: AnalyserNode | null = null;
   private spectrum: Float32Array<ArrayBuffer> | null = null;
   private listening = false;
+  private onVoice: ((samples: Float32Array, rate: number) => void) | null = null;
   private onCode: ((code: string) => void) | null = null;
   private opening: Promise<void> | null = null;
   /** 開いた時刻と、最後に本物の音（無音でないデータ）が届いた時刻（0＝まだ一度も届いていない） */
@@ -261,6 +262,7 @@ export class SoundListener {
     if (max > DIGITAL_SILENCE) this.lastSoundAt = performance.now();
     const rms = Math.sqrt(sum / input.length);
     this.level = this.level * 0.6 + Math.min(1, rms * 8) * 0.4;
+    if (this.onVoice && this.ctx) this.onVoice(input, this.ctx.sampleRate);
     if (!this.listening || !this.decoder) return;
     for (const text of this.decoder.push(new Float32Array(input))) {
       const code = parseSoundPayload(text);
@@ -273,6 +275,25 @@ export class SoundListener {
     this.onCode = onCode;
     this.listening = true;
     if (this.state !== 'ready') void this.open();
+  }
+
+  listenVoice(onVoice: (samples: Float32Array, rate: number) => void): void {
+    this.onVoice = onVoice;
+    this.unlock();
+    if (this.state !== 'ready') void this.open();
+  }
+
+  stopVoice(): void {
+    this.onVoice = null;
+    this.closeWhenIdle();
+  }
+
+  closeWhenIdle(): void {
+    const close = () => {
+      if (!this.listening && !this.onVoice) this.close();
+    };
+    if (this.opening) void this.opening.then(close);
+    else close();
   }
 
   /** 長押しを離したら呼ぶ（マイクは開けたまま） */
@@ -323,6 +344,7 @@ export class SoundListener {
   /** ゲームの段階が終わったら呼ぶ。マイクを閉じる */
   close(): void {
     this.pause();
+    this.onVoice = null;
     try {
       this.source?.disconnect();
       this.node?.disconnect();

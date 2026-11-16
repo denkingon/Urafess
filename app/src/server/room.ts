@@ -54,6 +54,7 @@ import {
   cleanLine,
   cleanPlaces,
   DEFAULT_CHAT_JAIL,
+  PLAYER_CHAT_MAX,
   DEFAULT_CHAT_MODE,
   DEFAULT_PLACES,
   digitText,
@@ -61,7 +62,6 @@ import {
   HQ_TEXT_MAX,
   isChatJail,
   isChatMode,
-  teamInput,
   teamOpen,
   type CardDef,
   type ChatJail,
@@ -559,6 +559,7 @@ export class GameRoom extends DurableObject<Env> {
   private chat: ChatRec[] = [];
   /** chat がどの夜・どの配役の分か（変わったら読み直して、全員に入れ替えを送る） */
   private chatKey = '';
+  private readonly lastVoiceAt = new Map<string, number>();
   private readonly lastChatAt = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -800,7 +801,7 @@ export class GameRoom extends DurableObject<Env> {
     if (this.game.mission === undefined) this.game.mission = null;
     if (this.game.missionPriv === undefined) this.game.missionPriv = null;
     this.loadPhotos();
-    if (!isMicMode(this.game.micMode)) this.game.micMode = DEFAULT_MIC_MODE;
+    this.game.micMode = DEFAULT_MIC_MODE;
     if (this.game.area === undefined) this.game.area = null;
     // 知らせを入れる前の版で作った部屋には、設定が無い。最初の値で埋める
     if (!isAnnounceSettings(this.game.announce)) this.game.announce = { ...ANNOUNCE_DEFAULT };
@@ -1214,6 +1215,10 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
     const att = (ws.deserializeAttachment() as Attachment | null) ?? {};
+    if (msg?.t === 'voice') {
+      this.relayVoice(att, msg, now);
+      return;
+    }
     // 時間が0になったのに結果がまだなら、先に決める（合図が来ない間に届いた操作でも、結果のあとの状態で受ける）
     if (msg.t !== 'ping' && msg.t !== 'sync') {
       this.missionTick(now);
@@ -3080,7 +3085,7 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     // 旧画面からのコマンドでも、廃止したルールは再有効化できない。
-    if (['preset-apply', 'presets', 'wish-mode', 'reveal', 'cast', 'lead', 'lead-pick', 'lead-draw', 'shrink-plan', 'shrink-now'].includes(op)) {
+    if (['preset-apply', 'presets', 'wish-mode', 'reveal', 'cast', 'lead', 'lead-pick', 'lead-draw', 'shrink-plan', 'shrink-now', 'mic', 'chat-mode'].includes(op)) {
       return this.reject(ws, att, op, 'not-allowed');
     }
 
@@ -3823,9 +3828,28 @@ export class GameRoom extends DurableObject<Env> {
     return { body, other };
   }
 
+  private relayVoice(att: Attachment, msg: Extract<ClientMsg, { t: 'voice' }>, now: number): void {
+    const sender = this.inRound(att.pid);
+    const game = this.game;
+    if (sender?.role !== 'oni' || msg.assignId !== game.assignId || game.allCaughtAt != null || !this.glowOpen(now)) return;
+    if (typeof msg.audio !== 'string' || msg.audio.length < 4 || msg.audio.length > 2048 ||
+      msg.audio.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(msg.audio)) return;
+    if (now - (this.lastVoiceAt.get(sender.pid) ?? 0) < 30) return;
+    this.lastVoiceAt.set(sender.pid, now);
+    const packet = JSON.stringify({ t: 'voice', assignId: game.assignId, from: sender.num, audio: msg.audio } satisfies ServerMsg);
+    for (const ws of this.ctx.getWebSockets()) {
+      const recipient = this.inRound((ws.deserializeAttachment() as Attachment | null)?.pid);
+      if (recipient?.role !== 'oni' || recipient.pid === sender.pid) continue;
+      try {
+        ws.send(packet);
+      } catch {
+        // 切れた接続へは再送しない。
+      }
+    }
+  }
+
   /**
-   * チャットが届いた。参加者は自由な文字を送れない：仲間の回線は札・絵文字・数字のうち主催者が決めた1つ（牢屋の人は絵文字だけ）、
-   * 本部あては札だけ。決まりに合わない分・続けて送りすぎた分は捨てる（スマホの側でも押せなくしてある）
+   * テキストと既存の札を受け付ける。仲間・本部への公開範囲と連投制限は共通。
    */
   private onChat(att: Attachment, msg: Extract<ClientMsg, { t: 'chat' }>, now: number): void {
     const g = this.game;
@@ -3847,9 +3871,10 @@ export class GameRoom extends DurableObject<Env> {
     if (now - (this.lastChatAt.get(p.pid) ?? 0) < CHAT_GAP_MS) return;
     const inRound = this.inRound(p.pid);
     const from = { num: p.num, name: p.name };
+    const playerText = cleanLine(msg.text, PLAYER_CHAT_MAX);
     if (msg.ch === 'hq') {
       const c = cardOf(msg.card);
-      const made = c && c.ch === 'hq' ? this.cardBody(c, msg, p) : null;
+      const made = playerText ? { body: { kind: 'text', text: playerText } } : c && c.ch === 'hq' ? this.cardBody(c, msg, p) : null;
       if (!made) return;
       this.lastChatAt.set(p.pid, now);
       this.recordChat({ ch: 'hq', scope: 'hq', from, ...made.body } as Omit<ChatMsg, 'id' | 'at'>, p, p.pid, inRound?.role ?? null, null, now);
@@ -3857,16 +3882,17 @@ export class GameRoom extends DurableObject<Env> {
     }
     if (msg.ch !== 'team' || !inRound || !inRound.role || !teamOpen(g, now)) return;
     const caught = this.isCaught(inRound);
-    const input = teamInput(g.chatMode ?? DEFAULT_CHAT_MODE, g.chatJail ?? DEFAULT_CHAT_JAIL, caught);
     let body: Partial<ChatMsg> | null = null;
     let other: Participant | null = null;
-    if (input === 'emoji') {
+    if (playerText) {
+      body = { kind: 'text', text: playerText };
+    } else if (msg.emoji !== undefined) {
       const text = emojiText(msg.emoji);
       if (text) body = { kind: 'emoji', text };
-    } else if (input === 'digit') {
+    } else if (msg.digit !== undefined) {
       const text = digitText(msg.digit);
       if (text) body = { kind: 'digit', text };
-    } else if (input === 'card') {
+    } else {
       const c = cardOf(msg.card);
       const made = c && c.ch === 'team' ? this.cardBody(c, msg, inRound) : null;
       if (made) {

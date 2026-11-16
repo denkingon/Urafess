@@ -3,8 +3,8 @@
  *
  * - 待合室：仲間の回線は無い。本部あての札は本部とその人にだけ届く。本部の返事はその人にだけ、全員あては全員に届く
  * - 配役のあと：鬼の回線は鬼だけ、逃走者の回線は逃走者だけ。主催者には全部が役つきで届く
- * - 札の代入：仲間の名前・場所の名前・位置。場所の一覧に無い名前・相手の役の人は捨てる。文字は送れない
- * - 制約：札／数字／絵文字を主催者が切り替える。牢屋の人は絵文字だけ（外せる）。続けて送った分は捨てる
+ * - 札の代入：仲間の名前・場所の名前・位置。場所の一覧に無い名前・相手の役の人は捨てる
+ * - 自由入力は仲間・本部に送れる。音声はプレイ中の鬼同士に限る。続けて送りすぎた分は捨てる
  * - 時間が0になったら仲間の回線は閉じる。次の配役で前の試合の会話は画面から消え、記録には残る
  * - 開き直した人にも、いま見えてよい分がすぐ届く
  *
@@ -98,7 +98,7 @@ describe('チャット', () => {
     await sleep(500);
   });
 
-  it('回線ごとに届く相手が分かれ、制約に合わない分は捨てられ、次の配役で消えて記録に残る', async () => {
+  it('回線ごとに届く相手が分かれ、通話は鬼だけに届き、次の配役で消えて記録に残る', async () => {
     await startServer();
     const host = client('host');
     await waitFor('主催者がつながる', () => host.state.phase === 'ready');
@@ -141,12 +141,12 @@ describe('チャット', () => {
     expect(msgsOf(a).at(-1)!.from).toBeNull();
     host.hostChat('all', '10分後に始める');
     await lands('10分後に始める', [host, ...players], []);
-    // 参加者が本部のふりをしても、文字は送れない
+    // 参加者が全員あてを指定しても、通常の本部あてとして本人と本部にだけ届く。
     await sleep(GAP);
     await dropped(b, { ch: 'hq', card: 'here' });
     (b as unknown as { send(m: object): void }).send({ t: 'chat', ch: 'hq', to: 'all', text: 'にせもの' });
-    await sleep(400);
-    expect(has(host, 'にせもの')).toBe(false);
+    await lands('にせもの', [host, b], players.filter((p) => p !== b));
+    expect(msgsOf(host).at(-1)?.from?.name).toBe('みどり');
 
     // ---- 配役：鬼は鬼だけ、逃走者は逃走者だけ ----
     host.command('durations', { durations: DUR });
@@ -186,11 +186,9 @@ describe('チャット', () => {
     runners[0].chat({ ch: 'team', card: 'meet', place: '鴨池' });
     await lands('鴨池で合流しよう', [host, ...runners], oni);
     await sleep(GAP);
-    // 一覧に無い場所・相手の役の人・絵文字と数字（いまは札だけ）は捨てる
+    // 一覧に無い場所と相手の役の人は捨てる
     await dropped(runners[0], { ch: 'team', card: 'meet', place: 'うそ' });
     await dropped(runners[0], { ch: 'team', card: 'come', person: oni[0].state.me!.num });
-    await dropped(runners[0], { ch: 'team', emoji: [0] });
-    await dropped(runners[0], { ch: 'team', digit: '110' });
 
     // 続けて送った分は捨てる
     await sleep(GAP);
@@ -200,17 +198,19 @@ describe('チャット', () => {
     await sleep(600);
     expect(msgsOf(host).length).toBe(n0 + 1);
 
-    // ---- 制約を切り替える ----
-    host.command('chat-mode', { chatMode: 'digit' });
-    await waitFor('数字だけ', () => runners[0].state.game?.chat?.mode === 'digit');
-    await sleep(GAP);
-    await dropped(runners[0], { ch: 'team', card: 'ok' });
-    runners[0].chat({ ch: 'team', digit: '110' });
-    await lands('110', [host, ...runners], oni);
-    host.command('chat-mode', { chatMode: 'card' });
-    await waitFor('札だけ', () => runners[0].state.game?.chat?.mode === 'card');
+    host.command('chat-mode', { chatMode: 'off' });
+    await waitFor('旧制約コマンドは断られる', () => host.state.lastReject?.op === 'chat-mode' && host.state.lastReject.reason === 'not-allowed');
+    runners[0].chat({ ch: 'team', text: '次は体育館へ' });
+    await lands('次は体育館へ', [host, ...runners], oni);
 
-    // ---- 牢屋の人は絵文字だけ ----
+    const voicePackets = new Map([host, ...players].map((c) => [c, [] as string[]]));
+    for (const [client, packets] of voicePackets) client.onVoice = ({ audio }) => packets.push(audio);
+    const assignId = host.state.game!.assignId;
+    const sound = 'gICAgA==';
+    oni[0].sendVoice(assignId, sound);
+    await sleep(250);
+    expect(voicePackets.get(oni[1])).toEqual([]);
+
     host.command('start');
     await waitFor('ゲームの段階', () => {
       const t = host.state.game?.timer;
@@ -220,31 +220,24 @@ describe('チャット', () => {
     const jailed = runners[3];
     host.command('capture', { pid: host.state.host!.capture!.runners.find((r) => r.num === jailed.state.me!.num)!.pid });
     await waitFor('牢屋に入る', () => jailed.state.me?.caught != null);
-    await dropped(jailed, { ch: 'team', card: 'help' });
-    jailed.chat({ ch: 'team', emoji: [3, 3] });
-    await lands(EMOJI[3] + EMOJI[3], [host, ...runners], oni);
+    jailed.chat({ ch: 'team', text: '牢屋にいます' });
+    await lands('牢屋にいます', [host, ...runners], oni);
     expect(msgsOf(runners[0]).at(-1)!.jail).toBe(true);
-    // 牢屋からでも、本部あての札は送れる
     await sleep(GAP);
-    jailed.chat({ ch: 'hq', card: 'hq-come', pos: SFC });
-    await lands('本部、来て', [host, jailed], [...oni, runners[0]]);
-    host.command('chat-mode', { chatJail: 'same' });
-    await waitFor('牢屋も同じ', () => jailed.state.game?.chat?.jail === 'same');
-    await sleep(GAP);
-    jailed.chat({ ch: 'team', card: 'help' });
-    await lands('助けて！', [host, ...runners], oni);
+    jailed.chat({ ch: 'hq', text: '本部に質問です' });
+    await lands('本部に質問です', [host, jailed], [...oni, runners[0]]);
+
+    oni[0].sendVoice(assignId, sound);
+    await waitFor('別の鬼だけに音声が届く', () => voicePackets.get(oni[1])!.length === 1);
+    runners[0].sendVoice(assignId, sound);
+    oni[0].sendVoice(assignId + 1, sound);
+    await sleep(300);
+    expect(voicePackets.get(oni[1])).toEqual([sound]);
+    for (const client of [host, oni[0], ...runners]) expect(voicePackets.get(client)).toEqual([]);
 
     // 本部から鬼へ
     host.hostChat('oni', '鬼は広場に集まれ');
     await lands('鬼は広場に集まれ', [host, ...oni], runners);
-
-    // 送れない設定
-    host.command('chat-mode', { chatMode: 'off' });
-    await waitFor('送れない', () => runners[0].state.game?.chat?.mode === 'off');
-    await sleep(GAP);
-    await dropped(runners[0], { ch: 'team', card: 'ok' });
-    host.command('chat-mode', { chatMode: 'card' });
-    await waitFor('札だけに戻す', () => runners[0].state.game?.chat?.mode === 'card');
 
     // ---- 開き直した人にも、いま見えてよい分が届く ----
     const again = client('player', stores[names.indexOf(runners[1].state.me!.name)]);
@@ -259,6 +252,9 @@ describe('チャット', () => {
     await waitFor('結果', () => host.state.game?.stage === 'result', 15_000);
     await sleep(GAP);
     await dropped(runners[0], { ch: 'team', card: 'ok' });
+    oni[0].sendVoice(assignId, sound);
+    await sleep(200);
+    expect(voicePackets.get(oni[1])).toEqual([sound]);
     // 終わったあとも、その試合の会話は読める
     expect(has(runners[0], '鴨池で合流しよう')).toBe(true);
 

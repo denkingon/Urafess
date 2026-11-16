@@ -114,7 +114,7 @@ export const HEARD_SLACK_MS = 2_000;
  * - hold：「捕まえた」を押している間だけ聞く（前の版と同じ）
  */
 export type MicMode = 'always' | 'hold';
-export const DEFAULT_MIC_MODE: MicMode = 'always';
+export const DEFAULT_MIC_MODE: MicMode = 'hold';
 export const isMicMode = (m: unknown): m is MicMode => m === 'always' || m === 'hold';
 
 // ---------- 配役の出し方（ドラムロール） ----------

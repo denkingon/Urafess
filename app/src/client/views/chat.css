@@ -168,3 +168,8 @@
   font: inherit; font-size: 16px; line-height: 1.5; resize: vertical;
 }
 .chat-host form > button[type="submit"] { min-height: 48px; font-size: 16px; }
+
+.player .chat-compose { display: flex; gap: 8px; flex: none; }
+.player .chat-compose[hidden], .player .chat-rule:empty { display: none; }
+.player .chat-compose input { min-width: 0; flex: 1; font-size: 16px; padding: 8px; }
+.player .chat-compose button { min-height: 44px; padding-inline: 12px; }

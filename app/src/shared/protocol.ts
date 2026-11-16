@@ -610,6 +610,8 @@ export type ClientMsg =
   | { t: 'sense'; motion: SenseState; geo: SenseState }
   /** スマホの許可：まだ入っていないもの（空＝全部入った）。変わったときだけ送る。主催者の「許可がまだの人」に使う */
   | { t: 'perm'; need: PermItem[] }
+  /** 鬼の通話。8 kHz モノラルの音声ブロック。 */
+  | { t: 'voice'; assignId: number; audio: string }
   /** 全体の地図：自分の位置（ゲームの段階の間だけ MATES_SEND_EVERY_MS ごとに送る。段階の外・捕まった人の分は、サーバーが捨てる） */
   | { t: 'pos'; lat: number; lon: number; acc: number }
   /**
@@ -689,6 +691,7 @@ export type ServerMsg =
   | { t: 'glow'; s: number; runs: GlowEntry[] }
   /** 全体の地図：見えてよい人の位置（その人の役で中身が変わる）。s はサーバーの時刻 */
   | { t: 'mates'; s: number; scope: MatesScope; people: MateEntry[] }
+  | { t: 'voice'; assignId: number; from: number; audio: string }
   /**
    * チャット。reset＝true は「いま見えてよい全部」（つないだとき・配役が変わったとき。手元の分を入れ替える）、無ければ足す分。
    * team は同じ役の仲間（「◯◯、一緒に来て！」で選ぶ相手。自分は入らない）。reset のときだけ付く

@@ -96,7 +96,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
   /** 離したあとも続けている間の、終わりのタイマー */
   let latch: ReturnType<typeof setTimeout> | null = null;
   /** 鬼のスマホが、長押しと関係なく聞いている（ゲームの段階の間ずっと） */
-  let passive = false;
+  let capturingMic = false;
   /** 離した直後のこの時刻までは、逃走者に候補を出さない（鬼が1人に決まれば、サーバーがそのまま記録するので） */
   let quietUntil = 0;
   let lastNotice = 0;
@@ -127,12 +127,18 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
   };
   const startEffects = () => {
     if (mode === 'runner' && code) emitter.start(code);
-    if (mode === 'oni') listener.listen(onHeardCode);
+    if (mode === 'oni') {
+      capturingMic = true;
+      listener.listen(onHeardCode);
+    }
   };
   const stopEffects = () => {
     emitter.stop();
-    // ずっと聞いている鬼は、長押しが終わっても聞き続ける
-    if (!passive) listener.pause();
+    if (capturingMic) {
+      capturingMic = false;
+      listener.pause();
+      listener.closeWhenIdle();
+    }
   };
 
   /** 長押しを本当に終える（離したあと続けていた分も含めて） */
@@ -149,7 +155,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
   };
 
   /**
-   * 指を離した。0.5秒押していれば離していい：押し始めから HOLD_LATCH_MS までは、音を出し続ける（鬼は聞き続ける）。
+   * 指を離した。0.5秒押していれば離していい：押し始めから HOLD_LATCH_MS までは、音を出し続ける。
    * 押しっぱなしで近づけなくても、鳴っている間にスマホを相手に寄せればいい
    */
   const endPress = (force = false) => {
@@ -161,7 +167,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
     pressing = null;
     el.classList.remove('is-pressing');
     const left = holdAt + HOLD_LATCH_MS - Date.now();
-    if (holding && !force && left > 0) {
+    if (mode === 'runner' && holding && !force && left > 0) {
       el.classList.add('is-latched');
       latch = setTimeout(finishHold, left);
       return;
@@ -208,6 +214,12 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
   hold.addEventListener('pointerup', release);
   hold.addEventListener('pointercancel', release);
   hold.addEventListener('lostpointercapture', release);
+  window.addEventListener('blur', () => {
+    if (capturingMic) endPress(true);
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && capturingMic) endPress(true);
+  });
   hold.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // ---------- 押すボタン ----------
@@ -356,19 +368,6 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       role = view.role;
       code = state.me?.code ?? null;
       if (prevMode !== mode && mode === 'none') endPress(true);
-      // 主催者が「ずっと聞く」にしているとき、鬼はゲームの段階の間ずっと聞く（マイクがもう開いているときだけ。開くのは perms.ts：許可があれば配役で自分から開く）。
-      // 足すのは読み取りの計算だけ：マイクは配役のあとから開けたまま。「押している間だけ」なら前の版と同じ
-      const always = (state.game?.micMode ?? 'always') === 'always';
-      const wantPassive = mode === 'oni' && always && listener.state === 'ready';
-      if (wantPassive && !passive) {
-        passive = true;
-        listener.listen(onHeardCode);
-      } else if (!wantPassive && passive) {
-        passive = false;
-        if (!holding) listener.pause();
-      }
-      // ずっと聞いている間は、押していなくても板に波を薄く出す（聞いているのが見えるように）
-      el.classList.toggle('is-passive', passive);
       // ゲームの段階が終わったら（広場に戻る・結果発表・配役前）、または鬼でなくなったらマイクを閉じる。ゲームの前に開けた分は残す
       const afterGame = view.step === 0 || view.step >= 5;
       // 牢屋にいる逃走者は、助けに来た仲間の音を聞くのでマイクを閉じない（牢屋の画面 jail.ts が使う）。
@@ -413,7 +412,7 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
         setHTML(q('sheetWait'), people.length ? '' : sent(['選べる人がいない', 'Nobody to pick']));
       }
 
-      // 鬼のマイク：許可は最初のバナーでもらい、配役で自分から開く。止まった・断られたときは、同じバナーが出る（views/perm.ts）
+      // 鬼は「捕まえた」を押している間だけ捕獲音を聞く。
 
       // 長押しボタン
       hold.hidden = mode === 'none';

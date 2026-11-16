@@ -18,6 +18,7 @@ import { callAccount, createAccount, errorText } from './views/account';
 import { createAnnounce } from './views/announce';
 import { createCapture } from './views/capture';
 import { createDrum } from './views/drum';
+import { createVoice } from './views/voice';
 import { createChat } from './views/chat';
 import { createGlow } from './views/glow';
 import { type HostActions } from './views/host';
@@ -238,7 +239,8 @@ function startPlayer(): void {
   const capture = createCapture({ client, emitter, listener });
   // 牢屋：牢屋の人はマイクで聞き、外の逃走者は「助ける」で鳴らす
   const jail = createJail({ client, emitter, listener });
-  phone.slot.append(jail.el, capture.el);
+  const voice = createVoice(client, listener);
+  phone.slot.append(voice.el, jail.el, capture.el);
   // 配役の希望：次の配役の前（待合室・結果発表）に、逃走者／鬼の板を出す
   const wish = createWish({ client });
   phone.slot.append(wish.el);
@@ -279,9 +281,8 @@ function startPlayer(): void {
   const reporter = new RunReporter();
   let lastView: PhoneView | null = null;
   // スマホの許可（動き・位置・マイク）：入室してすぐの1枚のバナーでまとめてもらう。ほかの場面では聞かない
-  /** いまマイクが要るか：鬼は配役〜ゲームの終わり、逃走者は牢屋の中 */
-  const wantMic = (v: PhoneView | null): boolean =>
-    !!v && ((v.role === '鬼' && !v.caught && v.step >= 1 && v.step <= 4) || v.rescue === 'help');
+  /** 牢屋の救助音だけは待機中に聞く。鬼のマイクはボタンから開く。 */
+  const wantMic = (v: PhoneView | null): boolean => v?.rescue === 'help';
   const perms = new Perms({
     sensors,
     listener,
@@ -325,6 +326,7 @@ function startPlayer(): void {
   const announce = createAnnounce(chime);
   phone.el.append(announce.el);
   const unlock = () => {
+    voice.unlock();
     emitter.unlock();
     listener.unlock();
     chime.unlock();
@@ -350,6 +352,7 @@ function startPlayer(): void {
   }
   let shown: HTMLElement | null = null;
   const show = (el: HTMLElement) => {
+    if (el !== phone.el) voice.update(0);
     if (shown !== el) {
       root.replaceChildren(el);
       shown = el;
@@ -396,6 +399,7 @@ function startPlayer(): void {
       return;
     }
     if (s.phase !== 'ready' || !s.game || !s.me) {
+      voice.update(0);
       show(phone.el);
       const waiting = connectingView(s.online);
       lastView = waiting;
@@ -425,6 +429,7 @@ function startPlayer(): void {
       const freeRunner = me.role === 'runner' && me.assignId === s.game.assignId && !me.removed && me.caught == null;
       announce.update({ news, aboutMe: news !== null && me.newsAbout === news.seq, serverNow, freeRunner, busy: emitter.playing });
     }
+    voice.update(s.online && view.touch === 'oni' ? s.game.assignId : 0);
     capture.update(view, s);
     mission.update(s.game, s.me);
     jail.update(view, s);

@@ -123,9 +123,7 @@ export function createHQ(actions: HostActions): HostScreen {
   cards.mission.append(old('[data-k="missionPhoto"]'), old('[data-k="cap"]'));
   // チャット：流れと送る欄は「話」、制約と場所の名前はデッキの札
   cards.chat.append(old('[data-k="chatFeed"]'));
-  const chatCard = make('section', 'hq-card');
-  chatCard.append(old('[data-k="chatSet"]'));
-
+  hide('[data-k="chatSet"]');
   // デッキ：時間・鬼と逃走者・鬼のマイク・固定の札／そろい具合／夜とやり直し／記録
   const durations = old<HTMLDetailsElement>('details.durations');
   const ratio = old<HTMLDetailsElement>('details.ratio');
@@ -166,40 +164,12 @@ export function createHQ(actions: HostActions): HostScreen {
     return select;
   });
   ratioCard.append(old('[data-k="ratioPreview"]'));
-  const micCard = make('section', 'hq-card');
-  micCard.append(old('.mic-mode:not(.wish-mode):not(.reveal-mode)'));
+  hide('.mic-mode:not(.wish-mode):not(.reveal-mode)');
   hide('.wish-mode');
   hide('.reveal-mode');
   hide('[data-k="cast"]');
   hide('[data-k="shrink"]');
-  const announceCard = make('section', 'hq-card');
-  announceCard.append(old('.announce-set'));
-  // HQでは択一の操作をネイティブのピッカーで選ぶ。既存のクリック処理と可否判定を共有する。
-  const exclusive = (group: HTMLElement, attr: string, label: string, showLabel = false) => {
-    const options = [...group.querySelectorAll<HTMLButtonElement>(`button[data-${attr}]`)];
-    const select = hqSelect(label, options.map((b) => [b.getAttribute(`data-${attr}`)!, b.getAttribute('aria-label') || b.textContent!.trim()]), '');
-    group.classList.add('hq-gone');
-    group.after(showLabel ? pickerRow(label, select) : select);
-    select.addEventListener('change', () => {
-      options.find((b) => b.getAttribute(`data-${attr}`) === select.value)?.click();
-    });
-    return () => {
-      const checked = options.find((b) => b.getAttribute('aria-pressed') === 'true');
-      if (checked) {
-        const value = checked.getAttribute(`data-${attr}`)!;
-        if (select.value !== value) select.value = value;
-      }
-      select.disabled = options.every((b) => b.disabled);
-      options.forEach((b, i) => { select.options[i].disabled = b.disabled; });
-    };
-  };
-  const syncChoices = [
-    exclusive(micCard.querySelector('.seg')!, 'mic', '鬼のマイクの聞き方'),
-    exclusive(announceCard.querySelector('[aria-label="帯に出すもの"]')!, 'show', '帯に出すもの', true),
-    exclusive(announceCard.querySelector('[aria-label="音を鳴らすスマホ"]')!, 'sound', '音を鳴らすスマホ', true),
-    exclusive(chatCard.querySelector('[aria-label="仲間の回線で送れるもの"]')!, 'mode', '仲間の回線で送れるもの', true),
-    exclusive(chatCard.querySelector('[aria-label="牢屋の人が送れるもの"]')!, 'jail', '牢屋の人が送れるもの'),
-  ];
+  hide('.announce-set');
   const missionFree = cards.mission.querySelector<HTMLElement>('[data-k="mission"]')!;
   const freeAll = missionFree.querySelector<HTMLButtonElement>('[data-mission="all"]')!;
   const freeSome = missionFree.querySelector<HTMLButtonElement>('[data-mission="n"]')!;
@@ -246,7 +216,6 @@ export function createHQ(actions: HostActions): HostScreen {
   };
   panel.deck.append(
     group('時間とチームの割合', timeCard, ratioCard),
-    group('マイク・チャット・通知', micCard, chatCard, announceCard),
     fixed, durations, ratio,
   );
   durations.classList.add('hq-gone');
@@ -440,7 +409,6 @@ export function createHQ(actions: HostActions): HostScreen {
         if (select.value !== inp.value) select.value = inp.value;
         select.disabled = inp.disabled;
       });
-      syncChoices.forEach((sync) => sync());
 
       // 押すもの：その段階で要るものだけを下へ。ほかは「夜とやり直し」に置いたまま
       const want: DockItem[] =
