@@ -1,0 +1,45 @@
+/* デバッグ台（PC）：道具なので無彩色。色は選んでいる台（月白の枠）と走っている台（蓄光）だけ */
+body.dd-body { margin: 0; background: #0b0c10; color: #f1ede4; overflow: auto; }
+.dd { min-height: 100vh; display: flex; flex-direction: column; font-family: "BIZ UDPGothic", system-ui, sans-serif; font-size: 16px; }
+.dd button { min-height: 40px; min-width: 40px; padding: 0 12px; border: 1px solid #2b2e38; border-radius: 6px; background: transparent; color: #f1ede4; font: inherit; cursor: pointer; white-space: nowrap; }
+.dd button:hover { border-color: #a29d93; }
+.dd button[aria-pressed="true"] { border: 2px solid #f1ede4; background: #2b2e38; }
+.dd-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 16px; background: #0b0c10; border-bottom: 1px solid #2b2e38; }
+.dd-bar h1 { margin: 0 8px 0 0; font-size: 18px; }
+.dd-room { color: #a29d93; margin-right: 12px; }
+.dd-count { min-width: 3em; text-align: center; font-variant-numeric: tabular-nums; }
+.dd-seg { display: inline-flex; align-items: center; gap: 4px; margin-left: 12px; }
+.dd-seg-l { color: #a29d93; margin-right: 4px; }
+.dd-main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; padding: 16px; align-items: start; }
+.dd-phones { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.dd-card { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid #2b2e38; border-radius: 10px; background: #12131a; }
+.dd-card.is-sel { border-color: #f1ede4; }
+.dd-card.is-run { box-shadow: 0 0 0 2px #b8ff5a; }
+.dd-card.dd-host { border-style: dashed; }
+.dd-card-h { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dd-card-h b { margin-right: auto; }
+.dd-card-h button { min-height: 32px; padding: 0 8px; }
+.dd-card-h [data-act="run"][aria-pressed="true"] { border-color: #b8ff5a; color: #b8ff5a; background: transparent; }
+.dd-screen { position: relative; overflow: hidden; border-radius: 18px; background: #000; }
+.dd-screen iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; background: #0b0c10; }
+.dd-side { position: sticky; top: 76px; display: flex; flex-direction: column; gap: 8px; }
+.dd-side h2 { margin: 0; font-size: 16px; color: #a29d93; font-weight: 400; }
+.dd-map { border: 1px solid #2b2e38; border-radius: 10px; overflow: hidden; background: #0e0f14; }
+.dd-svg { display: block; width: 100%; height: auto; max-height: calc(100vh - 180px); touch-action: none; cursor: crosshair; }
+.dd-svg .m-green polygon { fill: #17201a; }
+.dd-svg .m-water polygon { fill: #14202a; }
+.dd-svg .m-road polyline { fill: none; stroke: #2b2e38; stroke-width: 6; }
+.dd-svg .m-path polyline { fill: none; stroke: #23252e; stroke-width: 2; }
+.dd-svg .m-bld polygon { fill: #3a3d48; }
+.dd-svg .m-dot { cursor: grab; }
+.dd-svg .m-dot circle { fill: #0b0c10; stroke: #a29d93; stroke-width: 3; }
+.dd-svg .m-dot text { fill: #f1ede4; font: 700 18px system-ui, sans-serif; pointer-events: none; }
+.dd-svg .m-dot.is-sel circle { stroke: #f1ede4; stroke-width: 5; }
+.dd-svg .m-dot.is-run circle { fill: #b8ff5a; }
+.dd-svg .m-dot.is-run text { fill: #0b0c10; }
+.dd-hint { margin: 0; color: #a29d93; line-height: 1.5; }
+.dd-stop { align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 24px; }
+.dd-stop h1 { font-size: 22px; margin: 0; }
+.dd-stop p { color: #a29d93; margin: 0; }
+.dd-go { color: #0b0c10; background: #f1ede4; padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: 700; }
+@media (max-width: 900px) { .dd-main { grid-template-columns: 1fr; } .dd-side { position: static; } }
