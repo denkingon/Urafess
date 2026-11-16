@@ -10,6 +10,7 @@ import { setFramePad } from './overview';
 import { createTerm } from './term';
 import { createNightPalette } from './night';
 import { createPresetPalette } from './preset';
+import { durationPicker, hqSelect, numberOptions, pickerRow } from './hq-picker';
 import './night.css';
 import './term.css';
 import { createHost, type HostActions, type HostInput, type HostScreen } from './host';
@@ -34,8 +35,6 @@ const TABS: [Tab, string][] = [['map', '地図'], ['people', '人'], ['chat', '�
 type DockItem = [op: string, weight: 'wait' | 'norm' | 'hold'];
 /** 下の並びでは短い名前で出す（押したときの確かめの文は前のまま） */
 const SHORT: Record<string, string> = { reset: '配役に戻す', end: '夜を終える', clear: '新しい夜', csv: '記録を保存' };
-/** 時間の ＋／− の刻み（秒）。段階ごと */
-const TIME_STEP = [5, 10, 60, 30];
 
 const ONI = '<svg class="hq-m" viewBox="-14 -14 28 28" aria-hidden="true"><path d="M-5.5,-4 L-7.5,-12 L-1.5,-6 Z M5.5,-4 L7.5,-12 L1.5,-6 Z" fill="var(--shu)"/><circle r="6.5" fill="var(--shu)"/></svg>';
 const RUN = '<svg class="hq-m" viewBox="-14 -14 28 28" aria-hidden="true"><circle r="6.5" fill="var(--tsuki)"/></svg>';
@@ -124,7 +123,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   const chatCard = make('section', 'hq-card');
   chatCard.append(old('[data-k="chatSet"]'));
 
-  // デッキ：時間（＋−）・鬼と逃走者（＋−）・鬼のマイク・固定の札／そろい具合／夜とやり直し／記録
+  // デッキ：時間・鬼と逃走者・鬼のマイク・固定の札／そろい具合／夜とやり直し／記録
   const durations = old<HTMLDetailsElement>('details.durations');
   const ratio = old<HTMLDetailsElement>('details.ratio');
   durations.open = true;
@@ -133,25 +132,114 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   const timeForm = durations.querySelector('form') as HTMLFormElement;
   const ratioInputs = [...ratio.querySelectorAll('input')] as HTMLInputElement[];
   const ratioForm = ratio.querySelector('form') as HTMLFormElement;
-  const stepRow = (label: string, key: string) =>
-    `<div class="hq-step" data-step="${key}"><span>${label}</span><button type="button" data-d="-1" aria-label="${label}を減らす">−</button>`
-    + `<output class="u"></output><button type="button" data-d="1" aria-label="${label}を増やす">＋</button></div>`;
-  const timeCard = make('section', 'hq-card',
-    `<h2>時間<span data-hq="total"></span></h2>${PHASES.map((p, i) => stepRow(p.id === 'game' ? 'ゲーム' : p.label, `t${i}`)).join('')}`);
-  const ratioCard = make('section', 'hq-card', `<h2>鬼と逃走者</h2>${stepRow('鬼', 'r-oni')}${stepRow('逃走者', 'r-runner')}`);
+  const picker = durationPicker();
+  // 既存フォームの検証と送信を通し、HQでは現在値を1か所だけ表示する。
+  const setValue = (input: HTMLInputElement, form: HTMLFormElement, value: number) => {
+    if (input.disabled || input.value === String(value)) return;
+    input.value = String(value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    form.requestSubmit();
+  };
+  const timeCard = make('section', 'hq-card', '<h2>時間<span data-hq="total"></span></h2>');
+  const timeButtons = PHASES.map((p, i) => {
+    const label = p.id === 'game' ? 'ゲーム時間' : p.label;
+    const button = make('button', 'hq-value');
+    button.type = 'button';
+    button.addEventListener('click', () => picker.open(button, label, Number(timeInputs[i].value), 1,
+      (value) => setValue(timeInputs[i], timeForm, value)));
+    const row = make('div', 'hq-picker-row');
+    const name = make('span', '');
+    name.textContent = label;
+    row.append(name, button);
+    timeCard.append(row);
+    return { button, label };
+  });
+  const ratioCard = make('section', 'hq-card', '<h2>鬼と逃走者</h2>');
+  const ratioSelects = ratioInputs.map((input) => {
+    const label = input.dataset.r === 'oni' ? '鬼の割合' : '逃走者の割合';
+    const select = hqSelect(label, numberOptions(Number(input.min), Number(input.max)), input.value);
+    select.addEventListener('change', () => setValue(input, ratioForm, Number(select.value)));
+    ratioCard.append(pickerRow(label, select));
+    return select;
+  });
   ratioCard.append(old('[data-k="ratioPreview"]'));
   const micCard = make('section', 'hq-card');
   micCard.append(old('.mic-mode:not(.wish-mode):not(.reveal-mode)'));
-  // 配役の決め方（希望を聞く／くじだけ）。無い版の画面では札ごと出さない
   const wishCard = make('section', 'hq-card');
-  const wishMode = old('.wish-mode');
-  if (wishMode) wishCard.append(wishMode);
-  else wishCard.hidden = true;
-  // 配役の出し方（全員同時にドン／タップで自分の／すぐ出す）
+  wishCard.append(old('.wish-mode'));
   const revealCard = make('section', 'hq-card');
-  const revealMode = old('.reveal-mode');
-  if (revealMode) revealCard.append(revealMode);
-  else revealCard.hidden = true;
+  revealCard.append(old('.reveal-mode'));
+  const announceCard = make('section', 'hq-card');
+  announceCard.append(old('.announce-set'));
+  const cast = old('[data-k="cast"]');
+  // HQでは択一の操作をネイティブのピッカーで選ぶ。既存のクリック処理と可否判定を共有する。
+  const exclusive = (group: HTMLElement, attr: string, label: string, showLabel = false) => {
+    const options = [...group.querySelectorAll<HTMLButtonElement>(`button[data-${attr}]`)];
+    const select = hqSelect(label, options.map((b) => [b.getAttribute(`data-${attr}`)!, b.getAttribute('aria-label') || b.textContent!.trim()]), '');
+    group.classList.add('hq-gone');
+    group.after(showLabel ? pickerRow(label, select) : select);
+    select.addEventListener('change', () => {
+      options.find((b) => b.getAttribute(`data-${attr}`) === select.value)?.click();
+    });
+    return () => {
+      const checked = options.find((b) => b.getAttribute('aria-pressed') === 'true');
+      if (checked) {
+        const value = checked.getAttribute(`data-${attr}`)!;
+        if (select.value !== value) select.value = value;
+      }
+      select.disabled = options.every((b) => b.disabled);
+      options.forEach((b, i) => { select.options[i].disabled = b.disabled; });
+    };
+  };
+  const syncChoices = [
+    exclusive(wishCard.querySelector('.seg')!, 'wishmode', '配役の決め方'),
+    exclusive(revealCard.querySelector('.seg')!, 'reveal', '配役の出し方'),
+    exclusive(micCard.querySelector('.seg')!, 'mic', '鬼のマイクの聞き方'),
+    exclusive(announceCard.querySelector('[aria-label="帯に出すもの"]')!, 'show', '帯に出すもの', true),
+    exclusive(announceCard.querySelector('[aria-label="音を鳴らすスマホ"]')!, 'sound', '音を鳴らすスマホ', true),
+    exclusive(chatCard.querySelector('[aria-label="仲間の回線で送れるもの"]')!, 'mode', '仲間の回線で送れるもの', true),
+    exclusive(chatCard.querySelector('[aria-label="牢屋の人が送れるもの"]')!, 'jail', '牢屋の人が送れるもの'),
+    exclusive(cast.querySelector('.cast-sort')!, 'sort', '並べ方', true),
+    exclusive(panel.map.querySelector('[aria-label="時間で縮む回数"]')!, 'shrink-times', '時間で縮む回数'),
+    exclusive(panel.map.querySelector('[aria-label="時間で縮み終えたときの広さ"]')!, 'shrink-final', '時間で縮み終えたときの広さ'),
+    exclusive(panel.map.querySelector('[aria-label="縮む先"]')!, 'shrink-to', '縮む先'),
+  ];
+  const castSelection = cast.querySelector('.cast-pick')!;
+  const roleActions = [...cast.querySelectorAll<HTMLButtonElement>('.cast-roles button')];
+  const roleAction = hqSelect('選んだ人の配役', [
+    ['', '役を指定する', true], ['oni', '鬼に指名'], ['runner', '逃走者に指名'], ['lot', '指名を外す'],
+  ], '');
+  roleActions[0].parentElement!.classList.add('hq-gone');
+  roleActions[0].parentElement!.after(roleAction);
+  roleAction.addEventListener('change', () => {
+    roleActions.find((button) => button.dataset.cast === roleAction.value)?.click();
+    roleAction.value = '';
+  });
+  const selection = hqSelect('人をまとめて選ぶ', [['', '選び方を選択'], ['top', '上から指定人数'], ['all', '全員'], ['none', '選択を解除']], '');
+  for (const b of castSelection.querySelectorAll('button')) b.classList.add('hq-gone');
+  castSelection.append(selection);
+  selection.addEventListener('change', () => {
+    castSelection.querySelector<HTMLButtonElement>(`[data-cast="${selection.value}"]`)?.click();
+    selection.value = '';
+  });
+  const missionFree = panel.people.querySelector<HTMLElement>('[data-k="mission"]')!;
+  const freeAll = missionFree.querySelector<HTMLButtonElement>('[data-mission="all"]')!;
+  const freeSome = missionFree.querySelector<HTMLButtonElement>('[data-mission="n"]')!;
+  const freeNumber = missionFree.querySelector<HTMLInputElement>('[data-k="missionN"]')!;
+  for (const button of missionFree.querySelectorAll('[data-mission]')) button.classList.add('hq-gone');
+  freeNumber.closest('label')!.classList.add('hq-gone');
+  const freeCount = hqSelect('牢屋から出す人数', [['all', '全員']], 'all');
+  const free = make('button', '');
+  free.type = 'button';
+  free.textContent = '牢屋から出す';
+  free.addEventListener('click', () => {
+    if (freeCount.value === 'all') freeAll.click();
+    else {
+      freeNumber.value = freeCount.value;
+      freeSome.click();
+    }
+  });
+  missionFree.firstElementChild!.after(pickerRow('出す人数', freeCount), free);
   // 司令塔：入れる・外すと、4枚の札、いまの司令塔（指名・くじで引き直す）
   const LEAD_CARDS: [key: 'seen' | 'dark' | 'expose' | 'restore', title: string, body: string][] = [
     ['seen', '司令塔は相手に見える', '見る代わりに見られる。司令塔の名前と場所が、ゲームの間ずっと全員の画面に光る'],
@@ -166,17 +254,21 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
     + LEAD_CARDS.map(([k, t, b]) => `<button type="button" class="hq-switch" data-lead="${k}" role="switch" aria-checked="false"><b>${t}</b><span>${b}</span></button>`).join('')
     + '<p class="note">鬼は捕まらないので、鬼の司令塔は落ちない（「相手に見える」だけが代わりの重り）。</p>'
     + [['oni', '鬼の司令塔'], ['runner', '逃走者の司令塔']].map(([r, t]) =>
-      `<div class="hq-seat" data-seat="${r}"><label><span>${t}</span><select aria-label="${t}"></select></label><button type="button" data-draw="${r}">くじで引き直す</button></div>`).join('')
+      `<div class="hq-seat" data-seat="${r}"><label><span>${t}</span><select aria-label="${t}"></select></label></div>`).join('')
     + '<p class="note" data-hq="leadNote"></p></div>');
   leadCard.addEventListener('click', (e) => {
     const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
     if (!b) return;
     if (b.dataset.lead) actions.command('lead', { lead: { [b.dataset.lead]: b.getAttribute('aria-checked') !== 'true' } });
-    else if (b.dataset.draw) actions.command('lead-draw', { role: b.dataset.draw as 'oni' | 'runner' });
   });
   leadCard.addEventListener('change', (e) => {
-    const sel = e.target as HTMLSelectElement;
-    if (sel.tagName === 'SELECT' && sel.value) actions.command('lead-pick', { pid: sel.value });
+    const sel = e.target;
+    if (!(sel instanceof HTMLSelectElement) || !sel.value) return;
+    if (sel.value === ':draw') {
+      const role = sel.closest<HTMLElement>('[data-seat]')!.dataset.seat as 'oni' | 'runner';
+      sel.value = sel.dataset.current ?? '';
+      actions.command('lead-draw', { role });
+    } else actions.command('lead-pick', { pid: sel.value });
   });
   const sec = (ms: number) => `${ms / 1000}秒`;
   const fixed = make('section', 'hq-card hq-fixed',
@@ -202,7 +294,20 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   leave.hidden = !onLeave;
   leave.addEventListener('click', () => onLeave?.());
   rec.append(csv, old('[data-k="foot"]'), leave);
-  panel.deck.append(timeCard, ratioCard, wishCard, revealCard, leadCard, micCard, chatCard, fixed, ready, night, rec, durations, ratio);
+  const group = (label: string, ...cards: HTMLElement[]) => {
+    const details = make('details', 'hq-settings-group');
+    const summary = make('summary', '');
+    summary.textContent = label;
+    const content = make('div', 'hq-settings-content');
+    content.append(...cards);
+    details.append(summary, content);
+    return details;
+  };
+  panel.deck.append(
+    group('時間と配役', timeCard, ratioCard, wishCard, revealCard, cast),
+    group('司令塔・通信・通知', leadCard, micCard, chatCard, announceCard),
+    group('運営と記録', ready, night, rec, fixed), durations, ratio,
+  );
   durations.classList.add('hq-gone');
   ratio.classList.add('hq-gone');
 
@@ -210,20 +315,19 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   const reject = old('[data-k="reject"]');
   const strays = [...el.children].filter((c) => c !== reject && !c.classList.contains('hq-gone')) as HTMLElement[];
   if (strays.length) {
-    const misc = make('section', 'hq-card', '<h2>そのほか</h2>');
-    misc.append(...strays);
-    panel.deck.append(misc);
+    panel.deck.append(group('そのほか', ...strays));
   }
-  el.append(head, rail, now, strip, reject, body, dock, tabs);
+  el.append(head, rail, now, strip, reject, body, dock, tabs, picker.el);
   // 夜の予定：スマホはデッキのいちばん上、幅の広い画面は全幅の帯（3列の上）
   const nightPal = createNightPalette((plan) => actions.command('night-plan', { night: plan }), {
     apply: (preset, durations) => actions.command('preset-apply', { preset, ...(durations ? { durations } : {}) }),
     durations: (durations) => actions.command('durations', { durations }),
-  });
+  }, picker.open);
   // プリセット：夜の予定のすぐ下
   const presetPal = createPresetPalette(
     (presets) => actions.command('presets', { presets }),
     (preset) => actions.command('preset-apply', { preset }),
+    picker.open,
   );
   const wide = matchMedia('(min-width: 1024px)');
   const placeNight = () => {
@@ -236,29 +340,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
   if (termEl) el.append(termEl);
 
   // ---------- 押したとき ----------
-  /** ＋−：欄の値を変えて、前の画面の「変える」をそのまま押す（確かめ・送り方は前のしくみ） */
-  const bump = (input: HTMLInputElement, form: HTMLFormElement, by: number, min: number, max: number) => {
-    if (input.disabled) return;
-    const v = Math.min(max, Math.max(min, Math.round(Number(input.value) || 0) + by));
-    if (String(v) === input.value) return;
-    input.value = String(v);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    form.requestSubmit();
-  };
-  panel.deck.addEventListener('click', (e) => {
-    const b = (e.target as HTMLElement).closest('button[data-d]') as HTMLButtonElement | null;
-    const row = b?.closest('[data-step]') as HTMLElement | null;
-    if (!b || !row) return;
-    const key = row.dataset.step!;
-    const d = Number(b.dataset.d);
-    if (key.startsWith('t')) {
-      const i = Number(key.slice(1));
-      bump(timeInputs[i], timeForm, d * TIME_STEP[i], TIME_STEP[i], 3600);
-    } else {
-      const input = ratioInputs.find((x) => x.dataset.r === key.slice(2));
-      if (input) bump(input, ratioForm, d, Number(input.min) || 1, Number(input.max) || 99);
-    }
-  });
   let tab: Tab = 'deck';
   let tabPicked = false;
   const showTab = (t: Tab) => {
@@ -387,6 +468,14 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
       const st = hostStatus(game, serverNow);
       const cap = host.capture;
       const jailed = cap ? cap.runners.filter((r) => r.caught).length : 0;
+      once('freeCount', String(jailed), () => {
+        const value = freeCount.value;
+        freeCount.replaceChildren(new Option('全員', 'all'));
+        for (const [key, label] of numberOptions(1, jailed, '人')) freeCount.add(new Option(label, key));
+        freeCount.value = value !== 'all' && freeCount.querySelector(`option[value="${value}"]`) ? value : 'all';
+      });
+      free.disabled = freeCount.disabled = freeAll.disabled;
+      missionFree.hidden = freeAll.disabled;
       const label =
         game.stage === 'lobby' ? '待合室'
         : game.stage === 'assigned' ? '配役済み'
@@ -477,23 +566,25 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
         lobbyNote.textContent = `いま ${host.total}人が入っている。名前は配役のあとに並ぶ。`;
       });
 
-      // デッキ：＋−の表示
+      // デッキの現在値と操作可否は既存フォームに合わせる。
       const total = game.durations.reduce((a, b) => a + b, 0);
       text('total', `1ラウンド ${formatClock(total)}`);
       timeInputs.forEach((inp, i) => {
         once(`tv:${i}`, `${inp.value}|${inp.disabled}`, () => {
-          const row = timeCard.querySelector(`[data-step="t${i}"]`) as HTMLElement;
-          (row.querySelector('output') as HTMLElement).textContent = formatClock(Math.round(Number(inp.value) || 0) * 1000);
-          for (const b of row.querySelectorAll('button')) b.disabled = inp.disabled;
+          const { button, label } = timeButtons[i];
+          button.textContent = formatClock(Number(inp.value) * 1000);
+          button.setAttribute('aria-label', `${label} ${button.textContent} を選ぶ`);
+          button.disabled = inp.disabled;
         });
       });
-      ratioInputs.forEach((inp) => {
-        once(`rv:${inp.dataset.r}`, `${inp.value}|${inp.disabled}`, () => {
-          const row = ratioCard.querySelector(`[data-step="r-${inp.dataset.r}"]`) as HTMLElement;
-          (row.querySelector('output') as HTMLElement).textContent = inp.value;
-          for (const b of row.querySelectorAll('button')) b.disabled = inp.disabled;
-        });
+      ratioInputs.forEach((inp, i) => {
+        const select = ratioSelects[i];
+        if (select.value !== inp.value) select.value = inp.value;
+        select.disabled = inp.disabled;
       });
+      syncChoices.forEach((sync) => sync());
+      roleActions.forEach((button, i) => { roleAction.options[i + 1].disabled = button.disabled; });
+      roleAction.disabled = roleActions.every((button) => button.disabled);
 
       // デッキ：司令塔
       const lr = game.lead;
@@ -514,8 +605,9 @@ export function createHQ(actions: HostActions, sensors?: Sensors, onLeave?: () =
             const cur = hl?.[role]?.pid ?? '';
             sel.innerHTML = (cur ? '' : `<option value="">${side.length ? 'まだいない' : '配役のあとに決まる'}</option>`)
               + side.map((c) => `<option value="${esc(c.pid)}"${c.pid === cur ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+            sel.dataset.current = cur;
+            if (side.length >= 2) sel.add(new Option('くじで引き直す', ':draw'));
             sel.disabled = side.length === 0;
-            (row.querySelector('button') as HTMLButtonElement).disabled = side.length < 2;
           }
         });
         text('leadNote', !lr.on ? '' : hl ? '司令塔は配役のたびにくじで決まる。名前を選ぶと指名で替えられる（試合中でも）。' : '配役すると、鬼の側・逃走者の側からくじで1人ずつ決まる。そのあと指名で替えられる。');

@@ -4,7 +4,9 @@ import { LEAD_RULE_KEYS, type LeadRuleKey } from '../../shared/lead';
 import { basePreset, cleanPreset, cleanPresets, GAME_MODES, newPresetId, PRESET_NAME_MAX, PRESETS_MAX, presetSummary, type GameMode, type Preset } from '../../shared/preset';
 import { RATIO_MAX, type MicMode, type RevealMode, type WishMode } from '../../shared/rules';
 import { SHRINK_FINAL_AREAS, SHRINK_MAX_TIMES, type ShrinkTo } from '../../shared/shrink';
-import { bumpPart, partRows } from './night';
+import { ROUND_PARTS } from '../../shared/night';
+import { partMinimum, partRows, setPart } from './night';
+import { hqSelect, numberOptions, pickerRow, type OpenDuration, type PickerOption } from './hq-picker';
 
 /**
  * ルールのプリセット（本部）。デッキ全部の組み合わせに名前を付けて、先に作っておく場所。
@@ -31,13 +33,12 @@ function mk<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', text = ''):
   if (text) e.textContent = text;
   return e;
 }
-function btn(text: string, act: string, extra: Record<string, string> = {}, pressed?: boolean, label?: string): HTMLButtonElement {
+function btn(text: string, act: string, extra: Record<string, string> = {}, pressed?: boolean): HTMLButtonElement {
   const b = mk('button', '', text);
   b.type = 'button';
   b.dataset.act = act;
   for (const [k, v] of Object.entries(extra)) b.dataset[k] = v;
   if (pressed !== undefined) b.setAttribute('aria-pressed', String(pressed));
-  if (label) b.setAttribute('aria-label', label);
   return b;
 }
 const copy = (p: Preset): Preset => JSON.parse(JSON.stringify(p)) as Preset;
@@ -61,7 +62,7 @@ const LEAD_NAME: Record<LeadRuleKey, string> = {
   restore: '助ければ元に戻る',
 };
 
-export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: string) => void): PresetPalette {
+export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: string) => void, openDuration: OpenDuration): PresetPalette {
   const el = mk('section', 'np pp');
   el.setAttribute('aria-label', 'プリセット');
   const head = mk('header', 'np-head');
@@ -98,26 +99,13 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
   };
 
   // ---------- 描く ----------
-  const seg = <T extends string>(label: string, act: string, id: string, now: T, items: [T, string, boolean?][]) => {
-    const row = mk('div', 'np-seg-btns');
-    row.append(mk('span', 'np-seg-l', label));
-    for (const [v, name, off] of items) {
-      const b = btn(name, act, { id, v }, v === now);
-      if (off) b.disabled = true;
-      row.append(b);
-    }
-    return row;
+  const choice = (label: string, act: string, id: string, value: string, items: readonly PickerOption[], extra: Record<string, string> = {}) => {
+    const select = hqSelect(label, items, value);
+    Object.assign(select.dataset, extra, { act, id });
+    return pickerRow(label, select);
   };
-  const stepper = (label: string, act: string, id: string, value: string, extra: Record<string, string>, downOff: boolean, upOff: boolean) => {
-    const row = mk('div', 'np-part');
-    const dn = btn('−', act, { id, ...extra, d: '-1' }, undefined, `${label}を減らす`);
-    dn.disabled = downOff;
-    const up = btn('＋', act, { id, ...extra, d: '1' }, undefined, `${label}を増やす`);
-    up.disabled = upOff;
-    row.append(mk('span', 'np-part-l', label), dn, mk('output', 'u', value), up);
-    row.dataset.step = '';
-    return row;
-  };
+  const seg = <T extends string>(label: string, act: string, id: string, value: T, items: [T, string, boolean?][]) =>
+    choice(label, act, id, value, items);
   const section = (title: string, key: Section, id: string, ...kids: HTMLElement[]) => {
     const box = mk('div', 'pp-sec');
     const h = mk('div', 'pp-sec-h');
@@ -137,17 +125,25 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
     name.setAttribute('aria-label', 'プリセットの名前');
     ed.append(name);
     ed.append(
-      section('遊び方', 'mode', p.id, seg<GameMode>('', 'mode', p.id, p.mode, GAME_MODES.map((m) => [m.mode, m.ready ? m.name : `${m.name}（まだ）`, !m.ready]))),
+      section('遊び方', 'mode', p.id, seg<GameMode>('モード', 'mode', p.id, p.mode, GAME_MODES.map((m) => [m.mode, m.ready ? m.name : `${m.name}（まだ）`, !m.ready]))),
     );
     if (GAME_MODES.some((m) => !m.ready)) ed.lastElementChild!.append(mk('p', 'np-hint', '増やし鬼・氷鬼の決まりはまだアプリに無い（いまはドロケイで動く）'));
-    ed.append(section('時間', 'round', p.id, partRows(p.round, { id: p.id })));
+    ed.append(section('時間', 'round', p.id, partRows(p.round, (button, index, seconds) => {
+      openDuration(button, ROUND_PARTS[index], seconds, partMinimum(index), (value) => {
+        const next = presets.map(copy);
+        const preset = next.find((item) => item.id === p.id);
+        if (!preset) return;
+        setPart(preset.round, index, value);
+        change(next);
+      });
+    })));
     ed.append(
       section(
         '鬼と逃走者',
         'ratio',
         p.id,
-        stepper('鬼', 'ratio', p.id, String(p.ratio.oni), { r: 'oni' }, p.ratio.oni <= 1, p.ratio.oni >= RATIO_MAX),
-        stepper('逃走者', 'ratio', p.id, String(p.ratio.runner), { r: 'runner' }, p.ratio.runner <= 1, p.ratio.runner >= RATIO_MAX),
+        choice('鬼の割合', 'ratio', p.id, String(p.ratio.oni), numberOptions(1, RATIO_MAX), { r: 'oni' }),
+        choice('逃走者の割合', 'ratio', p.id, String(p.ratio.runner), numberOptions(1, RATIO_MAX), { r: 'runner' }),
       ),
     );
     ed.append(
@@ -184,7 +180,7 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
         '範囲の縮み',
         'shrink',
         p.id,
-        stepper('時間で縮む回数', 'shrink-times', p.id, `${p.shrink.times}回`, {}, p.shrink.times <= 0, p.shrink.times >= SHRINK_MAX_TIMES),
+        choice('時間で縮む回数', 'shrink-times', p.id, String(p.shrink.times), numberOptions(0, SHRINK_MAX_TIMES, '回')),
         seg<string>('最後の広さ', 'shrink-area', p.id, String(p.shrink.finalArea), SHRINK_FINAL_AREAS.map((a) => [String(a), `${Math.round(a * 100)}%`])),
         seg<ShrinkTo>('縮む先', 'shrink-to', p.id, p.shrink.to, [['mid', '真ん中'], ['random', '毎回どこか']]),
         seg<string>('ミッション成功で縮む', 'shrink-mission', p.id, String(p.shrink.mission), [['true', '入'], ['false', '切']]),
@@ -193,11 +189,13 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
     const ops = mk('div', 'np-ops');
     const put = btn('デッキへ入れる', 'apply', { id: p.id });
     put.disabled = !canDeck() || !game;
-    ops.append(put, btn('いまのデッキを取り込む', 'from-game', { id: p.id }), btn('複製', 'dup', { id: p.id }));
-    const del = btn('消す', 'del', { id: p.id });
-    del.classList.add('np-del');
-    del.disabled = presets.length <= 1;
-    ops.append(del);
+    const action = hqSelect('選択中のプリセットの操作', [
+      ['', 'その他の操作', true], ['from-game', 'いまのデッキを取り込む', !game],
+      ['dup', '複製', presets.length >= PRESETS_MAX], ['del', '削除', presets.length <= 1],
+    ], '');
+    action.dataset.act = 'preset-action';
+    action.dataset.id = p.id;
+    ops.append(put, action);
     ed.append(ops);
     if (!canDeck()) ed.append(mk('p', 'np-hint', 'デッキへ入れられるのは、待合室・配役のあと・結果発表の間だけ'));
     return ed;
@@ -209,22 +207,23 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
     toggle.textContent = open ? '閉じる' : '組む';
     toggle.setAttribute('aria-expanded', String(!!open));
     list.replaceChildren();
-    for (const p of presets) {
+    if (open) {
       const li = mk('li', 'np-row pp-row');
-      const pick = mk('button', 'np-pick pp-pick');
-      pick.type = 'button';
-      pick.dataset.act = 'pick';
-      pick.dataset.id = p.id;
-      pick.setAttribute('aria-expanded', String(p.id === selected));
-      pick.append(mk('span', 'np-title', p.name), mk('span', 'pp-sum', presetSummary(p)));
-      li.append(pick);
-      if (p.id === selected && open) li.append(editor(p));
+      const select = hqSelect('編集するプリセット', [['', '選ぶ', true], ...presets.map((p) => [p.id, p.name] as const)], selected ?? '');
+      select.dataset.act = 'pick';
+      select.disabled = presets.length === 0;
+      li.append(pickerRow('編集するプリセット', select));
+      const current = presets.find((p) => p.id === selected);
+      if (current) li.append(mk('p', 'np-note', presetSummary(current)), editor(current));
       list.append(li);
     }
     foot.replaceChildren();
-    const add = btn('＋ 新しいプリセット', 'new');
-    add.disabled = presets.length >= PRESETS_MAX;
-    foot.append(add, btn('テキストで書き出す', 'io-out', {}, ioMode === 'out'), btn('テキストを貼って取り込む', 'io-in', {}, ioMode === 'in'));
+    const action = hqSelect('プリセットの操作', [
+      ['', '操作を選ぶ', true], ['new', '新しいプリセット', presets.length >= PRESETS_MAX],
+      ['io-out', 'テキストで書き出す'], ['io-in', 'テキストから取り込む'],
+    ], '');
+    action.dataset.act = 'list-action';
+    foot.append(action);
     io.hidden = !ioMode;
     if (ioMode) {
       io.replaceChildren();
@@ -244,13 +243,11 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
   };
 
   // ---------- 押したとき ----------
-  el.addEventListener('click', (e) => {
-    const b = (e.target as HTMLElement).closest('button[data-act]') as HTMLButtonElement | null;
-    if (!b || b.disabled) return;
-    const act = b.dataset.act!;
+  const actOn = (b: HTMLButtonElement | HTMLSelectElement) => {
+    if (b.disabled) return;
+    const act = ['list-action', 'preset-action'].includes(b.dataset.act ?? '') ? b.value : b.dataset.act;
     const id = b.dataset.id;
-    const d = Number(b.dataset.d ?? 0);
-    const v = b.dataset.v ?? '';
+    const v = b.value;
     const next = presets.map(copy);
     const p = next.find((x) => x.id === id);
     switch (act) {
@@ -258,7 +255,7 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
         open = !open;
         return render();
       case 'pick':
-        selected = selected === id ? null : (id ?? null);
+        selected = b.value || null;
         open = true;
         return render();
       case 'io-out':
@@ -317,12 +314,9 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
         case 'mode':
           p.mode = v as GameMode;
           break;
-        case 'part':
-          bumpPart(p.round, Number(b.dataset.i), d);
-          break;
         case 'ratio': {
           const k = b.dataset.r as 'oni' | 'runner';
-          p.ratio[k] = Math.min(RATIO_MAX, Math.max(1, p.ratio[k] + d));
+          p.ratio[k] = Number(v);
           break;
         }
         case 'wish':
@@ -346,7 +340,7 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
           p.chat.jail = v as ChatJail;
           break;
         case 'shrink-times':
-          p.shrink.times = Math.min(SHRINK_MAX_TIMES, Math.max(0, p.shrink.times + d));
+          p.shrink.times = Number(v);
           break;
         case 'shrink-area':
           p.shrink.finalArea = Number(v);
@@ -403,10 +397,15 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
           return;
       }
     change(next);
+  };
+  el.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-act]');
+    if (button) actOn(button);
   });
-  el.addEventListener('change', (e) => {
-    const t = e.target as HTMLInputElement;
-    if (!t.classList.contains('np-name')) return;
+  el.addEventListener('change', (event) => {
+    const t = event.target;
+    if (t instanceof HTMLSelectElement) return actOn(t);
+    if (!(t instanceof HTMLInputElement) || !t.classList.contains('np-name')) return;
     const next = presets.map(copy);
     const p = next.find((x) => x.id === t.dataset.id);
     const name = t.value.trim().slice(0, PRESET_NAME_MAX);
@@ -435,7 +434,7 @@ export function createPresetPalette(send: (list: Preset[]) => void, apply: (id: 
         if (selected && !presets.some((p) => p.id === selected)) selected = null;
         dirty = true;
       }
-      const typing = (document.activeElement as HTMLElement | null)?.closest?.('.pp input, .pp textarea');
+      const typing = (document.activeElement as HTMLElement | null)?.closest?.('.pp input, .pp select, .pp textarea');
       if (dirty && !typing) render();
     },
   };

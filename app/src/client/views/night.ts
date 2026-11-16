@@ -14,10 +14,8 @@ import {
   blockSecs,
   clockText,
   defaultRound,
-  ROUND_PART_MAX,
   ROUND_PART_MIN,
   ROUND_PARTS,
-  ROUND_STEP,
   roundParts,
   sameAsDeck,
   placeNight,
@@ -29,6 +27,7 @@ import {
 } from '../../shared/night';
 import { presetSummary, type Preset } from '../../shared/preset';
 import { PHASES } from '../../shared/rules';
+import { hqSelect, numberOptions, pickerRow, type OpenDuration, type PickerOption } from './hq-picker';
 
 /**
  * 夜の予定のパレット（本部）。試合の前から夜全体を組んで、不備をつぶすための場所。
@@ -36,9 +35,9 @@ import { PHASES } from '../../shared/rules';
  * - 上：地図（横軸＝時計の時刻）。1段目＝ブロック（幅＝長さの比）、2段目＝プレ・本番の中身（配役・4段・結果発表、実際の比）。
  *   終わっていたい時刻は破線、いまの時刻は月白の線
  * - 不備：終わりが遅い・デッキの時間がブロックに収まらない など（朱）
- * - 下：時刻表（1行＝1ブロック）。行で ＋−、押すと見出し・種類・並び・消すを開く。
- *   プレ・本番は中身を1段ずつ ＋−（長さは中身の合計）。中身はデッキの時間へそのまま入れられる
- * - まとめて：同じ種類のブロック（本番が2つ など）を一度に ＋−。開始をずらすと全部がずれる
+ * - 下：時刻表（1行＝1ブロック）。行を開くと見出し・種類・並びを編集できる。
+ *   プレ・本番は中身を1段ずつ選択（長さは中身の合計）。中身はデッキの時間へそのまま入れられる
+ * - まとめて：同じ種類のブロック（本番が2つ など）を一度に変更。開始をずらすと全部がずれる
  * 色は道具なので無彩色。色が付くのは不備（朱）だけ
  */
 
@@ -70,29 +69,23 @@ const clone = (p: NightPlan): NightPlan => ({
   blocks: p.blocks.map((b) => ({ ...b, ...(b.round ? { round: { ...b.round, phases: [...b.round.phases] } } : {}) })),
 });
 const clampMins = (n: number) => Math.min(NIGHT_MINS_MAX, Math.max(NIGHT_MINS_MIN, n));
-const clampPart = (n: number, min: number) => Math.min(ROUND_PART_MAX, Math.max(min, n));
 const DAY = 24 * 60;
 
-/** 中身（配役・4段・結果発表）を1段ずつ：段の名前／頭からの経過／−／長さ／＋。attrs はボタンに付ける印。readonly なら ＋− を出さない */
-export function partRows(r: NightRound, attrs: Record<string, string>, readonly = false): HTMLElement {
+/** 配役・4段・結果発表の現在値。変更できる段だけ時間ピッカーを開ける。 */
+export function partRows(r: NightRound, edit?: (button: HTMLButtonElement, index: number, seconds: number) => void): HTMLElement {
   const box = mk('div', 'np-parts');
   let t = 0;
   roundParts(r).forEach((sec, i) => {
     const row = mk('div', 'np-part');
-    row.dataset.i = String(i);
+    row.dataset.ro = '';
     const at = mk('span', 'np-part-at u', `+${clockText(t)}`);
     t += sec;
-    const min = i >= 1 && i <= PHASES.length ? 1 : ROUND_PART_MIN;
-    if (readonly) {
-      row.dataset.ro = '';
-      row.append(mk('span', 'np-part-l', ROUND_PARTS[i]), at, mk('output', 'u', clockText(sec)));
-    } else {
-      const dn = btn('−', 'part', { ...attrs, i: String(i), d: String(-ROUND_STEP[i]) }, `${ROUND_PARTS[i]}を${ROUND_STEP[i]}秒短く`);
-      dn.disabled = sec <= min;
-      const up = btn('＋', 'part', { ...attrs, i: String(i), d: String(ROUND_STEP[i]) }, `${ROUND_PARTS[i]}を${ROUND_STEP[i]}秒長く`);
-      up.disabled = sec >= ROUND_PART_MAX;
-      row.append(mk('span', 'np-part-l', ROUND_PARTS[i]), at, dn, mk('output', 'u', clockText(sec)), up);
+    const value = edit ? btn(clockText(sec), 'part-time', {}, `${ROUND_PARTS[i]} ${clockText(sec)} を選ぶ`) : mk('output', 'u', clockText(sec));
+    if (value instanceof HTMLButtonElement) {
+      value.classList.add('hq-value');
+      value.addEventListener('click', () => edit?.(value, i, sec));
     }
+    row.append(mk('span', 'np-part-l', ROUND_PARTS[i]), at, value);
     box.append(row);
   });
   const total = mk('div', 'np-part np-part-total');
@@ -101,12 +94,14 @@ export function partRows(r: NightRound, attrs: Record<string, string>, readonly 
   return box;
 }
 
-/** 中身の段を1つ動かす（i：0＝配役、1〜4＝デッキの4段、5＝結果発表） */
-export function bumpPart(r: NightRound, i: number, d: number): void {
-  const clamp = (n: number, min: number) => Math.min(ROUND_PART_MAX, Math.max(min, n));
-  if (i === 0) r.cast = clamp(r.cast + d, ROUND_PART_MIN);
-  else if (i === PHASES.length + 1) r.result = clamp(r.result + d, ROUND_PART_MIN);
-  else r.phases[i - 1] = clamp(r.phases[i - 1] + d, 1);
+export function setPart(r: NightRound, index: number, seconds: number): void {
+  if (index === 0) r.cast = seconds;
+  else if (index === PHASES.length + 1) r.result = seconds;
+  else r.phases[index - 1] = seconds;
+}
+
+export function partMinimum(index: number): number {
+  return index > 0 && index <= PHASES.length ? 1 : ROUND_PART_MIN;
 }
 
 export interface NightDeck {
@@ -116,7 +111,7 @@ export interface NightDeck {
   durations(ms: number[]): void;
 }
 
-export function createNightPalette(send: (plan: NightPlan) => void, deck: NightDeck): NightPalette {
+export function createNightPalette(send: (plan: NightPlan) => void, deck: NightDeck, openDuration: OpenDuration): NightPalette {
   const el = mk('section', 'np');
   el.setAttribute('aria-label', '夜の予定');
   const head = mk('header', 'np-head');
@@ -144,7 +139,7 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
   let selected: string | null = null;
   let localAt = 0;
   let sendTimer: ReturnType<typeof setTimeout> | null = null;
-  let open: boolean | null = null;
+  let open = false;
   let stage: string | undefined;
   let presets: Preset[] = [];
   /** プレ・本番の長さを分に丸めて持っておく（詳細なしに戻したときの長さ。長さは中身の合計） */
@@ -156,6 +151,13 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
   /** プレ・本番を足すときのプリセット：名前に「プレ」が入っているもの／入っていないもの */
   const presetFor = (kind: NightKind) =>
     (kind === 'pre' ? presets.find((x) => x.name.includes('プレ')) : presets.find((x) => !x.name.includes('プレ')))?.id ?? presets[0]?.id ?? null;
+
+  const choose = (label: string, items: readonly PickerOption[], value: string, act: string, attrs: Record<string, string> = {}) => {
+    const select = hqSelect(label, items, value);
+    Object.assign(select.dataset, attrs, { act });
+    return select;
+  };
+  const kindOptions = NIGHT_KINDS.map((k) => [k.kind, k.name] as const);
 
   const change = (next: NightPlan) => {
     plan = syncMins(next);
@@ -201,16 +203,13 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
     const inner = mk('div', 'np-lane np-inner');
     const bad = new Set(nightIssues(plan, presets).map((i) => i.id));
     for (const b of blocks) {
-      const box = mk('button', 'np-blk');
-      box.type = 'button';
-      box.dataset.act = 'pick';
-      box.dataset.id = b.id;
+      const box = mk('span', 'np-blk');
       box.dataset.kind = b.kind;
-      if (b.id === selected) box.setAttribute('aria-pressed', 'true');
+      box.toggleAttribute('data-selected', b.id === selected);
       if (bad.has(b.id)) box.dataset.bad = '';
       box.style.left = x(b.from);
       box.style.width = w(b.to - b.from);
-      box.setAttribute('aria-label', `${hhmm(b.from)}から${clockText(blockSecs(b, presets))} ${b.title || kindInfo(b.kind).name}`);
+      box.title = `${hhmm(b.from)}から ${b.title || kindInfo(b.kind).name}`;
       const lab = mk('span', 'np-blk-l', b.title || kindInfo(b.kind).name);
       box.append(lab);
       lane.append(box);
@@ -264,17 +263,7 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
   /** プレ・本番：プリセットを選ぶ／このブロックだけ時間を変える／詳細なし。デッキへ入れる・同じ種類へまとめて */
   const roundEditor = (b: PlacedBlock) => {
     const box = mk('div', 'np-round');
-    const row = mk('div', 'np-seg-btns np-presets');
-    row.append(mk('span', 'np-seg-l', 'プリセット'));
-    const none = btn('なし', 'preset', { id: b.id, p: '' });
-    if (!b.preset) none.setAttribute('aria-pressed', 'true');
-    row.append(none);
-    for (const x of presets) {
-      const pb = btn(x.name, 'preset', { id: b.id, p: x.id });
-      if (b.preset === x.id) pb.setAttribute('aria-pressed', 'true');
-      row.append(pb);
-    }
-    box.append(row);
+    box.append(pickerRow('プリセット', choose('プリセット', [['', 'なし'], ...presets.map((x) => [x.id, x.name] as const)], b.preset ?? '', 'preset', { id: b.id })));
     const pre = b.preset ? (presets.find((x) => x.id === b.preset) ?? null) : null;
     if (pre) box.append(mk('p', 'np-hint', presetSummary(pre)));
     const own = mk('div', 'np-ops');
@@ -283,8 +272,16 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
     box.append(own);
     if (b.round) {
       if (pre) box.append(mk('p', 'np-hint', 'このブロックだけの時間（ほかの札はプリセットのまま）'));
-      box.append(partRows(b.round, { id: b.id }));
-    } else if (pre) box.append(partRows(pre.round, {}, true));
+      box.append(partRows(b.round, (button, index, seconds) => {
+        openDuration(button, ROUND_PARTS[index], seconds, partMinimum(index), (value) => {
+          const next = clone(plan);
+          const round = next.blocks.find((block) => block.id === b.id)?.round;
+          if (!round) return;
+          setPart(round, index, value);
+          change(next);
+        });
+      }));
+    } else if (pre) box.append(partRows(pre.round));
     const r = blockRound(b, presets);
     const ops = mk('div', 'np-ops');
     if (pre || r) {
@@ -326,7 +323,7 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         if (sameAsDeck(r, durations)) mins.append(mk('span', 'np-deck', 'デッキ'));
         mins.append(mk('output', 'u np-len', clockText(blockSecs(b, presets))));
       } else {
-        mins.append(btn('−', 'mins', { id: b.id, d: '-1' }, `${b.title}を1分短く`), mk('output', 'u', `${b.mins}分`), btn('＋', 'mins', { id: b.id, d: '1' }, `${b.title}を1分長く`));
+        mins.append(choose(`${b.title || kindInfo(b.kind).name}の長さ`, numberOptions(NIGHT_MINS_MIN, NIGHT_MINS_MAX, '分'), String(b.mins), 'mins', { id: b.id }));
       }
       li.append(pick, mins);
       if (b.id === selected) {
@@ -339,22 +336,13 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         name.dataset.id = b.id;
         name.className = 'np-name';
         name.setAttribute('aria-label', '見出し');
-        const kindRow = mk('div', 'np-seg-btns');
-        for (const k of NIGHT_KINDS) {
-          const kb = btn(k.name, 'kind', { id: b.id, kind: k.kind });
-          if (k.kind === b.kind) kb.setAttribute('aria-pressed', 'true');
-          kindRow.append(kb);
-        }
+        const kindRow = pickerRow('種類', choose('予定の種類', kindOptions, b.kind, 'kind', { id: b.id }));
+        const move = pickerRow('並び順', choose('予定の並び順', blocks.map((_, index) => [String(index), `${index + 1}番目`]), String(i), 'move', { id: b.id }));
         const ops = mk('div', 'np-ops');
-        const up = btn('前へ', 'move', { id: b.id, d: '-1' });
-        up.disabled = i === 0;
-        const down = btn('後ろへ', 'move', { id: b.id, d: '1' });
-        down.disabled = i === blocks.length - 1;
         const del = btn('消す', 'del', { id: b.id });
         del.classList.add('np-del');
-        if (r) ops.append(up, down, del);
-        else ops.append(up, down, btn('−5分', 'mins', { id: b.id, d: '-5' }), btn('＋5分', 'mins', { id: b.id, d: '5' }), del);
-        ed.append(name, kindRow);
+        ops.append(del);
+        ed.append(name, kindRow, move);
         if (kindInfo(b.kind).round) ed.append(roundEditor(b));
         ed.append(ops);
         li.append(ed);
@@ -373,65 +361,39 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
     for (const k of NIGHT_KINDS) {
       const n = counts.get(k.kind);
       if (!n) continue;
-      const row = mk('div', 'np-kind-row');
+      const label = `${k.name}${n > 1 ? `（${n}件）` : ''}`;
       if (k.round) {
-        // プレ・本番：まとめてそろえるのはプリセット（このブロックだけの時間も外す）
-        row.classList.add('np-kind-presets');
-        row.append(mk('span', '', `${k.name}${n > 1 ? ` ×${n}` : ''}を全部`));
-        for (const x of presets) {
-          const pb = btn(x.name, 'kind-preset', { kind: k.kind, p: x.id });
-          if (plan.blocks.every((b) => b.kind !== k.kind || (b.preset === x.id && !b.round))) pb.setAttribute('aria-pressed', 'true');
-          row.append(pb);
-        }
-      } else {
-        row.append(
-          mk('span', '', `${k.name}${n > 1 ? ` ×${n}` : ''}`),
-          btn('−', 'kind-mins', { kind: k.kind, d: '-1' }, `${k.name}を全部1分短く`),
-          btn('＋', 'kind-mins', { kind: k.kind, d: '1' }, `${k.name}を全部1分長く`),
-        );
+        const current = presets.find((x) => plan.blocks.every((b) => b.kind !== k.kind || (b.preset === x.id && !b.round)));
+        const select = choose(`${k.name}の共通プリセット`, [['', 'プリセットを選ぶ', true], ...presets.map((x) => [x.id, x.name] as const)], current?.id ?? '', 'kind-preset', { kind: k.kind });
+        select.disabled = presets.length === 0;
+        kinds.append(pickerRow(label, select));
+      } else if (n > 1) {
+        kinds.append(pickerRow(label, choose(`${k.name}の長さをまとめて調整`, [['', '長さを調整', true], ['-5', '各5分短く'], ['-1', '各1分短く'], ['1', '各1分長く'], ['5', '各5分長く']], '', 'kind-mins', { kind: k.kind })));
       }
-      kinds.append(row);
     }
   };
 
   const renderTimes = () => {
     const { end } = placeNight(plan, presets);
     times.replaceChildren();
-    const start = mk('div', 'np-time');
-    // ブラウザの時刻の欄は言葉の設定で「09:20 PM」になるので、ふつうの欄に「21:20」と打つ
-    const timeInput = () => {
-      const i = mk('input', 'np-clock u');
-      i.type = 'text';
-      i.inputMode = 'numeric';
-      i.maxLength = 5;
-      i.placeholder = '22:30';
-      i.autocomplete = 'off';
-      return i;
+    const timeInput = (label: string, act: string, value: number | null) => {
+      const input = mk('input', 'hq-select np-clock');
+      input.type = 'time';
+      input.value = value === null ? '' : hhmm(value);
+      input.dataset.act = act;
+      input.setAttribute('aria-label', label);
+      return pickerRow(label, input);
     };
-    const sIn = timeInput();
-    sIn.value = hhmm(plan.start);
-    sIn.dataset.act = 'start';
-    sIn.setAttribute('aria-label', '開始の時刻');
-    start.append(mk('span', 'np-time-l', '開始'), btn('−5', 'start-step', { d: '-5' }, '開始を5分早く'), sIn, btn('＋5', 'start-step', { d: '5' }, '開始を5分遅く'));
-    const lim = mk('div', 'np-time');
-    const lIn = timeInput();
-    lIn.value = plan.endBy === null ? '' : hhmm(plan.endBy);
-    lIn.dataset.act = 'endby';
-    lIn.setAttribute('aria-label', '終わっていたい時刻');
-    lim.append(mk('span', 'np-time-l', '終わっていたい'), btn('−5', 'endby-step', { d: '-5' }, '終わっていたい時刻を5分早く'), lIn, btn('＋5', 'endby-step', { d: '5' }, '終わっていたい時刻を5分遅く'));
-    if (plan.endBy !== null) lim.append(btn('なし', 'endby-clear'));
-    const out = mk('div', 'np-time np-time-out');
-    out.append(mk('span', 'np-time-l', '終わり（自動）'), mk('output', 'u', hhmm(end)));
-    times.append(start, lim, out);
+    const out = mk('p', 'np-note', `終わり（自動） ${hhmm(end)}`);
+    times.append(timeInput('開始の時刻', 'start', plan.start), timeInput('終わっていたい時刻', 'endby', plan.endBy));
+    if (plan.endBy !== null) times.append(btn('終了目標を外す', 'endby-clear'));
+    times.append(out);
   };
 
   const renderAdd = () => {
-    add.replaceChildren(mk('h3', '', '足す'));
-    for (const k of NIGHT_KINDS) {
-      const b = btn(`＋ ${k.name}`, 'add', { kind: k.kind });
-      b.disabled = plan.blocks.length >= NIGHT_MAX_BLOCKS;
-      add.append(b);
-    }
+    const select = choose('予定を追加', [['', '種類を選ぶ', true], ...kindOptions], '', 'add');
+    select.disabled = plan.blocks.length >= NIGHT_MAX_BLOCKS;
+    add.replaceChildren(pickerRow('予定を追加', select));
   };
 
   const render = () => {
@@ -453,11 +415,10 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
 
   // ---------- 押したとき ----------
   const blockIndex = (id: string | undefined) => plan.blocks.findIndex((b) => b.id === id);
-  el.addEventListener('click', (e) => {
-    const b = (e.target as HTMLElement).closest('button[data-act]') as HTMLButtonElement | null;
-    if (!b || b.disabled) return;
+  const actOn = (b: HTMLButtonElement | HTMLSelectElement) => {
+    if (b.disabled) return;
     const act = b.dataset.act;
-    const d = Number(b.dataset.d ?? 0);
+    const value = b.value;
     const id = b.dataset.id;
     const p = clone(plan);
     const i = blockIndex(id);
@@ -473,23 +434,23 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         return;
       case 'mins':
         if (i < 0) return;
-        p.blocks[i].mins = clampMins(p.blocks[i].mins + d);
+        p.blocks[i].mins = clampMins(Number(value));
         break;
       case 'kind-mins':
-        for (const x of p.blocks) if (x.kind === b.dataset.kind && !x.round) x.mins = clampMins(x.mins + d);
+        for (const x of p.blocks) if (x.kind === b.dataset.kind && !x.round) x.mins = clampMins(x.mins + Number(value));
         break;
       case 'kind-preset':
         for (const x of p.blocks) {
           if (x.kind !== b.dataset.kind) continue;
-          x.preset = b.dataset.p || null;
+          x.preset = value || null;
           delete x.round;
         }
         break;
       case 'preset': {
         if (i < 0) return;
-        p.blocks[i].preset = b.dataset.p || null;
+        p.blocks[i].preset = value || null;
         // プリセットを替えたら、このブロックだけの時間は外す（新しいプリセットの時間になる）
-        if (b.dataset.p) delete p.blocks[i].round;
+        if (value) delete p.blocks[i].round;
         break;
       }
       case 'own-on': {
@@ -503,12 +464,6 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         if (!p.blocks[i].preset) p.blocks[i].mins = clampMins(Math.round(blockSecs(p.blocks[i], presets) / 60));
         delete p.blocks[i].round;
         break;
-      case 'part': {
-        const r = p.blocks[i]?.round;
-        if (!r) return;
-        bumpPart(r, Number(b.dataset.i), d);
-        break;
-      }
       case 'apply': {
         const x = p.blocks[i];
         if (!x) return;
@@ -537,7 +492,7 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
       }
       case 'kind': {
         if (i < 0) return;
-        const k = b.dataset.kind as NightKind;
+        const k = value as NightKind;
         const wasDefaultTitle = !p.blocks[i].title || p.blocks[i].title === kindInfo(p.blocks[i].kind).name;
         p.blocks[i].kind = k;
         // プレ・本番へ変えたらプリセットを入れる。ほかへ変えたら中身を外し、長さはそのまま分で持つ
@@ -551,9 +506,10 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         break;
       }
       case 'move': {
-        const j = i + d;
-        if (i < 0 || j < 0 || j >= p.blocks.length) return;
-        [p.blocks[i], p.blocks[j]] = [p.blocks[j], p.blocks[i]];
+        const j = Number(value);
+        if (i < 0 || j < 0 || j >= p.blocks.length || j === i) return;
+        const [block] = p.blocks.splice(i, 1);
+        p.blocks.splice(j, 0, block);
         break;
       }
       case 'del':
@@ -563,7 +519,7 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         break;
       case 'add': {
         if (p.blocks.length >= NIGHT_MAX_BLOCKS) return;
-        const k = kindInfo(b.dataset.kind as NightKind);
+        const k = kindInfo(value as NightKind);
         const nb: NightPlan['blocks'][number] = { id: newBlockId(p), kind: k.kind, title: k.name, mins: k.mins };
         if (k.round) nb.preset = presetFor(k.kind);
         // 「終わり」が最後にあれば、その前に入れる（終わり自体を足すときは最後）
@@ -573,12 +529,6 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         selected = nb.id;
         break;
       }
-      case 'start-step':
-        p.start = (((p.start + d) % DAY) + DAY) % DAY;
-        break;
-      case 'endby-step':
-        p.endBy = ((((p.endBy ?? placeNight(p, presets).end) + d) % DAY) + DAY) % DAY;
-        break;
       case 'endby-clear':
         p.endBy = null;
         break;
@@ -586,16 +536,22 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         return;
     }
     change(p);
+  };
+  el.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-act]');
+    if (button) actOn(button);
   });
   el.addEventListener('change', (e) => {
-    const t = e.target as HTMLInputElement;
+    const t = e.target;
+    if (t instanceof HTMLSelectElement) return actOn(t);
+    if (!(t instanceof HTMLInputElement)) return;
     const p = clone(plan);
     if (t.dataset.act === 'start') {
-      const v = parseHhmm(t.value.replace(/[：.]/g, ':').replace(/^(\d{1,2})(\d{2})$/, '$1:$2'));
+      const v = parseHhmm(t.value);
       if (v === null) return render();
       p.start = v;
     } else if (t.dataset.act === 'endby') {
-      const v = parseHhmm(t.value.replace(/[：.]/g, ':').replace(/^(\d{1,2})(\d{2})$/, '$1:$2'));
+      const v = parseHhmm(t.value);
       if (t.value.trim() && v === null) return render();
       p.endBy = v;
     } else if (t.classList.contains('np-name')) {
@@ -634,10 +590,6 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         durations = [...durs];
         dirty = true;
       }
-      if (open === null) {
-        open = st === 'lobby' || st === undefined;
-        dirty = true;
-      }
       // サーバーの予定：自分がいじっている最中でなければ合わせる（別の本部の画面での変更もここで入る）
       if (next && !sendTimer && Date.now() - localAt > HOLD_LOCAL_MS && JSON.stringify(next) !== JSON.stringify(plan)) {
         plan = clone(next);
@@ -650,7 +602,7 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         dirty = true;
       }
       // 見出しを打っている最中は描き直さない（打った字が消える）
-      const typing = (document.activeElement as HTMLElement | null)?.closest?.('.np input');
+      const typing = (document.activeElement as HTMLElement | null)?.closest?.('.np input, .np select');
       if (dirty && !typing) render();
     },
   };

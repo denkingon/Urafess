@@ -25,7 +25,7 @@
 .np .np-blk[data-kind="game"] { background: #474a54; }
 .np .np-blk[data-kind="show"] { background: repeating-linear-gradient(135deg, transparent 0 6px, #2b2e38 6px 9px); }
 .np .np-blk[data-kind="break"] { border-style: dashed; color: var(--muted); }
-.np .np-blk[aria-pressed="true"] { border: 2px solid var(--tsuki); background-color: #5c5f69; }
+.np .np-blk[data-selected] { border: 2px solid var(--tsuki); background-color: #5c5f69; }
 .np .np-blk[data-bad] { box-shadow: inset 0 -4px 0 var(--shu); }
 .np-blk-l { font-size: 16px; line-height: 20px; white-space: nowrap; font-weight: 700; }
 .np-blk-l[hidden] { display: none; }
@@ -102,7 +102,7 @@
   .np-kind { display: none; }
 }
 
-/* プレ・本番の中身：1段ずつ（段の名前／頭からの経過／−／長さ／＋） */
+/* プレ・本番の中身：段の名前、頭からの経過、長さ */
 .np-round { display: flex; flex-direction: column; gap: 2px; padding: 8px; border: 1px solid var(--sen); border-radius: 6px; background: var(--yami); }
 .np-part { display: grid; grid-template-columns: minmax(0, 1fr) 3.6em 44px 3.4em 44px; align-items: center; gap: 4px; }
 .np-part-l { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -121,7 +121,7 @@
 .np-seg-btns .np-seg-l { flex: 0 0 100%; color: var(--muted); }
 .np-presets button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .np-parts { display: flex; flex-direction: column; gap: 2px; }
-.np-part[data-ro] { grid-template-columns: minmax(0, 1fr) 3.6em 3.4em; color: var(--muted); }
+.np-part[data-ro] { grid-template-columns: minmax(0, 1fr) 3.6em auto; color: var(--muted); }
 .np-kind-presets { flex-wrap: wrap; padding: 4px 4px 4px 10px; }
 .np-kind-presets button { border: 1px solid var(--sen); }
 
@@ -154,3 +154,11 @@
 .np .np-ops button { white-space: normal; text-align: left; line-height: 20px; padding: 6px 10px; }
 .np .pp-pick { white-space: normal; text-align: left; }
 .pp-pick > * { min-width: 0; }
+
+.np-kinds { display: grid; align-content: start; gap: 8px; }
+.np-add { display: block; }
+.np-mins select { max-width: 100%; }
+.np-part[data-ro] > .hq-value { justify-self: end; }
+.np .np-pick .np-kind { overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 600px) { .np-part[data-ro] { grid-template-columns: minmax(0, 1fr) auto; } }
