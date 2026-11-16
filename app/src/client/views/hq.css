@@ -25,17 +25,6 @@
 .hq-conn { color: var(--tsuki); }
 .hq-conn.is-bad::after { content: ""; display: inline-block; width: 10px; height: 10px; margin-left: 6px; border-radius: 50%; background: var(--shu); }
 
-.hq [data-k="glowBoard"] { position: relative; }
-.hq-live .hq-counts {
-  position: absolute; inset: 10px 10px auto auto; z-index: 2;
-  width: max-content; max-width: calc(100% - 20px);
-  list-style: none; margin: 0; padding: 6px 10px;
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px;
-  pointer-events: none; background: #111923f2; border: 1px solid #637487; border-radius: 8px;
-  box-shadow: 0 3px 12px #0008;
-}
-.hq-counts li { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 4px 0; color: #e2edf7; font-size: 13px; }
-.hq-counts b { font-size: 17px; line-height: 1.1; color: #fff; }
 /* 要対応：いちばん上の1件を、選択肢つきで */
 .hq-strip { flex: none; margin: 10px 16px 0; min-height: 56px; display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 8px; border: 1px solid var(--muted); border-radius: 6px; background: var(--raised); }
 .hq-strip[hidden] { display: none; }
@@ -51,8 +40,6 @@
 .hq .hq-card > .chat-host { border-top: none; padding-top: 0; }
 .hq[data-stage="timer"] .area-host { display: none; }
 /* 地図：地図を先に、説明はあと。本部の地図は道具なので無彩色で、参加者の画面より明るく */
-.hq .glow-host > .cap-host-head { order: -2; }
-.hq .glow-host > [data-k="glowBoard"] { order: -1; }
 .hq .ov-tiles img { filter: invert(1) grayscale(1) brightness(1.9) contrast(1.05); }
 .hq .buttons button:disabled { display: none; }
 
@@ -197,7 +184,6 @@
 .hq-dashboard-details .chat-feed { max-height: 220px; overflow-y: auto; }
 .hq-dashboard-grid .glow-host { margin: 0; border-top: 0; padding: 0; }
 .hq .glow-host .glow-board[data-mode="all"] .glow-radar { height: clamp(330px, 63dvh, 830px); }
-.hq .glow-host > [data-k="glowBoard"] { order: -3; }
 .hq .ov-pt.is-caught .ov-dot { fill: #f5bc57; stroke: #292208; }
 @media (max-width: 970px) {
   .hq-dashboard-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "map" "mission" "side"; }
@@ -257,3 +243,11 @@
 
 .hq .ov.is-interactive { touch-action: none; cursor: grab; user-select: none; }
 .hq .ov.is-dragging { cursor: grabbing; }
+
+.hq .hq-popup-trigger { text-align: center; font-size: 24px; }
+.hq .hq-dashboard-side .hq-dock [data-op="start"],
+.hq[data-stage="assigned"] .hq-dashboard-side .hq-dock [data-op="assign"] { font-size: 0; }
+.hq .hq-dashboard-side .hq-dock [data-op="start"]::before,
+.hq[data-stage="assigned"] .hq-dashboard-side .hq-dock [data-op="assign"]::before { font-size: 30px; }
+.hq .hq-dashboard-side .hq-dock [data-op="start"]::before { content: "▶"; }
+.hq[data-stage="assigned"] .hq-dashboard-side .hq-dock [data-op="assign"]::before { content: "↻"; }

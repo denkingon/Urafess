@@ -492,8 +492,6 @@ function startHost(token: string): void {
   const hostHeaders = { 'x-host-token': encodeHostKey(token) };
   startUpdateChecks(() => !inMatch(client.state.game?.stage));
   const photos = createPhotoLoader(gameId, () => hostHeaders);
-  // 走ると光る：主催者の画面の地図の真ん中（位置）と向き。主催者は光らない
-  const sensors = new Sensors();
   const hostActions: HostActions = {
     command: (op, extra) => client.command(op, extra),
     chat: (to, text) => client.hostChat(to, text),
@@ -546,7 +544,7 @@ function startHost(token: string): void {
       }
     },
   };
-  const host = createHQ(hostActions, sensors);
+  const host = createHQ(hostActions);
   root.replaceChildren(host.el);
   // 主催者の画面にも全員への知らせを出す（確保の音も鳴る。音のために、どこかのタップで一度準備する）
   const chime = new AnnounceChime();

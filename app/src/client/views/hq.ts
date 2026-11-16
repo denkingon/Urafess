@@ -5,7 +5,6 @@ import { HOLD_MIN_MS, MATES_SEND_EVERY_MS, MATES_STALE_MS, PHASES, RESCUE_IMMUNE
 import { formatClock, isDone, positionAt } from '../../shared/schedule';
 import { glowPhase } from '../../shared/viewmodel';
 import { chatText } from '../../shared/chat';
-import type { Sensors } from '../sense';
 import { setFramePad } from './overview';
 import { createTerm } from './term';
 import { createNightPalette } from './night';
@@ -44,10 +43,10 @@ function make<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, html =
 }
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
-export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
+export function createHQ(actions: HostActions): HostScreen {
   // 地図は遊ぶ範囲ぴったりではなく、周りも見えるように余白を広げる
   setFramePad(0.26);
-  const inner = createHost(actions, sensors);
+  const inner = createHost(actions);
   // 前の画面の根っこをそのまま使う（中の部品は、この根っこの下にある限り前のしくみのまま動く）
   const el = inner.el;
   el.classList.add('hq');
@@ -69,10 +68,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
     head.querySelector('.hq-head-r')!.append(openBtn);
     termEl = term.el;
   }
-  const counts = make('ul', 'hq-counts',
-    ['エントリー', '鬼', '逃走者', '捕まった人', 'スマホの許可', '戻りたい人'].map((label) => `<li><span>${label}</span><b class="u">0</b></li>`).join(''));
-  counts.setAttribute('aria-label', '現在の人数（逃走者は捕まっていない人）');
-  const countValues = counts.querySelectorAll('b');
   const strip = make('section', 'hq-strip');
   strip.setAttribute('aria-label', '要対応');
   strip.hidden = true;
@@ -106,11 +101,13 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
     const header = make('header', 'hq-popover-head');
     header.append(title, close);
     dialog.append(header, cards[key]);
-    const trigger = make('button', 'hq-popup-trigger', label);
+    const trigger = make('button', 'hq-popup-trigger', key === 'people' ? '👥' : '💬');
+    trigger.setAttribute('aria-label', label);
+    trigger.title = label;
     trigger.type = 'button';
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.addEventListener('click', () => dialog.showModal());
-    panel[key].append(trigger, make('p', 'hq-summary', `<span data-hq="${key}Summary"></span>`));
+    panel[key].append(trigger);
   }
   panel.mission.append(make('h3', '', 'ミッション'), make('p', 'hq-summary', '<span data-hq="missionSummary"></span>'), cards.mission);
   cards.mission.append(make('summary', '', 'ミッションの詳細・操作'));
@@ -274,7 +271,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const content = make('div', 'hq-workspace');
   const title = make('h2', 'hq-page-title', 'ダッシュボード');
   const live = make('div', 'hq-live');
-  panel.map.querySelector('[data-k="glowBoard"]')!.append(counts);
   live.append(grid, strip);
   const locked = make('p', 'hq-rules-locked', '試合終了後に次のゲームのルールを編集できます。');
   locked.hidden = true;
@@ -290,6 +286,9 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   if (termEl) el.append(termEl);
 
   // ---------- 押したとき ----------
+  const startButton = old<HTMLButtonElement>('[data-op="start"]');
+  startButton.title = '開始';
+  startButton.setAttribute('aria-label', '開始');
   let tab: 'map' | 'deck' = 'map';
   const showTab = (t: 'map' | 'deck') => {
     tab = t;
@@ -376,10 +375,10 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
 
       // 上の行
       text('round', game.stage === 'lobby' ? '' : `ラウンド ${Math.max(game.round, 1)}`);
-      once('conn', `${host.connected}/${host.total}/${input.online}`, () => {
+      once('conn', String(input.online), () => {
         const c = hq('conn');
-        c.textContent = input.online ? `つながり ${host.connected}/${host.total}` : '切断中';
-        c.classList.toggle('is-bad', !input.online || host.connected < host.total);
+        c.textContent = input.online ? '' : '切断中';
+        c.classList.toggle('is-bad', !input.online);
       });
       const cap = host.capture;
       const jailed = cap ? cap.runners.filter((r) => r.caught).length : 0;
@@ -391,11 +390,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
       });
       free.disabled = freeCount.disabled = freeAll.disabled;
       missionFree.hidden = freeAll.disabled;
-      const assignedCapture = game.stage === 'lobby' ? null : cap;
-      const liveCounts = [host.total, assignedCapture?.oni.length ?? 0, (assignedCapture?.runners.length ?? 0) - (assignedCapture ? jailed : 0), assignedCapture ? jailed : 0, host.perms ? `${host.perms.ok}/${host.perms.total}` : '—', host.reclaims?.length ?? 0];
-      liveCounts.forEach((n, i) => once(`count:${i}`, String(n), () => {
-        countValues[i].textContent = String(n);
-      }));
       once('roster', JSON.stringify(host.roster ?? []), () => {
         const permissions = { geo: '位置', motion: '動き', mic: 'マイク' };
         roster.innerHTML = host.roster?.length
@@ -428,11 +422,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
         strip.hidden = items.length === 0;
         strip.innerHTML = items.length ? `<b class="hq-badge u" aria-label="要対応 ${items.length}件">${items.length}</b>${items[0]}` : '';
       });
-      const mapped = new Set(onMap.map((m) => m.num)).size;
-      const activeMap = glowPhase(game, serverNow) === 'live';
-      text('peopleSummary', `接続 ${host.connected}/${host.total}人${activeMap ? ` ・位置取得 ${mapped}/${host.assigned}人` : ''}${outside.length ? ` ・範囲外 ${outside.length}人` : ''}`);
-      const chat = input.chat?.msgs.at(-1);
-      text('chatSummary', `${asks.length ? `未対応 ${asks.length}件 · ` : ''}${chat ? `${chat.from?.name ?? '本部'}：${chatText(chat)[0]}` : 'メッセージなし'}`);
       text('missionSummary', `${old('[data-k="missionNow"]').textContent ?? ''}${pending.length ? ` ・確認待ち ${pending.length}件` : ''}`);
 
       // デッキの現在値と操作可否は既存フォームに合わせる。
@@ -461,6 +450,11 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
         : paused ? [['reset', 'hold'], ['resume', 'wait']]
         : game.stage === 'ended' ? [['clear', 'hold'], ['csv', 'wait']]
         : [['end', 'hold'], ['assign', 'wait']];
+      const assignLabel = opBtn('assign').textContent ?? '';
+      once('assignLabel', assignLabel, () => {
+        opBtn('assign').title = assignLabel;
+        opBtn('assign').setAttribute('aria-label', assignLabel);
+      });
       const skipTo = phase ? (phase.index + 1 < PHASES.length ? formatClock(game.durations[phase.index + 1]) : '結果') : '';
       once('skip', skipTo, () => (opBtn('skip').dataset.short = skipTo ? `次へ → ${skipTo}` : '次へ'));
       once('dock', JSON.stringify(want), () => {

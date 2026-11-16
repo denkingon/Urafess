@@ -20,8 +20,6 @@ import {
   RATIO_MAX,
   RATIO_MIN,
   ROLES,
-  MATES_STALE_MS,
-  RUN_STALE_MS,
   START_LEAD_MS,
   type RevealMode,
   type RoleId,
@@ -45,12 +43,11 @@ import {
 import { glowPhase, hostStatus, wishNote } from '../../shared/viewmodel';
 import { checkNewHostKey, HOST_KEY_MIN } from '../../shared/hostkey';
 import type { ClientState } from '../core/game-client';
-import type { Sensors } from '../sense';
 import { createChatHost, type ChatHostScreen } from './chat-host';
 import type { ChatJail, ChatMode } from '../../shared/chat';
 import { createLightsBoard, openZone } from './glow';
 import { createOverview, RING_BOX } from './overview';
-import { AREA_MAX_PTS, AREA_MIN_PTS, isFarOutside } from '../../shared/area';
+import { AREA_MAX_PTS, AREA_MIN_PTS } from '../../shared/area';
 import {
   DEFAULT_SHRINK_PLAN,
   midOf,
@@ -187,7 +184,7 @@ function areaSize(pts: [number, number][]): string {
   return `東西 約${Math.round(ew / 10) * 10}m × 南北 約${Math.round(ns / 10) * 10}m`;
 }
 
-export function createHost(actions: HostActions, sensors?: Sensors): HostScreen {
+export function createHost(actions: HostActions): HostScreen {
   const el = document.createElement('main');
   el.className = 'phone host';
   el.innerHTML = `
@@ -365,9 +362,6 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       <p class="note" data-k="capOni"></p>
     </section>
     <section class="cap-host glow-host" data-k="glow" hidden>
-      <div class="cap-host-head"><b>試合の地図</b><span data-k="glowCount"></span></div>
-      <p class="note" data-k="glowReady"></p>
-      <button type="button" class="ghost" data-act="glow-map" hidden>地図の真ん中をこの画面の場所にする（位置を使う）</button>
       <div data-k="glowBoard"></div>
     </section>
     <section class="cap-host mission-host" data-k="missionPhoto">
@@ -991,8 +985,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
   // 走ると光る：主催者の画面にも光の地図（真ん中はこの画面の場所。たいてい広場）
   const board = createLightsBoard({ mapOnly: true, labelMax: 60 });
   q('glowBoard').append(board.el);
-  const glowMap = el.querySelector('[data-act="glow-map"]') as HTMLButtonElement;
-  glowMap.addEventListener('click', () => sensors?.request());
+
 
   // 遊ぶ範囲と牢屋の場所：同じ道具で描く（上の札で切りかえ）。地図を押して角を足す（下書き）→「決める」で送る。試合中は描けない
   type Layer = 'area' | 'jail';
@@ -1520,47 +1513,21 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         }
       }
 
-      // 走ると光る：配役〜ゲームの終わりは、センサーの使える人の数。ゲームの段階は光っている人と地図
-      const gp = glowPhase(game, serverNow);
-      sensors?.setActive(gp !== 'none');
+      const liveMap = glowPhase(game, serverNow) === 'live';
       q('glow').hidden = false;
-      {
-        const g = host.glow;
-        // 光っている人の数は、届いている光の一覧から（集計は 0.5 秒ごとなので遅れる）
-        const litNow = (input.glow?.runs ?? []).filter((r) => serverNow - r.at <= RUN_STALE_MS).length;
-        const onMap = (input.mates?.people ?? []).filter((m) => serverNow - m.at <= MATES_STALE_MS);
-        const oniOn = onMap.filter((m) => m.role === 'oni').length;
-        const caughtOn = onMap.filter((m) => m.caught).length;
-        const areaPts = zoneAt(game.area, game.shrink, game.timer, serverNow);
-        const outside = areaPts ? onMap.filter((m) => isFarOutside(areaPts, m)) : [];
-        q('glowCount').textContent =
-          gp === 'live'
-            ? `地図に 鬼${oniOn}・逃走者${onMap.length - oniOn - caughtOn}・捕まった人${caughtOn}　光っている ${litNow}人` +
-              (areaPts ? (outside.length ? `　範囲の外 ${outside.length}人（${outside.map((m) => m.name).join('・')}）` : '　範囲の外 0人') : '')
-            : '試合中に参加者の位置が表示されます。';
-        q('glowReady').textContent = g
-          ? `いまつながっている配役の人 ${g.total}人のうち、動きのセンサーが使える ${g.motion}人・位置が使える ${g.geo}人。`
-          : '';
-        glowMap.hidden = !sensors || !sensors.needsTap;
-        {
-          const now = Date.now();
-          const pos = sensors?.position(now) ?? null;
-          board.update({
-            glow: gp === 'live' ? input.glow ?? null : null,
-            serverNow,
-            me: pos ? { lat: pos.lat, lon: pos.lon } : null,
-            heading: sensors?.heading(now) ?? null,
-            myNum: null,
-            meLit: false,
-            mates: gp === 'live' ? input.mates ?? null : null,
-            meAcc: pos?.acc ?? null,
-            myKind: 'unknown',
-            area: areaPts,
-            jail: game.jail?.pts ?? null,
-            mzone: openZone(game),
-          });
-        }
-      }
+      board.update({
+        glow: liveMap ? input.glow ?? null : null,
+        serverNow,
+        me: null,
+        heading: null,
+        myNum: null,
+        meLit: false,
+        mates: liveMap ? input.mates ?? null : null,
+        myKind: 'unknown',
+        area: zoneAt(game.area, game.shrink, game.timer, serverNow),
+        jail: game.jail?.pts ?? null,
+        mzone: openZone(game),
+      });
 
       // ミッション
       const mission = game.mission ?? null;
