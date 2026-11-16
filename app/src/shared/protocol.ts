@@ -64,6 +64,10 @@ export interface GameView {
   counts: { oni: number; runner: number; total: number; caught: number };
   result: Winner | null;
   durations: number[];
+  /** 遊び方（fueshi＝増やし鬼：捕まった逃走者は牢屋に入らず鬼になる）。古いサーバーからは来ない（そのときはドロケイ） */
+  mode?: 'dorokei' | 'fueshi' | 'koori';
+  /** 増やし鬼：いまの配役で、捕まって鬼になった人数 */
+  turned?: number;
   /** 今の夜を始めた時刻（「新しい夜を始める」を押した時刻）。古いサーバーは送らない */
   nightAt?: number;
   /** 配役の比率（鬼：逃走者）。古いサーバーからは来ない */
@@ -218,6 +222,8 @@ export interface MeView {
   rescues?: number;
   /** 今の配役で捕まえた人数（鬼だけ） */
   catches: number;
+  /** 増やし鬼：いまの配役で捕まって、逃走者から鬼になった */
+  turned?: boolean;
   /** 逃走者の「捕まった」（選ぶまで開いている）。at は最初に長押しを始めたサーバー時刻。cands は並べる候補 */
   claim: { at: number; cands: Candidate[] } | null;
   /** ミッション：このラウンドに自分が送った写真（古い順）。古いサーバーからは来ない */

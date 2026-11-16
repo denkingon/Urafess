@@ -45,7 +45,7 @@ import type {
   Stage,
   Winner,
 } from '../shared/protocol';
-import { decideWinner, everyoneJailed } from '../shared/jail';
+import { decideWinner, everyoneJailed, everyoneTurned } from '../shared/jail';
 import {
   cardOf,
   CHAT_GAP_MS,
@@ -141,7 +141,7 @@ import { DEFAULT_LEAD_RULES, isLeadRules, leadDown, leadSight, patchLeadRules, t
 import { boundaryTimes, cumulative, elapsedAt, isDone, pauseTimer, positionAt, resumeTimer, skipPhase, startTimer, type Timer } from '../shared/schedule';
 import { eventToLine, eventsToCsv, type EventRow } from './log';
 import { cleanNightPlan, type NightPlan } from '../shared/night';
-import { cleanPresets, defaultPresets, presetDurations, type Preset } from '../shared/preset';
+import { cleanPresets, defaultPresets, fueshiPreset, FUESHI_PRESET_ID, presetDurations, PRESETS_MAX, type GameMode, type Preset } from '../shared/preset';
 import type { ProbeHub } from './probe';
 import { checkNewHostKey, hostKeyCandidates, sameHostKey } from '../shared/hostkey';
 
@@ -201,6 +201,12 @@ interface GameState {
   allCaughtAt?: number | null;
   /** result をアプリが決めた */
   resultAuto?: boolean;
+  /** 遊び方（プリセットをデッキへ入れると決まる）。fueshi＝増やし鬼。古い保存データには無い（ドロケイ） */
+  mode?: GameMode;
+  /** 増やし鬼：いまの配役で、捕まって鬼になった人数（配役で 0 に戻る） */
+  turned?: number;
+  /** 増やし鬼のプリセットを、前からある部屋のプリセットの並びに1回だけ足した */
+  fueshiSeeded?: boolean;
   /** 捕まったときの全員への知らせの設定（主催者が切り替える。新しい夜でも残る）。古い保存データには無い */
   announce?: AnnounceSettings;
   /** 最後の知らせ。配役・リセット・新しい夜で消える */
@@ -524,6 +530,8 @@ export class GameRoom extends DurableObject<Env> {
   private readonly runs = new Map<string, RunRec>();
   /** 今の配役で、鬼 → 捕まえた回数（解放されても減らない。主催者の取り消しでだけ減る） */
   private readonly catches = new Map<string, number>();
+  /** 増やし鬼：捕まって鬼になった人 → その配役の番号（画面の一言のため。サーバーが入れ替わると消えるが、役は残る） */
+  private readonly turnedAt = new Map<string, { assignId: number; by: string | null; via: CaptureVia | null; at: number }>();
   /** 範囲の外で失格を数えた人（配役の番号つき。同じ配役のうちは1回だけ） */
   private readonly dqSeen = new Map<string, number>();
   /** 失格のあと牢屋に出頭した人（配役の番号つき。記録を1回にするための印） */
@@ -793,6 +801,13 @@ export class GameRoom extends DurableObject<Env> {
       if (row) this.saveGame();
     }
     if (!isValidRatio(this.game.ratio)) this.game.ratio = { ...DEFAULT_RATIO };
+    // 増やし鬼を入れる前にプリセットをいじった部屋には、増やし鬼のプリセットが無い。1回だけ足す（消したら戻さない）
+    if (this.game.presets && !this.game.fueshiSeeded) {
+      const list = this.game.presets;
+      if (list.length < PRESETS_MAX && !list.some((p) => p.id === FUESHI_PRESET_ID || p.mode === 'fueshi')) this.game.presets = [...list, fueshiPreset()];
+      this.game.fueshiSeeded = true;
+      if (row) this.saveGame();
+    }
     // ミッションを入れる前の版で作った部屋には、ミッションの番号が無い
     if (!Number.isInteger(this.game.missionSeq)) {
       const last = this.sql.exec<{ n: number | null }>(`SELECT MAX(id) AS n FROM missions`).toArray()[0]?.n;
@@ -973,6 +988,26 @@ export class GameRoom extends DurableObject<Env> {
       if (r.kind === 'capture') this.catches.set(pid, (this.catches.get(pid) ?? 0) + 1);
       else if (r.kind === 'release') this.catches.set(pid, Math.max(0, (this.catches.get(pid) ?? 0) - 1));
       else this.rescues.set(pid, (this.rescues.get(pid) ?? 0) + 1);
+    }
+    // 増やし鬼：鬼になった人（取り消されていない人）も記録から戻す
+    this.turnedAt.clear();
+    for (const r of this.sql.exec<{ kind: string; pid: string | null; at: number; via: string | null; data: string | null }>(
+      `SELECT kind, pid, at, via, data FROM events WHERE id > ? AND assign_id = ? AND kind IN ('turn', 'unturn') AND pid IS NOT NULL ORDER BY id`,
+      base,
+      this.game.assignId,
+    )) {
+      if (r.kind === 'unturn') {
+        this.turnedAt.delete(r.pid!);
+        continue;
+      }
+      let by: string | null = null;
+      try {
+        const d = r.data ? (JSON.parse(r.data) as { by?: unknown }) : null;
+        if (d && typeof d.by === 'string') by = d.by;
+      } catch {
+        // 読めない記録は、捕まえた鬼なしで戻す
+      }
+      this.turnedAt.set(r.pid!, { assignId: this.game.assignId, by, via: (r.via as CaptureVia | null) ?? null, at: r.at });
     }
   }
 
@@ -2337,13 +2372,62 @@ export class GameRoom extends DurableObject<Env> {
     // 捕まった人は光らない。全体の地図からも消える
     this.endRun(runner.pid, Date.now(), 'caught');
     this.dropSpot(runner.pid);
-    this.leadCaught(runner, at);
+    const fueshi = this.game.mode === 'fueshi';
+    // 増やし鬼は牢屋が無い（司令塔が「落ちる」こともない）
+    if (!fueshi) this.leadCaught(runner, at);
     this.notify(runner.pid, 'caught', oni ?? undefined, via);
     if (oni) this.notify(oni.pid, 'captured', runner, via);
     this.announceNews('capture', runner, oni);
+    if (fueshi) this.turnToOni(runner, at);
     // 最後の1人が牢屋に入ったら、ゲームを終わらせる（その中で配り直す）
     if (!this.checkAllCaught(Date.now(), at)) this.broadcastNow();
     this.refreshAutoResult();
+  }
+
+  /**
+   * 増やし鬼：捕まった逃走者を、牢屋に入れずにその場で鬼にする。捕獲の記録（ログ・捕まえた数・知らせ）は済んでいる。
+   * 役と人数を保存する。配り直しは呼んだ側（recordCapture）がする
+   */
+  private turnToOni(runner: Participant, at: number): void {
+    const g = this.game;
+    if (runner.role !== 'runner') return;
+    const was = { assignId: g.assignId, by: runner.caughtBy, via: runner.caughtVia, at };
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE participants SET role = 'oni', caught_assign = 0, caught_by = NULL, caught_at = NULL, caught_via = NULL, free_until = NULL WHERE pid = ?`,
+        runner.pid,
+      );
+      this.log('turn', { p: runner, at, via: was.via, data: { by: was.by, oni: g.counts.oni + 1, runner: Math.max(0, g.counts.runner - 1) } });
+    });
+    runner.role = 'oni';
+    runner.caughtAssign = 0;
+    runner.caughtBy = null;
+    runner.caughtAt = null;
+    runner.caughtVia = null;
+    runner.freeUntil = null;
+    this.turnedAt.set(runner.pid, was);
+    this.commit({ counts: { oni: g.counts.oni + 1, runner: Math.max(0, g.counts.runner - 1) }, turned: (g.turned ?? 0) + 1 });
+  }
+
+  /** 増やし鬼：いまの配役で、捕まって鬼になった人か */
+  private isTurned(p: Participant): boolean {
+    return p.role === 'oni' && this.game.assignId > 0 && this.turnedAt.get(p.pid)?.assignId === this.game.assignId;
+  }
+
+  /** 増やし鬼：鬼になった人を逃走者に戻す（主催者の取り消し・やり直し）。配り直しは呼んだ側がする */
+  private turnBack(p: Participant, now: number, why: 'release' | 'reset'): void {
+    if (!this.isTurned(p)) return;
+    const g = this.game;
+    const was = this.turnedAt.get(p.pid)!;
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`UPDATE participants SET role = 'runner' WHERE pid = ?`, p.pid);
+      this.log('unturn', { p, at: now, data: { why, by: was.by } });
+    });
+    p.role = 'runner';
+    this.turnedAt.delete(p.pid);
+    this.catches.delete(p.pid);
+    if (why === 'release' && was.by) this.catches.set(was.by, Math.max(0, (this.catches.get(was.by) ?? 0) - 1));
+    this.commit({ counts: { oni: Math.max(0, g.counts.oni - 1), runner: g.counts.runner + 1 }, turned: Math.max(0, (g.turned ?? 0) - 1) });
   }
 
   // ---------- 捕まったときの全員への知らせ ----------
@@ -2517,7 +2601,8 @@ export class GameRoom extends DurableObject<Env> {
   private checkAllCaught(now: number, at: number): boolean {
     const g = this.game;
     if (g.stage !== 'timer' && g.stage !== 'result') return false;
-    if (g.allCaughtAt != null || !everyoneJailed(this.gameView().counts)) return false;
+    const view = this.gameView();
+    if (g.allCaughtAt != null || !(g.mode === 'fueshi' ? everyoneTurned(view) : everyoneJailed(view.counts))) return false;
     let timer = g.timer;
     let ended = false;
     if (g.stage === 'timer' && timer) {
@@ -3142,6 +3227,20 @@ export class GameRoom extends DurableObject<Env> {
       const g = this.game;
       if (g.stage !== 'timer' && g.stage !== 'result') return this.reject(ws, att, op, 'not-allowed');
       const runner = this.inRound(msg.pid);
+      // 増やし鬼：鬼になった人の捕獲を取り消すと、逃走者に戻る
+      if (op === 'release' && runner && this.isTurned(runner)) {
+        const by = this.turnedAt.get(runner.pid)?.by ?? null;
+        this.turnBack(runner, now, 'release');
+        if (g.allCaughtAt != null) {
+          this.commit({ allCaughtAt: null });
+          this.log('all-caught-undo', { at: now, data: { runner: runner.pid } });
+        }
+        this.notify(runner.pid, 'released');
+        this.broadcastNow();
+        if (by) this.sendSnapTo([by]);
+        this.refreshAutoResult();
+        return;
+      }
       if (!runner || runner.role !== 'runner') return this.reject(ws, att, op, 'not-found');
       if (op === 'capture') {
         if (this.isCaught(runner)) return this.reject(ws, att, op, 'not-allowed');
@@ -3267,6 +3366,7 @@ export class GameRoom extends DurableObject<Env> {
           result: null,
           resultAuto: false,
           allCaughtAt: null,
+          turned: 0,
           counts: { oni, runner },
           news: null,
           wishStat,
@@ -3373,6 +3473,8 @@ export class GameRoom extends DurableObject<Env> {
           this.sql.exec(`UPDATE participants SET free_until = NULL`);
           this.dropClaims();
         });
+        // 増やし鬼：鬼になった人は、やり直しで逃走者に戻る
+        for (const p of [...this.people.values()]) this.turnBack(p, now, 'reset');
         this.dropJail();
         for (const p of this.people.values()) {
           p.freeUntil = null;
@@ -3476,6 +3578,7 @@ export class GameRoom extends DurableObject<Env> {
         const durations = msg.durations ? [...msg.durations] : presetDurations({ ...preset, round: { ...preset.round, phases } });
         const leadBefore = this.lead().rules;
         this.commit({
+          mode: preset.mode,
           durations,
           ratio: { ...preset.ratio },
           micMode: preset.mic,
@@ -4517,6 +4620,8 @@ export class GameRoom extends DurableObject<Env> {
         .filter((ph) => ph.status === 'ok')
         .map((ph) => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, freed: ph.freed })),
       allCaughtAt: g.allCaughtAt ?? null,
+      mode: g.mode ?? 'dorokei',
+      turned: g.turned ?? 0,
       resultAuto: g.resultAuto === true,
       micMode: g.micMode,
       area: g.area ?? null,
@@ -4597,6 +4702,7 @@ export class GameRoom extends DurableObject<Env> {
           ? { byNum: by?.num ?? null, byName: by?.name ?? null, at: p.caughtAt ?? 0, via: p.caughtVia ?? 'host' }
           : null,
       catches,
+      ...(live && this.isTurned(p) ? { turned: true } : {}),
       claim,
       sent: [...this.photos.values()]
         .filter((ph) => ph.pid === p.pid)
@@ -4622,12 +4728,15 @@ export class GameRoom extends DurableObject<Env> {
     const inRound = [...this.people.values()].filter((p) => !p.removed && p.assignId === g.assignId && p.role);
     const catches = this.catches;
     return {
+      // 増やし鬼：捕まって鬼になった人も、捕まった人としてここに並べる（押すと取り消して逃走者に戻せる）
       runners: inRound
-        .filter((p) => p.role === 'runner')
+        .filter((p) => p.role === 'runner' || this.isTurned(p))
         .sort((a, b) => a.num - b.num)
         .map((p) => {
-          const caught = this.isCaught(p);
-          const by = caught && p.caughtBy ? this.people.get(p.caughtBy) : undefined;
+          const turned = this.isTurned(p) ? this.turnedAt.get(p.pid)! : null;
+          const caught = turned !== null || this.isCaught(p);
+          const byPid = turned ? turned.by : p.caughtBy;
+          const by = caught && byPid ? this.people.get(byPid) : undefined;
           return {
             pid: p.pid,
             num: p.num,
@@ -4635,8 +4744,8 @@ export class GameRoom extends DurableObject<Env> {
             caught,
             byNum: by?.num ?? null,
             byName: by?.name ?? null,
-            via: caught ? p.caughtVia : null,
-            at: caught ? p.caughtAt : null,
+            via: turned ? turned.via : caught ? p.caughtVia : null,
+            at: turned ? turned.at : caught ? p.caughtAt : null,
             open: !caught && this.liveClaim(p.pid, now) !== null,
             freeUntil: !caught && p.freeUntil !== null && p.freeUntil > now ? p.freeUntil : null,
             rescues: this.rescues.get(p.pid) ?? 0,
