@@ -4711,6 +4711,13 @@ export class GameRoom extends DurableObject<Env> {
       groups.set(k, [...(groups.get(k) ?? []), p]);
     }
     return {
+      roster: active.map((p) => {
+        const role = g.stage !== 'lobby' && p.assignId === g.assignId ? p.role : null;
+        return {
+          name: p.name, num: p.num, role, caught: role === 'runner' && this.isCaught(p),
+          connected: connected.has(p.pid), need: permNeed.get(p.pid) ?? null,
+        };
+      }),
       total: active.length,
       connected: active.filter((p) => connected.has(p.pid)).length,
       assigned: inAssign.length,

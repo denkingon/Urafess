@@ -82,7 +82,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
     '<div class="hq-now-l"><span class="hq-label" data-hq="label"></span><span class="hq-big" data-hq="big"></span><span class="hq-next" data-hq="next"></span></div>'
     + '<div class="hq-pips" data-hq="pips" role="img"></div>');
   const counts = make('ul', 'hq-counts',
-    ['エントリー', '鬼', '逃走者', '捕まった人'].map((label) => `<li><span>${label}</span><b class="u">0</b></li>`).join(''));
+    ['エントリー', '鬼', '逃走者', '捕まった人', 'スマホの許可', '戻りたい人'].map((label) => `<li><span>${label}</span><b class="u">0</b></li>`).join(''));
   counts.setAttribute('aria-label', '現在の人数（逃走者は捕まっていない人）');
   const countValues = counts.querySelectorAll('b');
   now.setAttribute('aria-label', 'いま');
@@ -102,12 +102,32 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const grid = make('div', 'hq-dashboard-grid');
   grid.append(panel.map, side);
   side.append(panel.people, panel.chat);
-  const cards = {} as Record<'people' | 'chat' | 'mission', HTMLDetailsElement>;
-  for (const [key, label] of [['people', '参加者'], ['chat', 'チャット'], ['mission', 'ミッション']] as const) {
-    panel[key].append(make('h3', '', label), make('p', 'hq-summary', `<span data-hq="${key}Summary"></span>`));
-    cards[key] = make('details', 'hq-dashboard-details');
-    cards[key].append(make('summary', '', `${label}の詳細・操作`));
+  const dialogs = {
+    people: make('dialog', 'hq-popover'),
+    chat: make('dialog', 'hq-popover'),
+  };
+  const cards = { people: make('div', 'hq-popover-content'), chat: make('div', 'hq-popover-content'), mission: make('details', 'hq-dashboard-details') };
+  for (const [key, label] of [['people', '参加者'], ['chat', 'チャット']] as const) {
+    const dialog = dialogs[key];
+    const title = make('h2', '', label);
+    title.id = `hq-${key}-title`;
+    dialog.setAttribute('aria-labelledby', title.id);
+    const close = make('button', 'ghost', '閉じる');
+    close.type = 'button';
+    close.addEventListener('click', () => dialog.close());
+    const header = make('header', 'hq-popover-head');
+    header.append(title, close);
+    dialog.append(header, cards[key]);
+    const trigger = make('button', 'hq-popup-trigger', label);
+    trigger.type = 'button';
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.addEventListener('click', () => dialog.showModal());
+    panel[key].append(trigger, make('p', 'hq-summary', `<span data-hq="${key}Summary"></span>`));
   }
+  panel.mission.append(make('h3', '', 'ミッション'), make('p', 'hq-summary', '<span data-hq="missionSummary"></span>'), cards.mission);
+  cards.mission.append(make('summary', '', 'ミッションの詳細・操作'));
+  const roster = make('div', 'hq-roster');
+  cards.people.append(roster);
   // ---------- 前の部品を4つの場所へ ----------
   const hide = (sel: string) => old(sel)?.classList.add('hq-gone');
   hide('.host-head');
@@ -264,7 +284,6 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   }
   cards.people.append(ready, permBox);
   cards.mission.append(night, rec);
-  for (const key of ['people', 'chat', 'mission'] as const) panel[key].append(cards[key]);
   const shell = make('div', 'hq-shell');
   const menu = make('nav', 'hq-sidebar');
   menu.setAttribute('aria-label', '管理画面');
@@ -275,7 +294,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const content = make('div', 'hq-workspace');
   const title = make('h2', 'hq-page-title', 'ダッシュボード');
   const live = make('div', 'hq-live');
-  panel.map.prepend(counts);
+  panel.map.querySelector('[data-k="glowBoard"]')!.append(counts);
   const timeline = make('section', 'hq-timeline');
   timeline.setAttribute('aria-label', 'タイムラインと進行操作');
   timeline.append(now, rail, dock);
@@ -284,7 +303,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   locked.hidden = true;
   content.append(title, live, reject, locked, body);
   shell.append(menu, content);
-  el.append(head, shell, picker.el);
+  el.append(head, shell, picker.el, dialogs.people, dialogs.chat);
   // 夜の予定：スマホはデッキのいちばん上、幅の広い画面は全幅の帯（3列の上）
   const nightPal = createNightPalette((plan) => actions.command('night-plan', { night: plan }), {
     apply: (preset, durations) => actions.command('preset-apply', { preset, ...(durations ? { durations } : {}) }),
@@ -315,9 +334,11 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   });
   showTab('map');
   const showDetails = (t: string) => {
-    if (t === 'people' || t === 'chat' || t === 'mission') {
-      cards[t].open = true;
-      cards[t].scrollIntoView({ block: 'nearest' });
+    if (t === 'people' || t === 'chat') {
+      if (!dialogs[t].open) dialogs[t].showModal();
+    } else if (t === 'mission') {
+      cards.mission.open = true;
+      cards.mission.scrollIntoView({ block: 'nearest' });
     } else if (t === 'map') panel.map.scrollIntoView({ block: 'nearest' });
   };
   strip.addEventListener('click', (e) => {
@@ -456,10 +477,21 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
         : game.allCaughtAt != null ? '全員が牢屋に入った' : '';
       text('next', next);
       const assignedCapture = game.stage === 'lobby' ? null : cap;
-      const liveCounts = [host.total, assignedCapture?.oni.length ?? 0, (assignedCapture?.runners.length ?? 0) - (assignedCapture ? jailed : 0), assignedCapture ? jailed : 0];
+      const liveCounts = [host.total, assignedCapture?.oni.length ?? 0, (assignedCapture?.runners.length ?? 0) - (assignedCapture ? jailed : 0), assignedCapture ? jailed : 0, host.perms ? `${host.perms.ok}/${host.perms.total}` : '—', host.reclaims?.length ?? 0];
       liveCounts.forEach((n, i) => once(`count:${i}`, String(n), () => {
         countValues[i].textContent = String(n);
       }));
+      once('roster', JSON.stringify(host.roster ?? []), () => {
+        const permissions = { geo: '位置', motion: '動き', mic: 'マイク' };
+        roster.innerHTML = host.roster?.length
+          ? '<table><thead><tr><th>名前</th><th>役・状態</th><th>スマホの許可</th><th>接続</th></tr></thead><tbody>'
+            + host.roster.map((p) => {
+                const role = p.caught ? '捕まった人' : p.role === 'oni' ? '鬼' : p.role === 'runner' ? '逃走者' : '未配役';
+                const permission = p.need === null ? '未確認' : p.need.length ? `未許可：${p.need.map((item) => permissions[item]).join('・')}` : '許可済み';
+                return `<tr><th scope="row">${esc(p.name)} <small>#${p.num}</small></th><td>${role}</td><td>${permission}</td><td>${p.connected ? '接続中' : '未接続'}</td></tr>`;
+              }).join('') + '</tbody></table>'
+          : '<p>エントリーした参加者はまだいません。</p>';
+      });
       const showCounts = !!cap && (game.stage === 'timer' || game.stage === 'result');
       const lit = new Set((input.glow?.runs ?? []).filter((r) => serverNow - r.at <= RUN_STALE_MS).map((r) => r.num));
       const pipKey = showCounts && cap!.runners.length <= 60 ? cap!.runners.map((r) => (r.caught ? 'j' : lit.has(r.num) ? 'g' : 'f')).sort().join('') : '';

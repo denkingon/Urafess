@@ -270,6 +270,7 @@ export interface HostCapture {
 
 /** 主催者だけに送る集計 */
 export interface HostSummary {
+  roster?: { name: string; num: number; role: RoleId | null; caught: boolean; connected: boolean; need: PermItem[] | null }[];
   /** 入室していて外されていない人 */
   total: number;
   /** 今つながっている人 */
