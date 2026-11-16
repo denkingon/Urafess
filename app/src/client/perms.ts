@@ -77,7 +77,7 @@ export function permBanner(s: PermSnapshot): PermBanner | null {
     const [ja, en] = list(missing);
     return {
       kind: 'ask',
-      head: ['スマホの許可をもらう', 'ALLOW ALL'],
+      head: ['アプリ権限の許可をください', 'PLEASE ALLOW'],
       sub: [`${ja}を使う。全部「許可」`, `${en[0].toUpperCase()}${en.slice(1)}. Tap "Allow" on each`],
       usable: true,
       compact: false,

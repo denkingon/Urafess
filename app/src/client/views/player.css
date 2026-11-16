@@ -623,3 +623,28 @@
   /* 最初のお願いが出ている間は「自分のページ」をしまう（許可が先） */
   .player:has(.perm-ask[data-kind="ask"]:not([hidden])) .p-mine { display: none; }
 }
+
+/* アプリ権限の最初のお願い（まだ押していない・確認が出ている間）：画面全体にかぶせ、ほかの字を見せない。
+   見出し → 光る丸い札（タップして許可）→ 小さい一行。どこを押してもいい */
+.player .perm-ask[data-kind="ask"], .player .perm-ask[data-kind="asking"]:not(.compact),
+.player.is-glow .perm-ask[data-kind="ask"], .player.is-glow .perm-ask[data-kind="asking"]:not(.compact) {
+  position: fixed; inset: 0; z-index: 90; width: auto; min-height: 0; margin: 0; border-radius: 0;
+  background: var(--yami); color: var(--tsuki); box-shadow: none; animation: none;
+  padding: calc(32px + env(safe-area-inset-top)) 24px calc(32px + env(safe-area-inset-bottom)); gap: 28px;
+}
+.player .perm-ask[data-kind="ask"] b, .player .perm-ask[data-kind="asking"]:not(.compact) b { order: 0; font-size: max(var(--min), min(6.4vw, 32px)); color: var(--tsuki); }
+.player .perm-ask[data-kind="ask"] .perm-cta { order: 1; }
+.player .perm-ask[data-kind="ask"] > span:not(.perm-cta), .player .perm-ask[data-kind="asking"]:not(.compact) > span { order: 2; display: block; color: var(--muted, #a29d93); font-weight: 400; }
+.player .perm-ask[data-kind="ask"] > span:not(.perm-cta) .en { display: none; }
+.player .perm-cta { display: flex; }
+.player .perm-cta[hidden] { display: none; }
+.player .perm-cta-l {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 20px 40px; border-radius: 999px;
+  background: var(--chikko); color: var(--yami); font-size: max(var(--min), 26px); font-weight: 900; line-height: 1.15;
+  box-shadow: 0 0 0 4px rgba(184, 255, 90, .28), 0 0 28px rgba(184, 255, 90, .55);
+}
+.player .perm-cta-l span { color: inherit; font-size: inherit; font-weight: inherit; }
+.player .perm-cta-l .en { font-size: max(calc(var(--min) * 1.2), .75em); }
+@media (prefers-reduced-motion: no-preference) {
+  .player .perm-cta-l { animation: p-perm-pulse 1.2s ease-in-out infinite; }
+}
