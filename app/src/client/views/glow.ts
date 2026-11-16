@@ -398,11 +398,9 @@ export interface GlowScreen {
   update(view: PhoneView, state: ClientState, serverNow: number | null): void;
 }
 
-/** センサーの状態の一言（困っているときだけ。困っていなければ null）。許可が無いときは、許可のバナーが言う */
+/** センサーの状態の一言（困っているときだけ。困っていなければ null）。許可が無いときは、いちばん上の許可のバナーが言う（ここでは言わない） */
 function senseProblem(s: Sensors): Pair | null {
-  if (s.motion === 'denied' && s.geo === 'denied') return ['動きも位置も許可されていない。このままでは走っても光らない', 'Motion and location are blocked, so running will not make you glow'];
-  if (s.motion === 'denied') return ['動きが許可されていない。走りは位置の速さで決める（遅れて光る）', 'Motion is blocked, so running is judged by GPS speed (slower)'];
-  if (s.geo === 'denied') return ['位置が許可されていない。光っても場所は出ず、地図の真ん中も決まらない', 'Location is blocked: your spot will not show and the map has no center'];
+  if (s.motion === 'denied' || s.geo === 'denied') return null;
   if (s.motion === 'unsupported' && s.geo !== 'ok')
     return ['このスマホは動きのセンサーが使えない。位置が取れるまで、走っても光らない', 'This phone has no motion sensor. Running will not glow until location works'];
   if (s.geo === 'error') return ['位置が取れていない（建物の中・電波）。外に出ると取れる', 'No location yet (indoors or weak signal). Go outside'];
@@ -596,14 +594,10 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
 
       const problem = senseProblem(sensors);
       if (view.glow === 'prep') {
-        // センサーが使えていれば「オン」の一言だけ（言葉の量は少なく）。困っているときだけ理由を出す。
-        // 許可が無いときは許可のバナーが言うので、ここでは繰り返さない
-        const denied = sensors.motion === 'denied' || sensors.geo === 'denied';
-        const trouble = denied ? null : problem;
-        const on = !trouble && sensors.canDetect;
-        setHidden(note, !trouble && !on);
-        note.classList.toggle('is-problem', !!trouble);
-        setHTML(note, trouble ? sent(trouble) : on ? say(['走ると光る：オン', 'RUN TO GLOW: ON']) : '');
+        // 困っているとき（位置が取れない・センサーが無い）だけ理由を出す。うまく動いているときは何も出さない
+        setHidden(note, !problem);
+        note.classList.toggle('is-problem', !!problem);
+        setHTML(note, problem ? sent(problem) : '');
       } else {
         // ゲームの段階は地図に高さを譲る：困りごとは地図の真ん中に重ねる（位置が取れないときだけ）
         setHidden(note, true);
@@ -700,8 +694,7 @@ export function createGlow({ sensors, root, onDisqualified, onReported }: GlowDe
         heading: sensors.heading(now),
         myNum: state.me?.num ?? null,
         meLit: lit,
-        // 許可が無いときは許可のバナーが言うので、地図の上では繰り返さない
-        message: pos ? null : sensors.geo === 'ok' || sensors.geo === 'asking' || sensors.geo === 'denied' ? null : problem,
+        message: pos ? null : sensors.geo === 'ok' || sensors.geo === 'asking' ? null : problem,
         mates: state.mates,
         meAcc: pos?.acc ?? null,
         myKind: view.role === '鬼' ? 'oni' : view.role === '逃走者' ? 'runner' : 'unknown',

@@ -39,7 +39,7 @@
 /* 開いている間は、下の長押しの板を低くして場所を空ける（押せるまま）。マイクの板と手動の行は、閉じると戻る */
 .phone.player.is-chat .hold, .phone.player.is-chat.is-glow .hold, .phone.player.is-chat .jail .hold { min-height: 72px; }
 .player.is-chat .hold .hold-icon .gl { width: 40px; height: 40px; }
-.player.is-chat .cap-mic, .player.is-chat .cap-prep, .player.is-chat .cap-foot { display: none; }
+.player.is-chat .cap-foot { display: none; }
 /* 背の低いスマホ：札は日本語だけにして、4段が入るようにする */
 @media (max-height: 740px) {
   .player .chat-card .en { display: none; }
