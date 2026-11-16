@@ -579,3 +579,5 @@
 .player .ov-me.is-lit .ov-me-cone { fill: var(--chikko); }
 .player .ov-me .ov-me-ring { stroke-width: 3.5; }
 .player .ov-name { stroke: #0b0c10; stroke-width: 4.5px; }
+
+.player .wish-btn.wish-either { display: flex; justify-content: center; align-items: center; gap: 8px; min-height: 44px; padding: 8px 14px; margin: 8px auto 0; --pad: var(--ground); }

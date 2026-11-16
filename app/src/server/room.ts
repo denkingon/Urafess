@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { allocateCounts, assignWithWishes, castCounts } from '../shared/allocate';
+import { allocateCounts, assignWithWishes } from '../shared/allocate';
 import { autoPick, CAPTURE_PHASE_INDEX, captureOpenAt, pickCodes, rankCandidates, viaOf, type Candidate, type CaptureVia, type Hold, type OniSignal } from '../shared/capture';
 import {
   cleanMissionSecs,
@@ -101,8 +101,6 @@ import {
   RESCUE_GAP_MS,
   RESCUE_HOLD_KEEP_MS,
   RESCUE_IMMUNE_MS,
-  REVEAL_COUNT_MS,
-  REVEAL_LEAD_MS,
   ROLES,
   RUN_STALE_MS,
   SYNC_OK_MS,
@@ -810,7 +808,13 @@ export class GameRoom extends DurableObject<Env> {
     if (!isWishMode(this.game.wishMode)) this.game.wishMode = DEFAULT_WISH_MODE;
     if (this.game.wishStat === undefined) this.game.wishStat = null;
     // 配役の出し方を入れる前の版で作った部屋には、設定が無い。そのとき進んでいた配役は、すぐ出す（もう出ている）
-    if (!isRevealMode(this.game.revealMode)) this.game.revealMode = DEFAULT_REVEAL_MODE;
+    // 保存済みの部屋でも、以前の設定を持ち越さない。
+    this.game.wishMode = 'wish';
+    this.game.revealMode = 'now';
+    if (this.game.reveal) this.game.reveal = { ...this.game.reveal, mode: 'now', hitAt: null };
+    this.game.shrinkPlan = { ...DEFAULT_SHRINK_PLAN };
+    this.game.shrink = null;
+    if (this.game.lead) this.game.lead.rules = { ...this.game.lead.rules, on: false };
     if (this.game.reveal === undefined) this.game.reveal = null;
     // 司令塔を入れる前の版で作った部屋には、札が無い（外してある形で補う）
     if (!this.game.lead || !isLeadRules(this.game.lead.rules)) {
@@ -3056,6 +3060,11 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
 
+    // 旧画面からのコマンドでも、廃止したルールは再有効化できない。
+    if (['preset-apply', 'presets', 'wish-mode', 'reveal', 'cast', 'lead', 'lead-pick', 'lead-draw', 'shrink-plan', 'shrink-now'].includes(op)) {
+      return this.reject(ws, att, op, 'not-allowed');
+    }
+
     // 人を外す操作は、ほかの主催者の操作とぶつからないので版番号を見ない
     if (op === 'remove') {
       const p = typeof msg.pid === 'string' ? this.people.get(msg.pid) : undefined;
@@ -3207,15 +3216,10 @@ export class GameRoom extends DurableObject<Env> {
         if (active.length === 0) return this.reject(ws, att, op, 'no-participants');
         const isReroll = g.stage === 'assigned';
         const rules = ROLES.map((r) => ({ ...r, weight: g.ratio[r.id] }));
-        // 主催者の指名で片方の役が0人になるなら、配役しない（主催者の画面に理由を出す）
-        if (!castCounts(active.length, rules, rules.map((r) => active.filter((p) => p.pin === r.id).length))) {
-          return this.reject(ws, att, op, 'empty-role');
-        }
-        // 主催者の指名が先。残りの枠は、希望を聞く：枠より多い希望はくじで、前に外れた人から先に通す（くじだけのときは全員くじ）。
-        // 引き直しは、引き直す前の回数からやり直す（遊んでいない配役で外れた分を数えない）
+        // 引き直しでは、まだ遊んでいない配役で外れた回数を数えない。
         const missBase = new Map(active.map((p) => [p.pid, isReroll ? p.wishMissPrev : p.wishMiss] as const));
         const drawn = assignWithWishes(
-          active.map((p) => ({ pid: p.pid, wish: g.wishMode === 'wish' ? p.wish : null, miss: missBase.get(p.pid) ?? 0, pin: p.pin })),
+          active.map((p) => ({ pid: p.pid, wish: p.wish, miss: missBase.get(p.pid) ?? 0 })),
           rules,
         );
         const wished = g.wishMode === 'wish' ? drawn : null;
@@ -3253,8 +3257,7 @@ export class GameRoom extends DurableObject<Env> {
           news: null,
           wishStat,
           shrink: null,
-          // 出し方は配役を押したときの設定で決まる（あとで切り替えても、いまの配役は変わらない）
-          reveal: { mode: g.revealMode, at: now, hitAt: g.revealMode === 'sync' ? now + REVEAL_LEAD_MS + REVEAL_COUNT_MS : null },
+          reveal: { mode: 'now', at: now, hitAt: null },
           ...this.missionReset(now, 'assign'),
         };
         this.ctx.storage.transactionSync(() => {
@@ -3281,12 +3284,9 @@ export class GameRoom extends DurableObject<Env> {
             const p = this.people.get(pid)!;
             // 希望を聞いた配役では、その人の希望（wish）・通らなかったか（missed）・先に通る強さ（prio＝配役の前の、続けて外れた回数）も残す
             const wishData = wished ? { wish: p.wish, missed: missedNow.has(pid), prio: missBase.get(pid) ?? 0 } : {};
-            // 主催者が指名した人には pin（指名した役）を残す
-            const pinData = p.pin ? { pin: p.pin } : {};
-            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid), ...wishData, ...pinData } });
+            this.log('role', { p, at: now, data: { role, code: codeOf.get(pid), rcode: rcodeOf.get(pid), ...wishData } });
           }
-          const pins = active.filter((p) => p.pin !== null).length;
-          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll, how: g.wishMode, reveal: g.revealMode, ...(wishStat ? { wish: wishStat } : {}), ...(pins ? { pins } : {}) } });
+          this.log('assign', { at: now, data: { oni, runner, reroll: isReroll, how: g.wishMode, reveal: g.revealMode, ...(wishStat ? { wish: wishStat } : {}) } });
         });
         this.photos.clear();
         for (const [pid, role] of roles) {
@@ -4522,18 +4522,15 @@ export class GameRoom extends DurableObject<Env> {
    */
   private wishCounts(): { wishes: { oni: number; runner: number }; wishSlots: { oni: number; runner: number } } {
     const wishes = { oni: 0, runner: 0 };
-    const pinned = { oni: 0, runner: 0 };
     let n = 0;
     for (const p of this.people.values()) {
       if (p.removed) continue;
       n++;
-      if (p.pin !== null) pinned[p.pin]++;
-      else if (p.wish !== null) wishes[p.wish]++;
+      if (p.wish !== null) wishes[p.wish]++;
     }
     const rules = ROLES.map((r) => ({ ...r, weight: this.game.ratio[r.id] }));
-    // 指名で配役できない形（片方が0人）になっている間は、割合のままの人数で出す
-    const counts = castCounts(n, rules, rules.map((r) => pinned[r.id])) ?? allocateCounts(n, rules);
-    const slot = (id: RoleId) => Math.max(0, counts[rules.findIndex((r) => r.id === id)] - pinned[id]);
+    const counts = allocateCounts(n, rules);
+    const slot = (id: RoleId) => counts[rules.findIndex((r) => r.id === id)];
     return { wishes, wishSlots: { oni: slot('oni'), runner: slot('runner') } };
   }
 
@@ -4592,7 +4589,7 @@ export class GameRoom extends DurableObject<Env> {
       wishMiss: p.wishMiss,
       // 役が決まってからゲームの終わりまで、その配役の人は希望を変えられないので、その間はこれで合っている
       wishMissed: live && g.wishStat != null && p.wish !== null && p.role !== null && p.role !== p.wish,
-      hostCast: p.pin !== null,
+      hostCast: false,
       lead: live ? this.meLead(p) : null,
     };
   }

@@ -111,7 +111,7 @@ export interface NightDeck {
   durations(ms: number[]): void;
 }
 
-export function createNightPalette(send: (plan: NightPlan) => void, deck: NightDeck, openDuration: OpenDuration): NightPalette {
+export function createNightPalette(send: (plan: NightPlan) => void, deck: NightDeck, openDuration: OpenDuration, allowPresets = true): NightPalette {
   const el = mk('section', 'np');
   el.setAttribute('aria-label', '夜の予定');
   const head = mk('header', 'np-head');
@@ -263,15 +263,15 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
   /** プレ・本番：プリセットを選ぶ／このブロックだけ時間を変える／詳細なし。デッキへ入れる・同じ種類へまとめて */
   const roundEditor = (b: PlacedBlock) => {
     const box = mk('div', 'np-round');
-    box.append(pickerRow('プリセット', choose('プリセット', [['', 'なし'], ...presets.map((x) => [x.id, x.name] as const)], b.preset ?? '', 'preset', { id: b.id })));
+    if (allowPresets) box.append(pickerRow('プリセット', choose('プリセット', [['', 'なし'], ...presets.map((x) => [x.id, x.name] as const)], b.preset ?? '', 'preset', { id: b.id })));
     const pre = b.preset ? (presets.find((x) => x.id === b.preset) ?? null) : null;
-    if (pre) box.append(mk('p', 'np-hint', presetSummary(pre)));
+    if (pre && allowPresets) box.append(mk('p', 'np-hint', presetSummary(pre)));
     const own = mk('div', 'np-ops');
-    if (pre) own.append(btn(b.round ? 'プリセットの時間に戻す' : 'このブロックだけ時間を変える', b.round ? 'own-off' : 'own-on', { id: b.id }));
+    if (pre) own.append(btn(b.round ? '元の時間に戻す' : 'このブロックだけ時間を変える', b.round ? 'own-off' : 'own-on', { id: b.id }));
     else own.append(btn(b.round ? '詳細なし（分だけ）にする' : '時間を細かく決める', b.round ? 'own-off' : 'own-on', { id: b.id }));
     box.append(own);
     if (b.round) {
-      if (pre) box.append(mk('p', 'np-hint', 'このブロックだけの時間（ほかの札はプリセットのまま）'));
+      if (pre) box.append(mk('p', 'np-hint', 'このブロックだけの時間'));
       box.append(partRows(b.round, (button, index, seconds) => {
         openDuration(button, ROUND_PARTS[index], seconds, partMinimum(index), (value) => {
           const next = clone(plan);
@@ -285,7 +285,7 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
     const r = blockRound(b, presets);
     const ops = mk('div', 'np-ops');
     if (pre || r) {
-      const label = pre ? 'このプリセットをデッキへ入れる' : 'この時間をデッキへ入れる';
+      const label = pre && allowPresets ? 'このプリセットをデッキへ入れる' : 'この時間をデッキへ入れる';
       const put = btn(label, 'apply', { id: b.id });
       put.disabled = !canDeck() || (!pre && sameAsDeck(r ?? undefined, durations));
       ops.append(put);
@@ -362,7 +362,7 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
       const n = counts.get(k.kind);
       if (!n) continue;
       const label = `${k.name}${n > 1 ? `（${n}件）` : ''}`;
-      if (k.round) {
+      if (k.round && allowPresets) {
         const current = presets.find((x) => plan.blocks.every((b) => b.kind !== k.kind || (b.preset === x.id && !b.round)));
         const select = choose(`${k.name}の共通プリセット`, [['', 'プリセットを選ぶ', true], ...presets.map((x) => [x.id, x.name] as const)], current?.id ?? '', 'kind-preset', { kind: k.kind });
         select.disabled = presets.length === 0;
@@ -468,7 +468,7 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         const x = p.blocks[i];
         if (!x) return;
         const r = blockRound(x, presets);
-        if (x.preset && presets.some((y) => y.id === x.preset)) deck.apply(x.preset, x.round ? x.round.phases.map((v) => v * 1000) : undefined);
+        if (allowPresets && x.preset && presets.some((y) => y.id === x.preset)) deck.apply(x.preset, x.round ? x.round.phases.map((v) => v * 1000) : undefined);
         else if (r) deck.durations(r.phases.map((v) => v * 1000));
         return;
       }
@@ -496,7 +496,7 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         const wasDefaultTitle = !p.blocks[i].title || p.blocks[i].title === kindInfo(p.blocks[i].kind).name;
         p.blocks[i].kind = k;
         // プレ・本番へ変えたらプリセットを入れる。ほかへ変えたら中身を外し、長さはそのまま分で持つ
-        if (kindInfo(k).round && !p.blocks[i].preset && !p.blocks[i].round) p.blocks[i].preset = presetFor(k);
+        if (allowPresets && kindInfo(k).round && !p.blocks[i].preset && !p.blocks[i].round) p.blocks[i].preset = presetFor(k);
         if (!kindInfo(k).round) {
           p.blocks[i].mins = clampMins(Math.round(blockSecs(p.blocks[i], presets) / 60));
           delete p.blocks[i].round;
@@ -521,7 +521,7 @@ export function createNightPalette(send: (plan: NightPlan) => void, deck: NightD
         if (p.blocks.length >= NIGHT_MAX_BLOCKS) return;
         const k = kindInfo(value as NightKind);
         const nb: NightPlan['blocks'][number] = { id: newBlockId(p), kind: k.kind, title: k.name, mins: k.mins };
-        if (k.round) nb.preset = presetFor(k.kind);
+        if (k.round && allowPresets) nb.preset = presetFor(k.kind);
         // 「終わり」が最後にあれば、その前に入れる（終わり自体を足すときは最後）
         const endIdx = p.blocks.findIndex((x) => x.kind === 'end');
         if (k.kind !== 'end' && endIdx === p.blocks.length - 1) p.blocks.splice(endIdx, 0, nb);

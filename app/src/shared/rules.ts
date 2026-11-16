@@ -127,7 +127,7 @@ export const isMicMode = (m: unknown): m is MicMode => m === 'always' || m === '
 // 役そのものは配役と同時にスマホへ届いている（そのあと切れても止まれるように）。止まるまで、画面は役で変わる所を全部隠す。
 
 export type RevealMode = 'sync' | 'tap' | 'now';
-export const DEFAULT_REVEAL_MODE: RevealMode = 'sync';
+export const DEFAULT_REVEAL_MODE: RevealMode = 'now';
 export const isRevealMode = (m: unknown): m is RevealMode => m === 'sync' || m === 'tap' || m === 'now';
 
 /** sync：配役を押してから数え始めるまで（その間に全員へ届く。カードはもう流れている） */

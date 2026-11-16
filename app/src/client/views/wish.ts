@@ -63,6 +63,7 @@ export function createWish({ client }: WishDeps): WishScreen {
   el.innerHTML = `
     <p class="wish-title" data-k="title"></p>
     <div class="wish-pair">${board('runner', 'runner')}${board('oni', 'chaser')}</div>
+    <button type="button" class="wish-btn wish-either" data-wish="either" aria-pressed="false">${say(['どちらでも', 'EITHER'])}</button>
     <p class="wish-cap" data-k="cap" aria-live="polite"></p>
   `;
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
@@ -78,9 +79,7 @@ export function createWish({ client }: WishDeps): WishScreen {
   for (const b of btns) {
     b.addEventListener('click', () => {
       if (!current || !online) return;
-      const role = b.dataset.wish as RoleId;
-      const shown = pending ? pending.role : current.mine;
-      const next = shown === role ? null : role;
+      const next = b.dataset.wish === 'either' ? null : b.dataset.wish as RoleId;
       if (!client.wish(next)) return;
       pending = { role: next, at: Date.now() };
       vibrate(12);
@@ -105,6 +104,11 @@ export function createWish({ client }: WishDeps): WishScreen {
     // 待合室では、すぐ上のひとこと（選ぶ CHOOSE）が題の代わり。結果発表・見学では「次の役」と添える
     setHTML(q('title'), lobby ? '' : say(['次の役', 'NEXT ROLE']));
     for (const b of btns) {
+      if (b.dataset.wish === 'either') {
+        b.setAttribute('aria-pressed', String(mine === null));
+        b.disabled = !online;
+        continue;
+      }
       const role = b.dataset.wish as RoleId;
       b.setAttribute('aria-pressed', String(mine === role));
       b.disabled = !online;

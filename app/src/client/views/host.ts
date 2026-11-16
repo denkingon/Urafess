@@ -361,7 +361,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       <p class="note" data-k="capOni"></p>
     </section>
     <section class="cap-host glow-host" data-k="glow" hidden>
-      <div class="cap-host-head"><b>全体の地図・走ると光る</b><span data-k="glowCount"></span></div>
+      <div class="cap-host-head"><b>試合の地図</b><span data-k="glowCount"></span></div>
       <p class="note" data-k="glowReady"></p>
       <button type="button" class="ghost" data-act="glow-map" hidden>地図の真ん中をこの画面の場所にする（位置を使う）</button>
       <div data-k="glowBoard"></div>
@@ -1499,8 +1499,8 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       // 走ると光る：配役〜ゲームの終わりは、センサーの使える人の数。ゲームの段階は光っている人と地図
       const gp = glowPhase(game, serverNow);
       sensors?.setActive(gp !== 'none');
-      q('glow').hidden = gp === 'none';
-      if (gp !== 'none') {
+      q('glow').hidden = false;
+      {
         const g = host.glow;
         // 光っている人の数は、届いている光の一覧から（集計は 0.5 秒ごとなので遅れる）
         const litNow = (input.glow?.runs ?? []).filter((r) => serverNow - r.at <= RUN_STALE_MS).length;
@@ -1512,24 +1512,23 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
           gp === 'live'
             ? `地図に 鬼${oniOn}・逃走者${onMap.length - oniOn}　光っている ${litNow}人` +
               (areaPts ? (outside.length ? `　範囲の外 ${outside.length}人（${outside.map((m) => m.name).join('・')}）` : '　範囲の外 0人') : '')
-            : 'ゲームの段階で地図に出る・光る';
+            : '試合中に参加者の位置が表示されます。';
         q('glowReady').textContent = g
           ? `いまつながっている配役の人 ${g.total}人のうち、動きのセンサーが使える ${g.motion}人・位置が使える ${g.geo}人。` +
             (g.total > 0 && (g.motion < g.total || g.geo < g.total) ? '足りない人は、画面の「走ると光るをオンにする」を押す。' : '')
           : '';
         glowMap.hidden = !sensors || !sensors.needsTap;
-        board.el.hidden = gp !== 'live';
-        if (gp === 'live') {
+        {
           const now = Date.now();
           const pos = sensors?.position(now) ?? null;
           board.update({
-            glow: input.glow ?? null,
+            glow: gp === 'live' ? input.glow ?? null : null,
             serverNow,
             me: pos ? { lat: pos.lat, lon: pos.lon } : null,
             heading: sensors?.heading(now) ?? null,
             myNum: null,
             meLit: false,
-            mates: input.mates ?? null,
+            mates: gp === 'live' ? input.mates ?? null : null,
             meAcc: pos?.acc ?? null,
             myKind: 'unknown',
             area: areaPts,

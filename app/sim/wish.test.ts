@@ -5,7 +5,7 @@
  * - 人数は割合のまま。枠より多い希望はくじで外れ、外れた人は次の配役で先に通る
  * - 引き直しは、外れた回数を二重に数えない
  * - 役が決まってからゲームの終わりまで、その配役の人は希望を変えられない
- * - 主催者が「くじだけ」に切り替えると、希望は使わない
+ * - 以前の「くじだけ」への切り替えは受け付けない
  * - つなぎ直しても希望は残る。新しい夜を始めると消える
  */
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -203,35 +203,21 @@ describe('配役の希望', () => {
     expect(b2.state.me!.role).toBe('oni');
     players[players.indexOf(b)] = b2;
 
-    // 「くじだけ」に切り替える：希望は受け付けず、配役にも使わない
+    // 古い主催者画面から「くじだけ」に切り替えても、希望を使う設定は変わらない。
     host.command('wish-mode', { wishMode: 'lot' });
-    await waitFor('くじだけが全員に届く', () => players.every((p) => p.state.game?.wishMode === 'lot'));
-    host.command('assign'); // 引き直し（くじ）
-    await waitFor('くじで引き直し', () => players.every((p) => p.state.me?.assignId === host.state.game?.assignId) && host.state.host?.wishStat === null);
-    expect(host.state.game!.counts).toMatchObject({ oni: 3, runner: 7 });
-    // くじだけで決めた配役に「通らなかった」は無い。引き直しなので、外れた回数は3ラウンド目の配役の前に戻る
-    // （2ラウンド目に外れた3人は、希望が通った配役を遊ばないまま引き直されたので、先に通る権利が残る）
-    for (const p of players) {
-      expect(p.state.me!.wishMissed).toBe(false);
-      expect(missOf(p)).toBe(missedB.includes(p) ? 1 : 0);
-    }
-
-    // 不正な値は断る
-    host.command('wish-mode', { wishMode: 'free' as never });
-    await waitFor('不正な決め方は断られる', () => host.state.lastReject?.op === 'wish-mode' && host.state.lastReject.reason === 'bad-input');
-
-    // 試合中は切り替えられない
+    await waitFor('くじだけは断られる', () => host.state.lastReject?.op === 'wish-mode' && host.state.lastReject.reason === 'not-allowed');
+    expect(host.state.game!.wishMode).toBe('wish');
+    expect(host.state.game!.reveal).toMatchObject({ mode: 'now', hitAt: null });
+    expect(host.state.host!.capture?.oni).toHaveLength(3);
+    expect(host.state.host!.capture?.runners).toHaveLength(7);
     host.command('start');
     await waitFor('開始', () => host.state.game?.stage === 'timer');
-    host.command('wish-mode', { wishMode: 'wish' });
-    await waitFor('試合中は断られる', () => host.state.lastReject?.op === 'wish-mode' && host.state.lastReject.reason === 'not-allowed');
-    await waitFor('結果', () => host.state.game?.stage === 'result', 20_000);
-    // くじだけの間は、希望を送っても変わらない
-    a.wish('runner');
-    await sleep(400);
-    expect(a.state.me!.wish).toBe(null);
-    host.command('wish-mode', { wishMode: 'wish' });
-    await waitFor('希望を聞くに戻す', () => players.every((p) => p.state.game?.wishMode === 'wish'));
+    const pid = players.find((p) => roleOf(p) === 'runner')!.state.me!.pid;
+    host.command('capture', { pid });
+    await waitFor('捕まった人が管理画面に届く', () => host.state.host?.capture?.runners.some((r) => r.pid === pid && r.caught) ?? false);
+    host.command('release', { pid });
+    await waitFor('解放が管理画面に届く', () => host.state.host?.capture?.runners.some((r) => r.pid === pid && !r.caught) ?? false);
+    await waitFor('結果', () => host.state.game?.stage === 'result');
 
     // 途中で来た人（見学）の希望は、試合中でもサーバーが受け付ける（画面の板は、ゲームが終わってから出る）
     host.command('assign');

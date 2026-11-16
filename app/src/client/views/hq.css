@@ -56,10 +56,14 @@
 .hq-big-mix .u { font-size: 64px; line-height: 60px; margin-right: 10px; }
 .hq-big-mix small { font-size: 20px; line-height: 28px; font-weight: 700; align-self: flex-end; margin-left: -12px; }
 .hq-big-mix .hq-m { width: 32px; height: 32px; }
-.hq-counts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.hq-counts:empty { display: none; }
-.hq-counts li { display: flex; align-items: center; gap: 6px; color: var(--muted); line-height: 24px; }
-.hq-counts b { min-width: 34px; text-align: right; font-size: 24px; line-height: 24px; color: var(--tsuki); }
+.hq-big:empty { display: none; }
+.hq-live .hq-counts { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.hq-counts li { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border: 1px solid var(--sen); border-radius: 6px; background: var(--raised); color: var(--muted); }
+.hq-counts b { font-size: 26px; line-height: 1.15; color: var(--tsuki); }
+@media (max-width: 560px) {
+  .hq-live .hq-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hq-counts li { padding: 4px 8px; font-size: 14px; }
+}
 .hq-pips { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; }
 .hq-pips[hidden] { display: none; }
 .hq-pips i { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--tsuki); }
@@ -85,6 +89,7 @@
 /* 地図：地図を先に、説明はあと。本部の地図は道具なので無彩色で、参加者の画面より明るく */
 .hq .glow-host > .cap-host-head { order: -2; }
 .hq .glow-host > [data-k="glowBoard"] { order: -1; }
+.hq .glow-host .glow-board[data-mode="all"] .glow-radar { height: clamp(260px, 58dvh, 720px); }
 .hq .ov-tiles img { filter: invert(1) grayscale(1) brightness(1.9) contrast(1.05); }
 .hq .buttons button:disabled { display: none; }
 

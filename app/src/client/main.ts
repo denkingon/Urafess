@@ -17,7 +17,7 @@ import { createCapture } from './views/capture';
 import { createDrum } from './views/drum';
 import { createChat } from './views/chat';
 import { createGlow } from './views/glow';
-import { createHost, type HostActions } from './views/host';
+import { type HostActions } from './views/host';
 import { createHQ } from './views/hq';
 import { createJail } from './views/jail';
 import { createInstall, type InstallScreen } from './views/install';
@@ -516,23 +516,7 @@ function startHost(token: string): void {
       }
     },
   };
-  // 本部（新しい主催者画面）：前の画面は残してあり、この端末で切りかえる（/host?hq=1 でも本部になる）
-  if (params.get('hq') === '1') storage.set('urafess:hq', '1');
-  const useHQ = storage.get('urafess:hq') === '1';
-  const setHQ = (on: boolean) => {
-    if (on) storage.set('urafess:hq', '1');
-    else storage.remove('urafess:hq');
-    location.replace(location.pathname + (gameId === 'main' ? '' : `?g=${gameId}`));
-  };
-  const host = useHQ ? createHQ(hostActions, sensors, () => setHQ(false)) : createHost(hostActions, sensors);
-  if (!useHQ) {
-    const go = document.createElement('button');
-    go.type = 'button';
-    go.className = 'ghost';
-    go.textContent = '新しい本部 HQ を試す';
-    go.addEventListener('click', () => setHQ(true));
-    host.el.querySelector('.host-head')?.after(go);
-  }
+  const host = createHQ(hostActions, sensors);
   root.replaceChildren(host.el);
   // 主催者の画面にも全員への知らせを出す（確保の音も鳴る。音のために、どこかのタップで一度準備する）
   const chime = new AnnounceChime();
