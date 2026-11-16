@@ -13,7 +13,7 @@ export interface PhoneScreen {
   el: HTMLElement;
   /** 捕獲の画面などを差し込む場所（いちばん下。親指が届く） */
   slot: HTMLElement;
-  /** 走ると光るを差し込む場所。ゲームの段階は真ん中の絵の場所（光の地図）、その前は長押しの上（「オンにする」） */
+  /** 走ると光るを差し込む場所。ゲームの段階は真ん中の絵の場所（光の地図）、その前は長押しの上（困ったときの一言） */
   stage: HTMLElement;
   /** 自分のページを開くボタン（試合の外だけ出す。出すかは main が決める） */
   mine: HTMLButtonElement;

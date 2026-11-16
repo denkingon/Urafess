@@ -58,7 +58,6 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       </div>
     </div>
     <div class="cap-lock" data-k="lock" hidden>${glyph.beacon}<b data-k="lockName"></b><span>${sent(['離していい。相手が選ぶと記録される', 'You can let go. It is recorded when they pick you'])}</span></div>
-    <div class="cap-prep" data-k="prep" hidden><span data-k="prepText"></span><button type="button" class="ghost" data-act="prep" data-k="prepBtn"></button></div>
     <button type="button" class="hold" data-k="hold" hidden>
       <span class="hold-fill"></span>
       <span class="hold-icon" data-k="holdIcon"></span>
@@ -277,15 +276,6 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       case 'close':
         sheet.hidden = true;
         return;
-      case 'prep':
-        if (role === '鬼') {
-          void listener.open();
-        } else if (code) {
-          // 試しに1回鳴らす（このタップで音を出せるようになる）
-          emitter.start(code);
-          setTimeout(() => emitter.stop(), 1_600);
-        }
-        return;
     }
   });
 
@@ -424,8 +414,6 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       }
 
       // 鬼のマイク：許可は最初のバナーでもらい、配役で自分から開く。止まった・断られたときは、同じバナーが出る（views/perm.ts）
-      const inRound = view.role !== 'なし' && !view.caught;
-      const beforeOrDuring = view.step >= 1 && view.step <= 4;
 
       // 長押しボタン
       hold.hidden = mode === 'none';
@@ -446,37 +434,16 @@ export function createCapture({ client, emitter, listener }: CaptureDeps): Captu
       // 状態の一言：困ったときと、長押し中のマイクの強さだけ出す（うまく動いているときは出さない）
       const status = q('status');
       if (mode === 'oni') {
-        const mic: Record<string, Pair | null> = {
-          off: null,
-          starting: ['マイク：準備中', 'Mic: starting'],
-          ready: listener.silent
-            ? ['マイク：音が来ていない', 'Mic: no sound']
-            : !listener.live
-              ? ['マイク：止まっている', 'Mic: stopped']
-              : holding
-                ? [`マイク：${'▮'.repeat(1 + Math.round(listener.level * 5))}`, '']
-                : null,
-          denied: ['マイクが使えない（長押しの時刻で候補に出る）', 'No mic (only the hold time is used)'],
-          unsupported: ['マイクが使えない（長押しの時刻で候補に出る）', 'No mic (only the hold time is used)'],
-          error: ['マイクが使えない（長押しの時刻で候補に出る）', 'No mic (only the hold time is used)'],
-        };
-        const m = mic[listener.state];
+        // 許可が無い・止まった・音が来ていないは、いちばん上の許可のバナーが言う。ここは長押し中の針と、マイクの無いスマホの一言だけ
+        const m: Pair | null =
+          listener.state === 'unsupported'
+            ? ['マイクが使えない（長押しの時刻で候補に出る）', 'No mic (only the hold time is used)']
+            : listener.live && holding
+              ? [`マイク：${'▮'.repeat(1 + Math.round(listener.level * 5))}`, '']
+              : null;
         setHTML(status, m ? sent(m) : '');
-      } else if (mode === 'runner') {
-        setHTML(status, emitter.playing || emitter.unlocked ? '' : sent(['音：一度「音を試す」を押す', 'Sound: tap "Test sound" once']));
       } else {
         setHTML(status, '');
-      }
-
-      // 準備（ゲームの前に一度：逃走者は音を試す）
-      const prep = q('prep');
-      if (inRound && beforeOrDuring && role === '逃走者' && !emitter.unlocked) {
-        prep.hidden = false;
-        setHTML(q('prepText'), sent(['捕まったら長押しすると音が鳴る', 'When caught, hold the button to play your sound']));
-        setHTML(q('prepBtn'), say(['音を試す', 'TEST SOUND']));
-        (q('prepBtn') as HTMLButtonElement).hidden = !code;
-      } else {
-        prep.hidden = true;
       }
     },
   };

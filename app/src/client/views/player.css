@@ -98,7 +98,7 @@
 .player.is-ended .p-bar, .player.is-ended .p-pic, .player.is-ended .p-time, .player.is-ended .p-counts,
 .player.is-ended .p-word, .player.is-ended .p-note, .player.is-ended .slot { display: none; }
 /* もとの styles.css の、中の span を小さく灰色にする決まりを打ち消す（字は最低ラインより小さくしない） */
-.player .hold span, .player .cap-mic span, .player .cap-title span, .player .cap-cand span, .player .cap-prep span { font-size: inherit; color: inherit; opacity: 1; font-weight: inherit; }
+.player .hold span, .player .cap-title span, .player .cap-cand span { font-size: inherit; color: inherit; opacity: 1; font-weight: inherit; }
 .player .slot { margin: 12px 0 0; }
 
 /* ---------- 捕獲 ---------- */
@@ -133,23 +133,6 @@
 @keyframes p-wave-out { 0% { opacity: 0; transform: translateX(-8px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateX(10px); } }
 @keyframes p-wave-in { 0% { opacity: 0; transform: translateX(10px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateX(-8px); } }
 
-/* 鬼のマイク：長押しの板の場所に点線の板で出す。一度試したあとは小さくして、長押しの板も出す */
-.player .cap-mic {
-  min-height: clamp(120px, 19dvh, 156px); border-radius: 22px; border: 3px dashed var(--shu); background: transparent; color: var(--shu);
-  flex-direction: row; gap: 16px; padding: 12px 20px; text-align: left;
-}
-.player .cap-mic.compact { min-height: 76px; }
-.player .cap-mic > .gl { width: 56px; height: 56px; }
-.player .cap-mic.compact > .gl { width: 36px; height: 36px; }
-.player .cap-mic b { font-size: max(var(--min), 28px); line-height: 1.2; font-weight: 900; }
-.player .cap-mic.compact b { font-size: max(var(--min), 20px); }
-.player .cap-mic .cap-lab > span { font-size: max(var(--min), 14px); line-height: 1.45; opacity: 1; color: var(--tsuki); }
-.player .cap-mic[data-state="off"] .cap-lab > span { display: none; }
-.player .cap-mic:disabled { background: transparent; color: var(--shu); opacity: .7; }
-@media (prefers-reduced-motion: no-preference) {
-  .player .cap-mic:not(:disabled) { animation: p-mic-pulse 1.4s ease-in-out infinite; }
-}
-@keyframes p-mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 106, 61, .45); } 50% { box-shadow: 0 0 0 10px rgba(255, 106, 61, 0); } }
 
 /* 捕まえたのは？（逃走者） */
 .player .cap-cands { border: none; border-radius: 18px; background: var(--raised); padding: 12px; gap: 10px; }
@@ -187,9 +170,6 @@
 .player .cap-lock b { font-size: max(var(--min), 24px); font-weight: 900; }
 .player .cap-lock span { display: none; }
 
-/* 音を試す（逃走者、ゲームの前） */
-.player .cap-prep { border: 1px solid var(--tsuki-muted); border-radius: 14px; font-size: max(var(--min), 15px); color: var(--tsuki); }
-.player .cap-prep button.ghost { min-height: 48px; font-size: max(var(--min), 15px); color: var(--tsuki); border-color: var(--tsuki-muted); }
 
 /* 長押しの下の行（鬼の「手動」と、困ったときだけ出る一言） */
 .player .cap-status { font-size: max(var(--min), 12px); line-height: 1.4; color: var(--tsuki-muted); text-align: right; }
@@ -285,7 +265,7 @@
 
 /* ---------- 走ると光る ---------- */
 /*
- * 置き場所：配役〜追跡開始までは長押しの上（「オンにする」）、ゲームの段階は真ん中の絵の場所（光の地図）。
+ * 置き場所：配役〜追跡開始までは長押しの上（困ったときの一言）、ゲームの段階は真ん中の絵の場所（光の地図）。
  * 光っている人の点・道すじは蓄光（--chikko）。自分の印は役の色（--rc）、自分が光ると蓄光になる。
  * もとの styles.css の白黒の決まり（.phone.is-glow …）より強くするため、.phone.player から書く
  */
@@ -307,17 +287,6 @@
 /* 「捕まえたのは？」が出ている間は、地図をしまって候補に場所を譲る */
 .phone.player.is-glow:has(.cap-cands:not([hidden])) .stage { display: none; }
 
-/* オンにする：蓄光の点線の板（鬼のマイクと同じ形、色で分ける） */
-.player .glow-ask { min-height: 76px; border-radius: 18px; border: 3px dashed var(--chikko); background: transparent; color: var(--chikko); padding: 12px 16px; gap: 6px; }
-.player .glow-ask b { font-size: max(var(--min), 22px); line-height: 1.2; font-weight: 900; }
-/* もとの styles.css の、板の中の span を小さく灰色にする決まりを打ち消す */
-.player .glow-ask b span { font-size: inherit; color: inherit; font-weight: inherit; line-height: inherit; }
-.player .glow-ask b .en { font-size: max(calc(var(--min) * 1.2), .8em); }
-.player .glow-ask span[data-k="askSub"] { font-size: max(var(--min), 15px); line-height: 1.45; color: var(--tsuki); font-weight: 500; opacity: 1; }
-.player .glow-ask span[data-k="askSub"] span { font-size: inherit; color: inherit; }
-.player .glow[data-glow="live"] .glow-ask { min-height: 56px; padding: 8px 12px; }
-.player .glow[data-glow="live"] .glow-ask b { font-size: max(var(--min), 18px); }
-.player .glow[data-glow="live"] .glow-ask span[data-k="askSub"] { display: none; }
 .player .glow-note { margin: 0; text-align: center; font-size: max(var(--min), 16px); line-height: 1.4; font-weight: 700; color: var(--chikko); }
 .player .glow-note .en.u { font-size: max(calc(var(--min) * 1.2), 1em); }
 .player .glow-note.is-problem { text-align: left; font-weight: 500; color: var(--tsuki); border: 1px solid var(--tsuki-muted); border-radius: 12px; padding: 10px 12px; line-height: 1.5; }
@@ -405,7 +374,6 @@
 .player .jail[data-mode="save"] .hold { background: transparent; color: var(--chikko); border: 3px dashed var(--chikko); min-height: 88px; }
 .player .jail[data-mode="save"].is-holding .hold { background: var(--chikko); color: var(--yami); }
 .player .jail[data-mode="help"] .hold { border: 6px double var(--yami); }
-.player .jail .cap-mic { border-color: var(--tsuki); color: var(--tsuki); }
 .player .jail .cap-status { margin: 0; text-align: center; }
 /* ミッションの札は、牢屋の板と同じ枠の中でも左寄せ・ボタンは横いっぱい */
 .phone.player .slot > .mission-card { align-items: stretch; text-align: left; }
