@@ -3,7 +3,7 @@ import { ClockEstimator } from '../../shared/clock';
 import type { CaptureVia } from '../../shared/capture';
 import { CHAT_KEEP, type ChatCh, type ChatJail, type ChatMode, type ChatMsg } from '../../shared/chat';
 import type { MeetScope, MissionKind } from '../../shared/mission';
-import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
+import type { GameView, GlowEntry, HostOp, HostSummary, MateEntry, MatesScope, MeView, NoticeKind, PermItem, RescueVia, RosterEntry, SenseState, ServerMsg, Winner } from '../../shared/protocol';
 import { SILENCE_LIMIT_MS, type AnnounceSettings, type RevealMode, type RoleId, type WishMode } from '../../shared/rules';
 
 /**
@@ -166,6 +166,7 @@ export class GameClient {
   private chatSeq = 0;
   /** 走ると光る：最後に知らせたセンサーの状態（つなぎ直したら送り直す） */
   private senseState: { motion: SenseState; geo: SenseState } | null = null;
+  private permState: PermItem[] | null = null;
   private stopped = false;
   private readonly listeners = new Set<() => void>();
   private readonly storageKey: string;
@@ -407,6 +408,13 @@ export class GameClient {
     if (this.senseState?.motion === motion && this.senseState?.geo === geo) return;
     this.senseState = { motion, geo };
     this.send({ t: 'sense', motion, geo });
+  }
+
+  /** スマホの許可で、まだ入っていないもの（空＝全部入った）。変わったときだけ送る */
+  perm(need: PermItem[]): void {
+    if (this.permState && this.permState.join() === need.join()) return;
+    this.permState = [...need];
+    this.send({ t: 'perm', need });
   }
 
   /** 範囲の外に20秒いて失格になったことを伝える（同じ配役のうちは何度送ってもサーバーが1回だけ数える） */
@@ -669,13 +677,16 @@ export class GameClient {
       // 名前のボタンを押したが、届いたか分からない（サーバーは2回入れない）
       if (this.pendingEnter) this.send({ t: 'enter' });
       if (this.senseState) this.send({ t: 'sense', ...this.senseState });
+      if (this.permState) this.send({ t: 'perm', need: this.permState });
     } else if (this.pendingReclaimName) {
       // 「前の◯◯に戻る」の頼みは接続ごとなので、つなぎ直したら頼み直す
       this.send({ t: 'reclaim', name: this.pendingReclaimName });
       if (this.senseState) this.send({ t: 'sense', ...this.senseState });
+      if (this.permState) this.send({ t: 'perm', need: this.permState });
     } else if (this.pendingJoinName) {
       this.send({ t: 'join', name: this.pendingJoinName });
       if (this.senseState) this.send({ t: 'sense', ...this.senseState });
+      if (this.permState) this.send({ t: 'perm', need: this.permState });
     } else if (this.state.phase !== 'taken') {
       this.state = { ...this.state, phase: 'need-name' };
     }

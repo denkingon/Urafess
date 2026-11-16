@@ -205,6 +205,10 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
       <div><b data-k="synced"></b><span>時計が合っている</span></div>
       <div><b data-k="asks"></b><span>戻りたい人</span></div>
     </div>
+    <section class="perm-host" data-k="perm" hidden>
+      <div class="perm-host-head"><b>スマホの許可</b><span data-k="permCount"></span></div>
+      <p class="perm-host-list" data-k="permList"></p>
+    </section>
     <p class="reject" data-k="reject" hidden></p>
     <p class="note" data-k="old" hidden></p>
     <section class="asks" data-k="asklist" hidden></section>
@@ -450,6 +454,25 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
     <p class="note" data-k="foot"></p>
   `;
   const q = (k: string) => el.querySelector(`[data-k="${k}"]`) as HTMLElement;
+  // スマホの許可：全員に入れてもらうため、まだの人の名前と、入っていないものを出す（夜のあいだいつでも）
+  const PERM_NAME: Record<string, string> = { motion: '動き', geo: '位置', mic: 'マイク' };
+  let permKey = '';
+  const renderPerm = (p: HostSummary['perms']) => {
+    const key = JSON.stringify(p ?? null);
+    if (key === permKey) return;
+    permKey = key;
+    const box = q('perm');
+    box.hidden = !p || p.total === 0;
+    if (!p || p.total === 0) return;
+    const todo = p.total - p.ok;
+    box.classList.toggle('is-ok', todo === 0);
+    q('permCount').textContent = todo === 0 ? `全員入った ${p.ok}/${p.total}` : `入った ${p.ok}/${p.total}　まだ ${todo}人`;
+    const more = todo - p.missing.length - p.unknown;
+    q('permList').innerHTML =
+      p.missing.map((m) => `<span class="perm-who"><b>${esc(m.name)}</b>${esc(m.need.map((n) => PERM_NAME[n] ?? n).join('・'))}</span>`).join('') +
+      (more > 0 ? `<span class="perm-who">ほか ${more}人</span>` : '') +
+      (p.unknown > 0 ? `<span class="perm-who is-unknown">知らせがまだ ${p.unknown}人（アプリを開き直してもらう）</span>` : '');
+  };
   const btn = (op: string) => el.querySelector(`[data-op="${op}"]`) as HTMLButtonElement;
   const inputs = [...el.querySelectorAll('.durations input')] as HTMLInputElement[];
   const form = el.querySelector('.durations form') as HTMLFormElement;
@@ -1232,6 +1255,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
         ? `${host.received}/${host.assigned}` + (host.seen !== undefined && game.reveal && game.reveal.mode !== 'now' ? `（役が出た ${host.seen}）` : '')
         : '—';
       q('synced').textContent = `${host.synced}/${host.connected}`;
+      renderPerm(host.perms);
       const asks = host.reclaims ?? [];
       q('asks').textContent = asks.length ? `${asks.length}人` : 'なし';
       q('foot').textContent =
@@ -1515,7 +1539,7 @@ export function createHost(actions: HostActions, sensors?: Sensors): HostScreen 
             : '試合中に参加者の位置が表示されます。';
         q('glowReady').textContent = g
           ? `いまつながっている配役の人 ${g.total}人のうち、動きのセンサーが使える ${g.motion}人・位置が使える ${g.geo}人。` +
-            (g.total > 0 && (g.motion < g.total || g.geo < g.total) ? '足りない人は、画面の「走ると光るをオンにする」を押す。' : '')
+            (g.total > 0 && (g.motion < g.total || g.geo < g.total) ? '足りない人は、画面の「スマホの許可」バナーを押す。' : '')
           : '';
         glowMap.hidden = !sensors || !sensors.needsTap;
         {

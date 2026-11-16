@@ -1,6 +1,8 @@
 import { getCodec, parseSoundPayload, type SoundDecoder } from './codec';
 
 export type MicState = 'off' | 'starting' | 'ready' | 'denied' | 'unsupported' | 'error';
+/** マイクの許可：まだ聞いていない／もらった／断られた／このスマホには無い */
+export type MicPermission = 'unknown' | 'granted' | 'denied' | 'unsupported';
 
 /** 開いてからこれだけの間、音の処理が1回も回らないか、届くデータがぴったり無音のままなら「音が来ていない」 */
 const SILENT_MS = 1_500;
@@ -62,6 +64,9 @@ export class SoundListener {
   /** 音が来ていなくて、音の処理ごと作り直した回数（/lab に出す） */
   rebuilds = 0;
   state: MicState = 'off';
+  /** マイクの許可（最初のバナーでもらう。もらってあれば、要るときに押さなくても開ける） */
+  permission: MicPermission = 'unknown';
+  private priming: Promise<void> | null = null;
   /** 聞こえている音の大きさ（0〜1）。画面の針に使う */
   level = 0;
 
@@ -102,7 +107,58 @@ export class SoundListener {
     return this.lastSoundAt === 0 ? now - this.openedAt > SILENT_MS : now - this.lastSoundAt > SILENT_AFTER_SOUND_MS;
   }
 
-  /** マイクを開く（許可を聞かれるのはここ）。開いたまま、読むのは listen() の間だけ */
+  /** 前にマイクを許可していれば、聞かなくても分かる端末がある（分からない端末は unknown のまま＝バナーで聞く） */
+  watchPermission(): void {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      this.permission = 'unsupported';
+      return;
+    }
+    try {
+      void navigator.permissions
+        ?.query({ name: 'microphone' as PermissionName })
+        .then((p) => {
+          const read = () => {
+            if (p.state === 'granted') this.permission = 'granted';
+            else if (p.state === 'denied') this.permission = 'denied';
+            else if (this.permission === 'denied') this.permission = 'unknown';
+          };
+          read();
+          p.onchange = read;
+        })
+        .catch(() => undefined);
+    } catch {
+      // 聞けない端末はバナーで聞く
+    }
+  }
+
+  /**
+   * 許可だけもらう：マイクを開いて、すぐ閉じる（いまマイクが要らない人＝逃走者・待合室）。
+   * 開けたままにしないのは、iPhone がマイクを開けている間、鳴らす音を小さくすることがあるため
+   */
+  prime(): Promise<void> {
+    if (this.state === 'ready' || this.state === 'starting') return this.opening ?? Promise.resolve();
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      this.permission = 'unsupported';
+      return Promise.resolve();
+    }
+    this.priming ??= navigator.mediaDevices
+      .getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } })
+      .then((stream) => {
+        stream.getTracks().forEach((t) => t.stop());
+        this.permission = 'granted';
+        if (this.state === 'denied' || this.state === 'error') this.state = 'off';
+      })
+      .catch((e) => {
+        const name = (e as { name?: string }).name;
+        if (name === 'NotAllowedError' || name === 'SecurityError') this.permission = 'denied';
+      })
+      .finally(() => {
+        this.priming = null;
+      });
+    return this.priming;
+  }
+
+  /** マイクを開く（許可をまだもらっていなければ、聞かれるのはここ）。開いたまま、読むのは listen() の間だけ */
   open(): Promise<void> {
     if (this.live) return Promise.resolve();
     if (this.state === 'ready') {
@@ -127,6 +183,7 @@ export class SoundListener {
   private async doOpen(): Promise<void> {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       this.state = 'unsupported';
+      this.permission = 'unsupported';
       return;
     }
     this.state = 'starting';
@@ -137,6 +194,7 @@ export class SoundListener {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
       });
+      this.permission = 'granted';
       if (this.rebuild) {
         // 先に作った音の処理とマイクがつながらない端末がある：古いものを閉じ、マイクのあとに、マイクと同じ速さで作り直す
         this.rebuild = false;
@@ -183,7 +241,9 @@ export class SoundListener {
     } catch (e) {
       if (stream && this.stream !== stream) stream.getTracks().forEach((t) => t.stop());
       const name = (e as { name?: string }).name;
-      this.state = name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : 'error';
+      const refused = name === 'NotAllowedError' || name === 'SecurityError';
+      if (refused) this.permission = 'denied';
+      this.state = refused ? 'denied' : 'error';
     }
   }
 

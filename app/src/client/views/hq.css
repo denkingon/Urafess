@@ -232,3 +232,5 @@
 .hq-duration-values, .hq-duration-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .hq-duration-actions button { min-height: 44px; border: 1px solid var(--muted); border-radius: 7px; }
 .hq-duration-actions button[value="save"] { background: var(--tsuki); color: var(--yami); }
+/* スマホの許可がまだの人（上の行のすぐ下） */
+.hq .perm-host { flex: none; margin: 0; border-radius: 6px; max-height: 30dvh; overflow-y: auto; }

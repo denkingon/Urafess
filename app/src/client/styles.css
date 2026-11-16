@@ -776,3 +776,17 @@ button.ghost { min-height: 40px; padding: 0 12px; font-size: 13px; font-weight: 
 .lead-strip[data-tone="down"] { border-color: var(--shu); color: var(--shu); }
 .lead-strip[data-tone="down"] span { color: inherit; }
 .lead-strip[data-tone="up"] { border-color: var(--ink); background: #1b1b1b; }
+
+/* 主催者：スマホの許可がまだの人（全員に入れてもらうための一覧）。まだの人がいる間は蓄光の枠、全員入ったら静かに1行 */
+.perm-host { border: 2px solid #b8ff5a; border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.perm-host[hidden] { display: none; }
+.perm-host-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.perm-host-head b { font-size: 16px; font-weight: 900; }
+.perm-host-head span { font-size: 16px; font-weight: 700; color: #b8ff5a; font-variant-numeric: tabular-nums; }
+.perm-host-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.perm-who { display: inline-flex; align-items: baseline; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 13px; color: var(--quiet); }
+.perm-who b { font-size: 16px; font-weight: 700; color: var(--ink); }
+.perm-who.is-unknown { border-style: dashed; }
+.perm-host.is-ok { border: 1px solid var(--line); padding: 6px 12px; }
+.perm-host.is-ok .perm-host-head span { color: var(--quiet); font-weight: 500; }
+.perm-host.is-ok .perm-host-list { display: none; }

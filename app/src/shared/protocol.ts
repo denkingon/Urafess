@@ -298,6 +298,11 @@ export interface HostSummary {
    * 古いサーバーは送らない
    */
   glow?: { total: number; motion: number; geo: number; lit: number };
+  /**
+   * スマホの許可：いまつながっている今夜の人（total）のうち、全部入った人（ok）・まだ知らせが無い人（unknown＝古い版の画面か、開いた直後）と、
+   * 入っていない人の名前と入っていないもの（名前順、多ければ PERM_LIST_MAX 人まで）。古いサーバーは送らない
+   */
+  perms?: { total: number; ok: number; unknown: number; missing: { name: string; need: PermItem[] }[] };
   /** ミッション：このラウンドに届いた写真（古い順）と、写真の保存の使った量（バイト）。古いサーバーは送らない */
   photos?: HostPhoto[];
   photoBytes?: number;
@@ -398,6 +403,9 @@ export type MatesScope = 'oni' | 'runner' | 'all' | 'none';
  * unsupported＝このスマホには無い、error＝開けない・位置が取れない
  */
 export type SenseState = 'off' | 'ok' | 'denied' | 'unsupported' | 'error';
+
+/** スマホの許可の種類（最初のバナーでまとめてもらう） */
+export type PermItem = 'motion' | 'geo' | 'mic';
 
 export type HostOp =
   | 'assign'
@@ -597,6 +605,8 @@ export type ClientMsg =
   | { t: 'run'; on: boolean; lat?: number; lon?: number; acc?: number }
   /** このスマホで、動きのセンサーと位置が使えるか（変わったときと、つなぎ直したときに送る。主催者画面に数が出る） */
   | { t: 'sense'; motion: SenseState; geo: SenseState }
+  /** スマホの許可：まだ入っていないもの（空＝全部入った）。変わったときだけ送る。主催者の「許可がまだの人」に使う */
+  | { t: 'perm'; need: PermItem[] }
   /** 全体の地図：自分の位置（ゲームの段階の間だけ MATES_SEND_EVERY_MS ごとに送る。段階の外・捕まった人の分は、サーバーが捨てる） */
   | { t: 'pos'; lat: number; lon: number; acc: number }
   /**

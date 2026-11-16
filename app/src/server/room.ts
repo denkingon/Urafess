@@ -39,6 +39,7 @@ import type {
   NoticeKind,
   RosterEntry,
   SenseState,
+  PermItem,
   RescueVia,
   ServerMsg,
   Stage,
@@ -97,6 +98,8 @@ import {
   isWishMode,
   MATES_BROADCAST_MS,
   MATES_STALE_MS,
+  PERM_LIST_MAX,
+  PERM_ITEMS,
   PHASES,
   RESCUE_GAP_MS,
   RESCUE_HOLD_KEEP_MS,
@@ -429,6 +432,8 @@ interface Attachment {
   ua?: string;
   /** 走ると光る：このスマホで動きのセンサー・位置が使えるか（本人が知らせてくる） */
   sense?: { motion: SenseState; geo: SenseState };
+  /** スマホの許可：まだ入っていないもの（本人が知らせてくる。空＝全部入った。知らせが無ければ undefined） */
+  perm?: PermItem[];
 }
 
 type ParticipantRow = {
@@ -1287,6 +1292,9 @@ export class GameRoom extends DurableObject<Env> {
         return;
       case 'sense':
         this.onSense(ws, att, msg.motion, msg.geo);
+        return;
+      case 'perm':
+        this.onPerm(ws, att, msg.need);
         return;
       case 'pos':
         this.onPos(att, msg, now);
@@ -2997,6 +3005,16 @@ export class GameRoom extends DurableObject<Env> {
     this.scheduleHostUpdate();
   }
 
+  /** このスマホで、まだ入っていない許可（主催者の「許可がまだの人」に出す） */
+  private onPerm(ws: WebSocket, att: Attachment, need: unknown): void {
+    if (!Array.isArray(need) || need.length > PERM_ITEMS.length) return;
+    const clean = PERM_ITEMS.filter((i) => need.includes(i));
+    if (att.perm && att.perm.join() === clean.join()) return;
+    att.perm = clean;
+    ws.serializeAttachment(att);
+    this.scheduleHostUpdate();
+  }
+
   // ---------- 主催者 ----------
 
   /** 空白・大文字小文字・全角半角のちがいは同じ合言葉とみなす（スマホで打つため。shared/hostkey.ts） */
@@ -4659,6 +4677,8 @@ export class GameRoom extends DurableObject<Env> {
     const glowIn = new Set<string>();
     const motionOk = new Set<string>();
     const geoOk = new Set<string>();
+    /** スマホの許可：つながっている人が知らせてきた「まだ入っていないもの」（同じ人が2つの画面でつないでいれば、少ない方） */
+    const permNeed = new Map<string, PermItem[]>();
     for (const ws of this.ctx.getWebSockets()) {
       const a = ws.deserializeAttachment() as Attachment | null;
       if (a?.reclaim) asks.push(a.reclaim);
@@ -4667,6 +4687,10 @@ export class GameRoom extends DurableObject<Env> {
       connected.add(a.pid);
       present.add(a.pid);
       if (typeof a.syncErr === 'number' && a.syncErr <= SYNC_OK_MS) synced.add(a.pid);
+      if (a.perm) {
+        const prev = permNeed.get(a.pid);
+        if (!prev || a.perm.length < prev.length) permNeed.set(a.pid, a.perm);
+      }
       if (this.inRound(a.pid)) {
         glowIn.add(a.pid);
         if (a.sense?.motion === 'ok') motionOk.add(a.pid);
@@ -4699,6 +4723,19 @@ export class GameRoom extends DurableObject<Env> {
       reclaims,
       registry: this.members.size,
       glow: { total: glowIn.size, motion: motionOk.size, geo: geoOk.size, lit: this.runs.size },
+      perms: (() => {
+        const here = active.filter((p) => connected.has(p.pid));
+        const missing = here
+          .map((p) => ({ name: p.name, need: permNeed.get(p.pid) }))
+          .filter((x): x is { name: string; need: PermItem[] } => !!x.need && x.need.length > 0)
+          .sort((x, y) => x.name.localeCompare(y.name, 'ja'));
+        return {
+          total: here.length,
+          ok: here.filter((p) => permNeed.get(p.pid)?.length === 0).length,
+          unknown: here.filter((p) => !permNeed.has(p.pid)).length,
+          missing: missing.slice(0, PERM_LIST_MAX),
+        };
+      })(),
       photos: [...this.photos.values()].map(
         (ph): HostPhoto => ({ id: ph.id, missionId: ph.missionId, name: ph.name, at: ph.at, status: ph.status, bytes: ph.bytes, freed: ph.freed }),
       ),

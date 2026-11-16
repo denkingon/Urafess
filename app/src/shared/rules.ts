@@ -263,6 +263,11 @@ export const RUN_ACCURACY_MAX = 25;
 // リクエスト：50人・5秒ごとで1分に600。ゲームの段階が1晩で計30分なら約1.8万（無料枠1日10万の中）
 
 /** 位置を送る間隔 */
+/** 主催者の「許可がまだの人」に並べる名前の上限（それより多ければ人数だけ） */
+export const PERM_LIST_MAX = 60;
+/** スマホの許可の種類（protocol.ts の PermItem と同じ並び） */
+export const PERM_ITEMS = ['motion', 'geo', 'mic'] as const;
+
 export const MATES_SEND_EVERY_MS = 5_000;
 
 /**

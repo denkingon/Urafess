@@ -257,7 +257,9 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const area = old('[data-k="area"]');
   panel.deck.append(area);
   const reject = old('[data-k="reject"]');
-  const strays = [...el.children].filter((c) => c !== reject && !c.classList.contains('hq-gone')) as HTMLElement[];
+  // スマホの許可がまだの人：ダッシュボードの各タブで見える場所に置く（迷子の箱には入れない）
+  const permBox = old('[data-k="perm"]');
+  const strays = [...el.children].filter((c) => c !== reject && c !== permBox && !c.classList.contains('hq-gone')) as HTMLElement[];
   if (strays.length) {
     panel.deck.append(group('そのほか', ...strays));
   }
@@ -273,7 +275,7 @@ export function createHQ(actions: HostActions, sensors?: Sensors): HostScreen {
   const content = make('div', 'hq-workspace');
   const title = make('h2', 'hq-page-title', 'ダッシュボード');
   const live = make('div', 'hq-live');
-  live.append(counts, now, rail, strip, dock, tabs);
+  live.append(counts, now, rail, permBox, strip, dock, tabs);
   const locked = make('p', 'hq-rules-locked', '試合終了後に次のゲームのルールを編集できます。');
   locked.hidden = true;
   content.append(title, live, reject, locked, body);
