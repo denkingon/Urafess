@@ -1,4 +1,3 @@
-import '../picto/engine.js';
 import './sos.css';
 import type { MeSos } from '../../shared/protocol';
 import type { GameClient } from '../core/game-client';
@@ -33,13 +32,9 @@ export interface SosScreen {
   update(me: MeSos | null | undefined, ready: boolean, online: boolean): void;
 }
 
+/** 救護の印：太いプラス（色は月白か闇。赤十字＝白地に赤の十字には寄せない） */
 function aidSVG(): string {
-  try {
-    const all = window.URAFES_PICTO.build({ BEAT: 1 }).pictos as { id: string; svg: string }[];
-    return all.find((p) => p.id === 'aid')?.svg ?? '';
-  } catch {
-    return '';
-  }
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 2h6v7h7v6h-7v7H9v-7H2V9h7z" fill="currentColor"/></svg>';
 }
 
 export function createSos(deps: { client: GameClient; sensors: Sensors; gameId: string }): SosScreen {

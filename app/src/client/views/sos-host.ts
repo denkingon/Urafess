@@ -107,7 +107,7 @@ export function createSosHost(act: { command(op: 'sos-ack' | 'sos-done' | 'pause
         return;
       }
       el.innerHTML =
-        `<div class="sos-host-top"><b>救護の呼び出し ${items.length}件</b>` +
+        `<div class="sos-host-top"><b><svg class="sos-plus" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 2h6v7h7v6h-7v7H9v-7H2V9h7z" fill="currentColor"/></svg>救護の呼び出し ${items.length}件</b>` +
         (running ? `<button type="button" data-op="pause"${dis('pause', '')}>試合を一時停止</button>` : '') +
         `</div>` +
         items
