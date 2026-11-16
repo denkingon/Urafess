@@ -1,3 +1,5 @@
+// デバッグ台の中のスマホ（/?g=部屋&dev=番号）：覚えておく値・位置・動きをにせものにする。ほかの import より先に効かせる
+import './dev';
 import type { LogLine } from '../shared/logline';
 import './styles.css';
 import { RunReporter } from '../shared/run';
@@ -39,6 +41,7 @@ const gameId = (params.get('g') ?? 'main').replace(/[^A-Za-z0-9_-]/g, '').slice(
 const route = location.pathname.replace(/\/+$/, '');
 const isHost = route === '/host';
 const isLab = route === '/lab';
+const isDebug = route === '/debug';
 const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/game/${gameId}/ws`;
 
 const storage: KeyValueStore = {
@@ -73,7 +76,10 @@ const WRONG_KEY = '合言葉が違う。打った字はそのまま残してあ�
 const screenKeeper = createScreenKeeper();
 const inMatch = (stage: string | undefined) => stage === 'assigned' || stage === 'timer';
 
-if (isLab) {
+if (isDebug) {
+  // デバッグ台：PC の1画面に参加者のスマホを並べる（本番の部屋 main では開かない）
+  void import('./views/debug').then((m) => m.startDebugDesk(root, gameId));
+} else if (isLab) {
   startLab();
 } else if (isHost) {
   // 主催者用の合言葉は、合言葉の欄に打つ（一度通ればこの端末が覚える）。URL の ?token= で渡してもいい（URL からは消す）
