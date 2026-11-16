@@ -1,0 +1,103 @@
+/* 救護の呼び出し（緊急ボタン）。赤十字の印は使わない（法律で使える人が決まっている）。絵はピクトの「救護」（線なし） */
+
+.sos-btn {
+  /* 権限のお願い（90）・失格（60）・ドラムロール（50）より上。いつでも押せる */
+  position: fixed; z-index: 95;
+  top: calc(env(safe-area-inset-top, 0px) + 6px); right: calc(env(safe-area-inset-right, 0px) + 6px);
+  width: 60px; height: 60px; padding: 0; border-radius: 50%;
+  border: 2px solid #ff6a3d; background: rgba(11, 12, 16, .88); color: #f1ede4;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  font: 700 12px/1.1 "Hiragino Sans", system-ui, sans-serif;
+  --p: 0;
+}
+.sos-btn[hidden] { display: none; }
+.sos-btn .sos-pic { width: 30px; height: 30px; pointer-events: none; }
+.sos-btn .sos-pic svg { width: 100%; height: 100%; display: block; }
+.sos-btn .sos-lbl { pointer-events: none; font-size: 11px; white-space: nowrap; }
+/* 長押しの進み（3秒で一周） */
+.sos-btn .sos-ring {
+  position: absolute; inset: -6px; border-radius: 50%; pointer-events: none;
+  background: conic-gradient(#ff6a3d calc(var(--p) * 360deg), transparent 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+}
+.sos-btn.is-pressing { transform: scale(1.12); background: #2a1410; }
+.sos-btn.is-calling { background: #ff6a3d; color: #0b0c10; border-color: #f1ede4; }
+.sos-btn.is-calling .sos-lbl { font-size: 10px; }
+@media (prefers-reduced-motion: no-preference) {
+  .sos-btn.is-calling { animation: sos-pulse 1s ease-in-out infinite; }
+}
+@keyframes sos-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 106, 61, .7); } 50% { box-shadow: 0 0 0 14px rgba(255, 106, 61, 0); } }
+
+/* 段階バーの右端がボタンの下に隠れないよう、入室後は少し空ける */
+.player.has-sos .p-bar { margin-right: 66px; }
+.player.has-sos .perm-ask:not([data-kind="ask"]):not([data-kind="asking"]) { width: calc(100% - 66px); align-self: flex-start; }
+
+.sos-sheet {
+  position: fixed; inset: 0; z-index: 96; overflow-y: auto;
+  padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
+  background: #0b0c10; color: #f1ede4; border: 4px solid #ff6a3d;
+  display: flex; flex-direction: column; gap: 12px;
+  font-family: "Hiragino Sans", system-ui, sans-serif;
+}
+.sos-sheet[hidden] { display: none; }
+.sos-sheet .sos-head { display: flex; gap: 12px; align-items: center; }
+.sos-sheet .sos-pic.big { flex: 0 0 72px; height: 72px; }
+.sos-sheet .sos-pic.big svg { width: 100%; height: 100%; display: block; }
+.sos-sheet .sos-head b { display: block; font-size: 26px; line-height: 1.25; font-weight: 900; }
+.sos-sheet .sos-head p { margin: 4px 0 0; font-size: 16px; line-height: 1.45; font-weight: 700; color: #a29d93; }
+.sos-sheet[data-st="ack"] .sos-head b { color: #b8ff5a; }
+.sos-sheet .sos-call {
+  display: flex; flex-direction: column; gap: 4px; padding: 18px 16px; border-radius: 16px;
+  background: #ff6a3d; color: #0b0c10; text-decoration: none;
+}
+.sos-sheet .sos-call b { font-size: 30px; line-height: 1.15; font-weight: 900; }
+.sos-sheet .sos-call span { font-size: 16px; line-height: 1.4; font-weight: 700; }
+.sos-sheet .sos-call.guard { background: #f1ede4; }
+.sos-sheet .sos-call.guard b { font-size: 24px; }
+.sos-sheet .sos-place, .sos-sheet .sos-pos { margin: 0; font-size: 16px; line-height: 1.5; color: #a29d93; }
+.sos-sheet .sos-place b { color: #f1ede4; }
+.sos-sheet .sos-pos:empty { display: none; }
+.sos-sheet .sos-row { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+.sos-sheet .sos-row button {
+  min-height: 52px; border-radius: 12px; font: 700 16px/1.3 "Hiragino Sans", system-ui, sans-serif;
+  border: 2px solid #2b2e38; background: #181a21; color: #f1ede4;
+}
+.sos-sheet .sos-row button[hidden] { display: none; }
+.sos-sheet .sos-cancel { color: #a29d93; }
+.sos-sheet .sos-cancel.is-confirm { border-color: #ff6a3d; color: #ff6a3d; }
+
+/* 主催者：救護の呼び出しの帯（画面のいちばん上にかぶせる） */
+.sos-host {
+  position: fixed; z-index: 80; top: 0; left: 0; right: 0; max-height: 70vh; overflow-y: auto;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 10px 10px;
+  background: #ff6a3d; color: #0b0c10; box-shadow: 0 6px 24px rgba(0, 0, 0, .6);
+  display: flex; flex-direction: column; gap: 8px;
+  font: 700 15px/1.35 "Hiragino Sans", system-ui, sans-serif;
+}
+.sos-host[hidden] { display: none; }
+.sos-host-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sos-host-top b { font-size: 20px; font-weight: 900; margin-right: auto; }
+.sos-host-top a, .sos-host-top button {
+  min-height: 40px; padding: 0 14px; border-radius: 10px; display: inline-flex; align-items: center;
+  background: #0b0c10; color: #f1ede4; text-decoration: none; border: none; font: inherit;
+}
+.sos-host-item { background: #0b0c10; color: #f1ede4; border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.sos-host-item[data-st="ack"] { opacity: .9; outline: 2px solid #b8ff5a; }
+.sos-host-who b { font-size: 22px; font-weight: 900; margin-right: 8px; }
+.sos-host-who span, .sos-host-pos span { color: #a29d93; }
+.sos-host-pos { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.sos-host-pos .sos-map { color: #b8ff5a; font-weight: 900; }
+.sos-host-act { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.sos-host-act button {
+  min-height: 44px; padding: 0 16px; border-radius: 10px; font: inherit;
+  border: 2px solid #2b2e38; background: #181a21; color: #f1ede4;
+}
+.sos-host-act button.go { background: #ff6a3d; color: #0b0c10; border-color: #ff6a3d; font-size: 18px; font-weight: 900; }
+.sos-host-act button:disabled { opacity: .5; }
+.sos-host-ack { color: #b8ff5a; }
+@media (prefers-reduced-motion: no-preference) {
+  .sos-host:has(.sos-host-item[data-st="open"]) { animation: sos-host-flash 1s steps(2) infinite; }
+}
+@keyframes sos-host-flash { 0% { background: #ff6a3d; } 50% { background: #ffd2c2; } }
