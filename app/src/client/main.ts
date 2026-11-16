@@ -16,6 +16,7 @@ import { Sensors } from './sense';
 import { Perms } from './perms';
 import { callAccount, createAccount, errorText } from './views/account';
 import { createAnnounce } from './views/announce';
+import { createLookup, createLookupButton } from './views/lookup';
 import { createCapture } from './views/capture';
 import { createDrum } from './views/drum';
 import { createChat } from './views/chat';
@@ -324,6 +325,9 @@ function startPlayer(): void {
   const chime = new AnnounceChime();
   const announce = createAnnounce(chime);
   phone.el.append(announce.el);
+  // 本部の「前を向いて」（全員のスマホで同じ瞬間から流す。いちばん上に重ねる）
+  const lookup = createLookup(chime, () => client.serverNow() ?? Date.now());
+  document.body.append(lookup.el);
   const unlock = () => {
     emitter.unlock();
     listener.unlock();
@@ -425,6 +429,7 @@ function startPlayer(): void {
       const freeRunner = me.role === 'runner' && me.assignId === s.game.assignId && !me.removed && me.caught == null;
       announce.update({ news, aboutMe: news !== null && me.newsAbout === news.seq, serverNow, freeRunner, busy: emitter.playing });
     }
+    lookup.update(s.game.lookup ?? null);
     capture.update(view, s);
     mission.update(s.game, s.me);
     jail.update(view, s);
@@ -568,6 +573,9 @@ function startHost(token: string): void {
   const chime = new AnnounceChime();
   const announce = createAnnounce(chime);
   host.el.append(announce.el);
+  // 前を向いて：主催者の画面には全画面を出さず（「終わり」を押せなくなる）、浮かせたボタンだけ
+  const lookupBtn = createLookupButton((on) => hostActions.command('lookup', { on }));
+  host.el.append(lookupBtn.el);
   document.addEventListener('pointerup', () => chime.unlock(), { capture: true, passive: true });
   document.addEventListener('click', () => chime.unlock(), { capture: true, passive: true });
   loop(() => {
@@ -591,6 +599,7 @@ function startHost(token: string): void {
       chat: s.chat,
     });
     announce.update({ news: s.game?.news ?? null, aboutMe: false, serverNow: client.serverNow() ?? Date.now(), freeRunner: false, busy: false });
+    lookupBtn.update(s.game?.lookup ?? null);
   });
 }
 
