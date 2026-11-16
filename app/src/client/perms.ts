@@ -91,7 +91,8 @@ export function permBanner(s: PermSnapshot): PermBanner | null {
       head: [`${ja}の許可がない`, 'NOT ALLOWED'],
       sub: ['押して聞き直す。だめなら設定で許可', 'Tap to retry, or allow in Settings'],
       usable: true,
-      compact: true,
+      // 全員に入れてもらうため、断られたあとも大きいまま出す（ゲームの段階だけ CSS で1行に詰める）
+      compact: false,
     };
   }
   if (s.wantMic && !s.micLive && s.mic !== 'unsupported' && s.micState !== 'unsupported') {

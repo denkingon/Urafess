@@ -52,7 +52,7 @@ describe('スマホの許可のバナー（1枚だけ）', () => {
     const b = permBanner(snap({ asked: true, motion: 'ok', geo: 'denied', mic: 'denied' }))!;
     expect(b.kind).toBe('denied');
     expect(b.head[0]).toBe('位置・マイクの許可がない');
-    expect(b.compact).toBe(true);
+    expect(b.compact).toBe(false);
     expect(b.usable).toBe(true);
   });
 

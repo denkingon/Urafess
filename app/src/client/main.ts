@@ -286,7 +286,8 @@ function startPlayer(): void {
     },
   });
   const perm = createPerm(() => perms.request(wantMic(lastView)));
-  phone.slot.prepend(perm.el);
+  // 画面のいちばん上（段階バーより上）に、ほかの板と違う塗りの帯で出す：全員に入れてもらうため
+  phone.el.prepend(perm.el);
   let lastMatePos = 0;
   setInterval(() => {
     const view = lastView;
