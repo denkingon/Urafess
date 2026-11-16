@@ -31,8 +31,10 @@ import type {
   HostLead,
   HostPhoto,
   HostOp,
+  HostSos,
   HostSummary,
   MateEntry,
+  MeSos,
   MatesScope,
   MeLead,
   MeView,
@@ -573,6 +575,8 @@ export class GameRoom extends DurableObject<Env> {
   /** chat がどの夜・どの配役の分か（変わったら読み直して、全員に入れ替えを送る） */
   private chatKey = '';
   private readonly lastChatAt = new Map<string, number>();
+  /** 救護の呼び出し：pid ごとのいちばん新しい呼び出し（今夜のうち。サーバーが入れ替わったら表から読み直す） */
+  private readonly sosByPid = new Map<string, SosRec>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -742,6 +746,22 @@ export class GameRoom extends DurableObject<Env> {
       )`,
     );
     this.sql.exec(`CREATE INDEX IF NOT EXISTS chat_night ON chat (night, assign_id)`);
+    // 救護の呼び出し。新しい夜を始めても消さない（あとで何があったか読めるように）
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS sos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cid TEXT NOT NULL,
+        pid TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        ack_at INTEGER,
+        done_at INTEGER,
+        lat REAL,
+        lon REAL,
+        acc INTEGER,
+        pos_at INTEGER
+      )`,
+    );
     // 1イベント＝1行。部屋を空にしても消さない（あとで人数比や流れを統計で見るため）
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS events (
@@ -845,6 +865,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!isChatJail(this.game.chatJail)) this.game.chatJail = DEFAULT_CHAT_JAIL;
     if (!cleanPlaces(this.game.chatPlaces)) this.game.chatPlaces = [...DEFAULT_PLACES];
     this.loadChat();
+    this.loadSos();
     this.people.clear();
     for (const r of this.sql.exec<ParticipantRow>(`SELECT * FROM participants`)) {
       this.people.set(r.pid, {
@@ -1345,6 +1366,9 @@ export class GameRoom extends DurableObject<Env> {
         return;
       case 'chat':
         this.onChat(att, msg, now);
+        return;
+      case 'sos':
+        this.onSos(att, msg, now);
         return;
     }
   }
@@ -3100,6 +3124,147 @@ export class GameRoom extends DurableObject<Env> {
     this.scheduleHostUpdate();
   }
 
+  // ---------- 救護の呼び出し（緊急ボタン） ----------
+
+  private loadSos(): void {
+    this.sosByPid.clear();
+    for (const r of this.sql.exec<SosRow>(`SELECT * FROM sos WHERE at > ? ORDER BY id`, Date.now() - SOS_KEEP_MS)) {
+      this.sosByPid.set(r.pid, sosOf(r));
+    }
+  }
+
+  private saveSos(r: SosRec): void {
+    this.sql.exec(
+      `UPDATE sos SET status = ?, ack_at = ?, done_at = ?, lat = ?, lon = ?, acc = ?, pos_at = ? WHERE id = ?`,
+      r.status,
+      r.ackAt,
+      r.doneAt,
+      r.pos?.lat ?? null,
+      r.pos?.lon ?? null,
+      r.pos?.acc ?? null,
+      r.pos?.at ?? null,
+      r.id,
+    );
+  }
+
+  /**
+   * 参加者が緊急ボタンを押した（on）・取り消した（off）。試合の段階に関係なく受ける。
+   * 同じ cid の送り直しは同じ呼び出しのまま（位置だけ新しくする）。まだ終わっていない呼び出しがあれば、それに重ねる
+   */
+  private onSos(att: Attachment, msg: Extract<ClientMsg, { t: 'sos' }>, now: number): void {
+    const p = att.pid ? this.people.get(att.pid) : undefined;
+    if (!p) return;
+    const cid = typeof msg.cid === 'string' ? msg.cid.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) : '';
+    if (!cid) return;
+    const pos = cleanPos(msg.lat, msg.lon, msg.acc);
+    const cur = this.sosByPid.get(p.pid);
+    const live = cur && (cur.status === 'open' || cur.status === 'ack') ? cur : null;
+    if (msg.on !== true) {
+      if (!live || live.cid !== cid) return this.sendSnapTo([p.pid]);
+      live.status = 'cancel';
+      live.doneAt = now;
+      this.saveSos(live);
+      this.log('sos-cancel', { p, at: now, data: { id: live.id } });
+      this.sosChanged(p.pid);
+      return;
+    }
+    if (live || cur?.cid === cid) {
+      // 送り直し・位置の更新（終わった呼び出しの送り直しは、位置も変えずに今の状態を返す）
+      const r = live ?? cur!;
+      if (live && pos && (!r.pos || pos.acc <= r.pos.acc + 20 || now - r.pos.at > 15_000)) {
+        r.pos = { ...pos, at: now };
+        this.saveSos(r);
+        this.sosChanged(p.pid);
+      } else {
+        this.sendSnapTo([p.pid]);
+      }
+      return;
+    }
+    if (cur && now - cur.at < SOS_GAP_MS) return this.sendSnapTo([p.pid]);
+    const id = this.sql
+      .exec<{ id: number }>(
+        `INSERT INTO sos (cid, pid, at, status, lat, lon, acc, pos_at) VALUES (?, ?, ?, 'open', ?, ?, ?, ?) RETURNING id`,
+        cid,
+        p.pid,
+        now,
+        pos?.lat ?? null,
+        pos?.lon ?? null,
+        pos?.acc ?? null,
+        pos ? now : null,
+      )
+      .one().id;
+    const r: SosRec = { id, cid, pid: p.pid, at: now, status: 'open', ackAt: null, doneAt: null, pos: pos ? { ...pos, at: now } : null };
+    this.sosByPid.set(p.pid, r);
+    const inRound = this.inRound(p.pid);
+    this.log('sos', { p, at: now, data: { id, role: inRound?.role ?? null, lat: pos?.lat ?? null, lon: pos?.lon ?? null, acc: pos?.acc ?? null } });
+    this.sosChanged(p.pid);
+  }
+
+  /** 主催者が「見た（向かう）」「終わった」を押した */
+  private onSosHost(op: 'sos-ack' | 'sos-done', rid: unknown, now: number): void {
+    const id = Number(rid);
+    const r = [...this.sosByPid.values()].find((x) => x.id === id);
+    if (!r || (r.status !== 'open' && r.status !== 'ack')) return this.sendHostsNow();
+    if (op === 'sos-ack') {
+      if (r.status === 'ack') return;
+      r.status = 'ack';
+      r.ackAt = now;
+    } else {
+      r.status = 'done';
+      r.doneAt = now;
+    }
+    this.saveSos(r);
+    this.log(op, { p: this.people.get(r.pid) ?? null, at: now, data: { id: r.id, secs: Math.round((now - r.at) / 1000) } });
+    this.sosChanged(r.pid);
+  }
+
+  /** 押した本人と主催者に、すぐ送る（まとめて送るのを待たない） */
+  private sosChanged(pid: string): void {
+    this.sendSnapTo([pid]);
+    this.sendHostsNow();
+  }
+
+  private sendHostsNow(): void {
+    if (this.hostTimer) {
+      clearTimeout(this.hostTimer);
+      this.hostTimer = null;
+    }
+    const game = this.gameView();
+    const host = this.hostSummary();
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = (ws.deserializeAttachment() as Attachment | null) ?? {};
+      if (att.host) this.send(ws, this.snapFor(att, game, host));
+    }
+  }
+
+  private meSos(pid: string, now: number): MeSos | null {
+    const r = this.sosByPid.get(pid);
+    if (!r || now - r.at > SOS_KEEP_MS) return null;
+    return { cid: r.cid, id: r.id, status: r.status, at: r.at, ackAt: r.ackAt };
+  }
+
+  private hostSos(connected: Set<string>): HostSos[] {
+    const out: HostSos[] = [];
+    for (const r of this.sosByPid.values()) {
+      if (r.status !== 'open' && r.status !== 'ack') continue;
+      const p = this.people.get(r.pid);
+      const m = p ? null : this.members.get(r.pid);
+      const inRound = p ? this.inRound(p.pid) : undefined;
+      out.push({
+        id: r.id,
+        name: p?.name ?? m?.name ?? '？',
+        status: r.status,
+        at: r.at,
+        ackAt: r.ackAt,
+        role: inRound?.role ?? null,
+        caught: inRound ? this.isCaught(inRound) : false,
+        pos: r.pos,
+        online: connected.has(r.pid),
+      });
+    }
+    return out.sort((a, b) => a.at - b.at);
+  }
+
   // ---------- 主催者 ----------
 
   /** 空白・大文字小文字・全角半角のちがいは同じ合言葉とみなす（スマホで打つため。shared/hostkey.ts） */
@@ -3160,6 +3325,12 @@ export class GameRoom extends DurableObject<Env> {
     const op = msg.op;
     if (!att.host) {
       this.send(ws, { t: 'denied' });
+      return;
+    }
+
+    // 救護の呼び出しは、ほかの操作とぶつからないので版番号を見ない（いつでも）
+    if (op === 'sos-ack' || op === 'sos-done') {
+      this.onSosHost(op, msg.rid, now);
       return;
     }
 
@@ -4738,6 +4909,7 @@ export class GameRoom extends DurableObject<Env> {
       wishMissed: live && g.wishStat != null && p.wish !== null && p.role !== null && p.role !== p.wish,
       hostCast: p.pin !== null,
       lead: live ? this.meLead(p) : null,
+      sos: this.meSos(p.pid, now),
     };
   }
 
@@ -4842,6 +5014,7 @@ export class GameRoom extends DurableObject<Env> {
       groups.set(k, [...(groups.get(k) ?? []), p]);
     }
     return {
+      sos: this.hostSos(connected),
       total: active.length,
       connected: active.filter((p) => connected.has(p.pid)).length,
       assigned: inAssign.length,
@@ -5012,6 +5185,50 @@ export class GameRoom extends DurableObject<Env> {
       // 閉じかけの接続は、つなぎ直したときに全部を送り直すので捨ててよい
     }
   }
+}
+
+/** 救護：呼び出しを覚えておく長さ（押した本人の画面と主催者の一覧に出す。表には残る） */
+const SOS_KEEP_MS = 12 * 60 * 60_000;
+/** 救護：終わった呼び出しのすぐあとに、新しい呼び出しを受けるまでの間（押し間違いの連打よけ） */
+const SOS_GAP_MS = 5_000;
+
+interface SosRec {
+  id: number;
+  cid: string;
+  pid: string;
+  at: number;
+  status: 'open' | 'ack' | 'done' | 'cancel';
+  ackAt: number | null;
+  doneAt: number | null;
+  pos: { lat: number; lon: number; acc: number; at: number } | null;
+}
+
+type SosRow = {
+  id: number;
+  cid: string;
+  pid: string;
+  at: number;
+  status: string;
+  ack_at: number | null;
+  done_at: number | null;
+  lat: number | null;
+  lon: number | null;
+  acc: number | null;
+  pos_at: number | null;
+};
+
+function sosOf(r: SosRow): SosRec {
+  const status = r.status === 'ack' || r.status === 'done' || r.status === 'cancel' ? r.status : 'open';
+  return {
+    id: r.id,
+    cid: r.cid,
+    pid: r.pid,
+    at: r.at,
+    status,
+    ackAt: r.ack_at,
+    doneAt: r.done_at,
+    pos: r.lat !== null && r.lon !== null ? { lat: r.lat, lon: r.lon, acc: r.acc ?? 9_999, at: r.pos_at ?? r.at } : null,
+  };
 }
 
 /** 走ると光る：届いた位置を確かめて丸める（緯度・経度は小数5桁＝約1m、誤差は m の整数）。おかしければ null */
