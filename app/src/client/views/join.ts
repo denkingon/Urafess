@@ -92,7 +92,6 @@ export function createJoin(actions: EntryActions, door: HostDoor = { href: '/hos
       <button type="button" data-a="stop">${say(['やめる', 'CANCEL'])}</button>
     </section>
     <div class="spacer"></div>
-    <p class="note" data-k="foot">${sent(['ホーム画面に追加したアプリから開く。LINEの中では開かない', 'Open it from the app on your home screen, not inside LINE'])}</p>
     <button type="button" class="quiet" data-a="account" hidden>${say(['自分のページ', 'MY PAGE'])}</button>
     <button type="button" class="quiet" data-a="move" hidden>${say(['前のスマホから移す', 'MOVE FROM YOUR OLD PHONE'])}</button>
     <button type="button" class="quiet" data-a="forget" hidden>${say(['別の人として入る', 'JOIN AS SOMEONE ELSE'])}</button>

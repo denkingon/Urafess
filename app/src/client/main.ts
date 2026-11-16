@@ -101,7 +101,7 @@ if (isDebug) {
   const path = installPath();
   if (path === 'line' && escapeLine()) {
     // LINE が外のブラウザで開き直す。この画面はこのまま閉じられる
-  } else if (path) {
+  } else if (path && params.has('install')) {
     showInstall(path);
   } else {
     startPlayer();
@@ -113,8 +113,9 @@ registerServiceWorker();
 // ---------- 置き方の案内 ----------
 
 /**
- * ブラウザで開いた人には、入室の前にホーム画面への置き方を見せる（つなぐのは置いたあと＝アプリから開いたとき）。
- * 出さないとき：ホーム画面のアプリ・パソコン・試し部屋（?g=）・この画面で一度「このまま」を選んだあと
+ * QR やリンクから開いた人は、ブラウザのまますぐ入室する（置き方の案内は出さない。2026-11-16 本人の指示）。
+ * LINE の中で開いたときだけ、外のブラウザへ自動で開き直す（画面は出さない）。
+ * 案内を見たいときは URL に ?install を付ける。そのときも出さない：ホーム画面のアプリ・パソコン・試し部屋（?g=）・一度「このまま」を選んだあと
  */
 function installPath(): Exclude<InstallPath, 'installed' | 'desktop'> | null {
   const standalone =
