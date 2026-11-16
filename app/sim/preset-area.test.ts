@@ -187,10 +187,35 @@ describe('プリセットごとの遊ぶ範囲', () => {
     await sleep(500);
     expect(areaOf(p)).toBe(clean(sq(60)));
 
+    // 牢屋の場所：プリセットが持っていれば一緒に入る。そのままは触らない。なしは消える
+    const jailOf = (c: GameClient) => JSON.stringify(c.state.game?.jail?.pts ?? null);
+    host.command('skip');
+    await sleep(2_500);
+    host.command('skip');
+    await sleep(2_500);
+    host.command('skip');
+    await waitFor('時間が0', () => phaseOf(p) === 'done', 15_000);
+    host.command('result', { winner: 'runner' });
+    await waitFor('結果', () => host.state.game?.stage === 'result');
+    host.command('presets', { presets: [{ ...wide, jail: sq(10) }, { ...small, jail: sq(5) }, keep, { ...none, jail: 'none' }] as never });
+    await waitFor('牢屋つきのプリセット', () => host.state.host?.presets?.length === 4);
+    expect(jailOf(p)).toBe('null');
+    host.command('preset-apply', { preset: 'wide', durations: DUR });
+    await waitFor('牢屋が届く', () => jailOf(p) === clean(sq(10)) && jailOf(q) === clean(sq(10)) && areaOf(p) === clean(sq(200)));
+    host.command('preset-apply', { preset: 'small', durations: DUR });
+    await waitFor('牢屋が替わる', () => jailOf(p) === clean(sq(5)) && areaOf(p) === clean(sq(60)));
+    host.command('preset-apply', { preset: 'keep', durations: DUR });
+    await sleep(800);
+    expect(jailOf(p)).toBe(clean(sq(5)));
+    host.command('preset-apply', { preset: 'none', durations: DUR });
+    await waitFor('牢屋が消える', () => jailOf(p) === 'null' && areaOf(p) === 'null');
+    const jrows = (await log()).filter((r) => r.kind === 'jail-place');
+    expect(jrows.map((r) => (JSON.parse(r.data ?? '{}') as { preset?: string }).preset)).toEqual(['wide', 'small', 'none']);
+
     // 記録：プリセットから入った範囲には preset の印
     const rows = (await log()).filter((r) => r.kind === 'area');
     const via = rows.map((r) => (JSON.parse(r.data ?? '{}') as { preset?: string }).preset);
-    expect(via).toEqual(['wide', 'small', 'none', 'wide', 'small']);
+    expect(via).toEqual(['wide', 'small', 'none', 'wide', 'small', 'wide', 'small', 'none']);
     void phaseOf;
   });
 });

@@ -36,6 +36,12 @@ describe('プリセット', () => {
     expect(cleanPreset({ id: 'x', name: 'a', area: 'all' })).toBeNull();
     expect(presetSummary(cleanPreset({ id: 'x', name: 'a', area: sq })!)).toMatch(/範囲つき$/);
     expect(presetSummary(cleanPreset({ id: 'x', name: 'a', area: 'none' })!)).toMatch(/範囲なし$/);
+    // 牢屋の場所も同じ形
+    expect(cleanPreset({ id: 'x', name: 'a' })!.jail).toBeNull();
+    expect(cleanPreset({ id: 'x', name: 'a', jail: 'none' })!.jail).toBe('none');
+    expect(cleanPreset({ id: 'x', name: 'a', jail: sq })!.jail).toEqual(sq);
+    expect(cleanPreset({ id: 'x', name: 'a', jail: sq.slice(0, 2) })).toBeNull();
+    expect(presetSummary(cleanPreset({ id: 'x', name: 'a', area: sq, jail: sq })!)).toMatch(/範囲つき・牢屋つき$/);
   });
 
   it('要約', () => {

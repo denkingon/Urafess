@@ -58,6 +58,8 @@ export interface Preset {
   shrink: ShrinkPlan;
   /** 遊ぶ範囲。前の版で作ったプリセットには無い（＝そのまま） */
   area: PresetArea;
+  /** 牢屋の場所。遊ぶ範囲と同じ形（null＝そのまま、'none'＝牢屋の場所なし、頂点の並び＝このプリセットの牢屋） */
+  jail: PresetArea;
 }
 
 export const PRESETS_MAX = 24;
@@ -77,6 +79,7 @@ export function basePreset(id: string, name: string): Preset {
     chat: { mode: DEFAULT_CHAT_MODE, jail: DEFAULT_CHAT_JAIL },
     shrink: { ...DEFAULT_SHRINK_PLAN },
     area: null,
+    jail: null,
   };
 }
 
@@ -134,11 +137,14 @@ export function cleanPreset(v: unknown): Preset | null {
   if (!chat || !isChatMode(chat.mode) || !isChatJail(chat.jail)) return null;
   const shrinkIn = o.shrink === undefined ? base.shrink : o.shrink;
   if (!isShrinkPlan(shrinkIn) || shrinkIn.to === 'pick') return null;
-  let area: PresetArea = null;
-  if (o.area === 'none') area = 'none';
-  else if (o.area !== undefined && o.area !== null) {
-    if (!isValidAreaPts(o.area, CAMPUS_CENTER)) return null;
-    area = cleanAreaPts(o.area);
+  const places: Record<'area' | 'jail', PresetArea> = { area: null, jail: null };
+  for (const k of ['area', 'jail'] as const) {
+    const x = o[k];
+    if (x === 'none') places[k] = 'none';
+    else if (x !== undefined && x !== null) {
+      if (!isValidAreaPts(x, CAMPUS_CENTER)) return null;
+      places[k] = cleanAreaPts(x);
+    }
   }
   return {
     id: o.id,
@@ -152,7 +158,8 @@ export function cleanPreset(v: unknown): Preset | null {
     lead: { on: lead.on, seen: lead.seen, dark: lead.dark, expose: lead.expose, restore: lead.restore },
     chat: { mode: chat.mode, jail: chat.jail },
     shrink: cleanShrinkPlan({ ...shrinkIn, pick: null }),
-    area,
+    area: places.area,
+    jail: places.jail,
   };
 }
 
@@ -199,6 +206,7 @@ export function presetSummary(p: Preset): string {
     p.shrink.times || p.shrink.mission ? `縮む${p.shrink.times ? `${p.shrink.times}回` : ''}${p.shrink.mission ? '・ミッション' : ''}` : '',
     `チャット${CHAT_NAME[p.chat.mode]}`,
     p.area === 'none' ? '範囲なし' : p.area ? '範囲つき' : '',
+    p.jail === 'none' ? '牢屋なし' : p.jail ? '牢屋つき' : '',
   ];
   return parts.filter(Boolean).join('・');
 }
